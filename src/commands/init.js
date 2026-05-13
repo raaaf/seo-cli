@@ -5,6 +5,7 @@ import inquirer from 'inquirer';
 import { loadConfig, saveConfig, DEFAULTS } from '../lib/config.js';
 import { detectProject } from '../lib/detect.js';
 import { analyzeSite } from '../lib/analyze-site.js';
+import { generateStyleDoc } from '../lib/generate-style-doc.js';
 
 export async function initCommand() {
   const cwd = process.cwd();
@@ -49,6 +50,17 @@ export async function initCommand() {
       console.log(chalk.gray(`  CTA:      ${siteData.primary_cta}`));
       console.log(chalk.gray(`  Sprache:  ${siteData.locale}`));
       console.log('');
+
+      // Generate style doc from website copy
+      const styleDocPath = detected.style_doc || 'docs/writing-style.md';
+      process.stdout.write(chalk.blue(`  Schreibstil wird analysiert...`));
+      try {
+        await generateStyleDoc(bootstrap.gsc_property, styleDocPath, cwd);
+        detected.style_doc = styleDocPath;
+        process.stdout.write(chalk.green(` gespeichert in ${styleDocPath}\n\n`));
+      } catch (e) {
+        process.stdout.write(chalk.yellow(` übersprungen (${e.message})\n\n`));
+      }
     } catch (e) {
       process.stdout.write(chalk.yellow(` fehlgeschlagen (${e.message})\n\n`));
     }
