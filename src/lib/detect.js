@@ -84,7 +84,7 @@ function detectDomain(cwd) {
   }
 
   // .env / config files — look for APP_URL
-  for (const f of ['.env', '.env.example', 'config/app.php']) {
+  for (const f of ['.env.example', 'config/app.php']) {
     try {
       const content = readFileSync(join(cwd, f), 'utf8');
       const match = content.match(/APP_URL=["']?(https?:\/\/[^\s"']+)/);

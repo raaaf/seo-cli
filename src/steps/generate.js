@@ -1,15 +1,15 @@
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
 import { format } from '../lib/date.js';
+import { getExistingSlugs } from '../lib/landings.js';
 
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
 
 let styleDocCache = null;
 let styleDocCacheKey = null;
-const existingSlugsCache = new Map();
 
 export async function generatePage(keyword, config, cwd = process.cwd(), validatorFeedback = null) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(keyword.target_slug || '')) {
@@ -60,33 +60,6 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     .replace(/SITE_NAME/g, config.site_name || config.project || '');
 
   return markdown;
-}
-
-function getExistingSlugs(config, cwd, locale) {
-  const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
-  const basePath = config.landing_path;
-  const localePath = basePath.includes(`/${defaultLocale}/`)
-    ? basePath.replace(`/${defaultLocale}/`, `/${locale}/`)
-    : basePath;
-  const cacheKey = `${cwd}::${localePath}::${locale}::${defaultLocale}`;
-  if (existingSlugsCache.has(cacheKey)) return existingSlugsCache.get(cacheKey);
-
-  const tryDirs = [localePath];
-  if (locale !== defaultLocale) tryDirs.push(basePath);
-
-  let result = [];
-  for (const dir of tryDirs) {
-    try {
-      const full = join(cwd, dir);
-      if (!existsSync(full)) continue;
-      const slugs = readdirSync(full)
-        .filter(f => f.endsWith('.md'))
-        .map(f => f.replace('.md', ''));
-      if (slugs.length > 0) { result = slugs; break; }
-    } catch {}
-  }
-  existingSlugsCache.set(cacheKey, result);
-  return result;
 }
 
 function loadStyleDoc(config, cwd) {

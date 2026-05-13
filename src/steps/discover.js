@@ -1,11 +1,11 @@
-import { readFileSync, readdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync } from 'fs';
 import chalk from 'chalk';
 import { querySearchAnalytics } from '../lib/gsc.js';
 import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
-import { loadKeywords, saveKeywords, upsertKeyword } from '../lib/keywords.js';
+import { loadKeywords, saveKeywords, upsertKeyword, KEYWORD_STATUS } from '../lib/keywords.js';
 import { format } from '../lib/date.js';
+import { getExistingTitles } from '../lib/landings.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -18,15 +18,15 @@ export async function discover(config, cwd = process.cwd()) {
   const data = loadKeywords(cwd);
   const existingSlugs = data.keywords.map(k => k.target_slug).filter(Boolean);
   const doneKeywords = new Set(
-    data.keywords.filter(k => ['done', 'skip', 'pr_opened'].includes(k.status)).map(k => k.keyword)
+    data.keywords.filter(k => [KEYWORD_STATUS.DONE, KEYWORD_STATUS.SKIP, KEYWORD_STATUS.PR_OPENED].includes(k.status)).map(k => k.keyword)
   );
 
   // Mark as done any keywords whose file already exists locally (merged PR)
-  const existingFiles = getExistingLandingTitles(config.landing_path, cwd);
+  const existingFiles = getExistingTitles(config.landing_path, cwd);
   let markedDone = 0;
   for (const kw of data.keywords) {
-    if (kw.status === 'pr_opened' && kw.target_slug && existingFiles.includes(kw.target_slug)) {
-      kw.status = 'done';
+    if (kw.status === KEYWORD_STATUS.PR_OPENED && kw.target_slug && existingFiles.includes(kw.target_slug)) {
+      kw.status = KEYWORD_STATUS.DONE;
       markedDone++;
     }
   }
@@ -56,10 +56,34 @@ export async function discover(config, cwd = process.cwd()) {
   }
 
   saveKeywords(data, cwd);
-  const newCount = data.keywords.filter(k => k.status === 'proposed').length;
+  const newCount = data.keywords.filter(k => k.status === KEYWORD_STATUS.PROPOSED).length;
   console.log(chalk.green(`  Discover done. ${newCount} keyword(s) proposed.`));
 
   return data;
+}
+
+function isSlugTaken(targetSlug, keyword, data) {
+  return Boolean(targetSlug && data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword));
+}
+
+function buildKeywordEntry(keyword, row, serpData, result, config) {
+  if (result.score < config.score_cutoff) {
+    return { keyword, status: KEYWORD_STATUS.SKIP, score: result.score, discovered_at: format(new Date()) };
+  }
+  return {
+    keyword,
+    status: KEYWORD_STATUS.PROPOSED,
+    score: result.score,
+    source: 'gsc',
+    type: result.type,
+    intent: result.intent,
+    target_slug: result.target_slug,
+    expected_entities: result.expected_entities,
+    content_gaps: result.content_gaps,
+    serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
+    gsc: { impressions: row.impressions, position: row.position, clicks: row.clicks },
+    discovered_at: format(new Date()),
+  };
 }
 
 async function scoreAndSave({ candidates, config, data, existingSlugs }) {
@@ -84,33 +108,19 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
       continue;
     }
 
-    // Skip if slug already taken by another keyword
-    const slugTaken = result.target_slug &&
-      data.keywords.some(k => k.target_slug === result.target_slug && k.keyword !== row.keyword);
-    if (slugTaken) {
+    if (isSlugTaken(result.target_slug, row.keyword, data)) {
       console.log(chalk.gray(`  Slug collision: ${result.target_slug} already taken, skipping ${row.keyword}`));
       continue;
     }
 
-    upsertKeyword(data, result.score < config.score_cutoff
-      ? { keyword: row.keyword, status: 'skip', score: result.score, discovered_at: format(new Date()) }
-      : {
-          keyword: row.keyword, status: 'proposed', score: result.score,
-          source: 'gsc', type: result.type, intent: result.intent,
-          target_slug: result.target_slug, expected_entities: result.expected_entities,
-          content_gaps: result.content_gaps,
-          serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
-          gsc: { impressions: row.impressions, position: row.position, clicks: row.clicks },
-          discovered_at: format(new Date()),
-        }
-    );
+    upsertKeyword(data, buildKeywordEntry(row.keyword, row, serpData, result, config));
     if (result.score >= config.score_cutoff) scored++;
     if (scored >= 10) break;
   }
 }
 
 async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
-  const existingLandings = getExistingLandingTitles(config.landing_path, cwd);
+  const existingLandings = getExistingTitles(config.landing_path, cwd);
 
   const prompt = GREENFIELD_PROMPT
     .replace('{{clusters}}', (config.clusters || []).join(', '))
@@ -146,7 +156,7 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
 
     upsertKeyword(data, {
       keyword: kw.keyword,
-      status: 'proposed',
+      status: KEYWORD_STATUS.PROPOSED,
       score: kw.score ?? 7,
       source: 'greenfield',
       type: kw.type,
@@ -157,25 +167,6 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
       serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
       discovered_at: format(new Date()),
     });
-  }
-}
-
-function getExistingLandingTitles(landingPath, cwd) {
-  try {
-    const dir = join(cwd, landingPath);
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter(f => f.endsWith('.md'))
-      .map(f => {
-        try {
-          const content = readFileSync(join(dir, f), 'utf8');
-          const headlineMatch = content.match(/headline:\s*["']?(.+?)["']?\s*$/m);
-          if (headlineMatch) return headlineMatch[1].trim();
-        } catch {}
-        return f.replace('.md', '');
-      });
-  } catch {
-    return [];
   }
 }
 

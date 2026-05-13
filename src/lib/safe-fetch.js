@@ -43,6 +43,10 @@ export async function assertPublicUrl(rawUrl) {
   }
 }
 
+// Known limitation: assertPublicUrl resolves DNS once before fetch(), which does its own
+// DNS resolution. A TTL-0 DNS rebind attack between the two calls could redirect to a
+// private IP. Acceptable for a CLI used against user-configured URLs in seo.config.yaml.
+
 export async function safeFetch(rawUrl, opts = {}) {
   await assertPublicUrl(rawUrl);
   return fetch(rawUrl, opts);

@@ -3,7 +3,10 @@ import { config as dotenv } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-// Load global keys from seo-cli dir, then project .env overrides
+// Load order: CLI .env first (global API keys), then project .env with override:true so
+// project-level settings (e.g. a different ANTHROPIC_API_KEY per project) win.
+// Accepted trade-off: a malicious project .env could redirect API tokens.
+// Acceptable for a personal CLI run in trusted project directories.
 const cliDir = dirname(dirname(fileURLToPath(import.meta.url)));
 dotenv({ path: join(cliDir, '.env') });
 dotenv({ path: join(process.cwd(), '.env'), override: true });

@@ -2,7 +2,7 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import chalk from 'chalk';
 import { loadConfig } from '../lib/config.js';
-import { saveKeywords, getPending } from '../lib/keywords.js';
+import { saveKeywords, getPending, KEYWORD_STATUS } from '../lib/keywords.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
 import { validate } from '../steps/validate.js';
@@ -15,6 +15,54 @@ const REQUIRED_ENV = [
   'SERPAPI_KEY',
   'GITHUB_TOKEN',
 ];
+
+async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedPages) {
+  const localeLandingPath = config.landing_path.includes(`/${defaultLocale}/`)
+    ? config.landing_path.replace(`/${defaultLocale}/`, `/${locale}/`)
+    : config.landing_path;
+  const localeConfig = { ...config, locale, landing_path: localeLandingPath };
+  const label = (config.locales?.length ?? 1) > 1 ? ` [${locale}]` : '';
+
+  const targetFile = join(cwd, localeLandingPath, `${kw.target_slug}.md`);
+  if (existsSync(targetFile)) {
+    console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
+    kw.status = KEYWORD_STATUS.DONE;
+    return false;
+  }
+  if (generatedPages.some(p => p.slug === kw.target_slug && p.locale === locale)) {
+    console.log(chalk.yellow(`  Skipping ${kw.target_slug}${label} — slug collision with another keyword`));
+    return false;
+  }
+
+  let markdown;
+  let valid = false;
+  let lastResult;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null);
+    lastResult = validate(markdown, kw);
+    if (lastResult.ok) { valid = true; break; }
+  }
+
+  if (!valid) {
+    console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
+    kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
+    return false;
+  }
+
+  if (dryRun) {
+    console.log(chalk.cyan(`\n--- ${kw.keyword}${label} ---\n`));
+    console.log(markdown.slice(0, 600) + '\n...');
+    return false;
+  }
+
+  const landingPath = (config.locales?.length ?? 1) > 1
+    ? config.landing_path.replace(/\/(de|en)\//, `/${locale}/`)
+    : config.landing_path;
+  const filePath = join(landingPath, `${kw.target_slug}.md`).replace(/\\/g, '/');
+  generatedPages.push({ keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown });
+  return true;
+}
 
 export async function runCommand(opts) {
   const missing = REQUIRED_ENV.filter(k => !process.env[k]);
@@ -49,59 +97,12 @@ export async function runCommand(opts) {
 
     for (const kw of toGenerate) {
       let producedAtLeastOne = false;
-
       for (const locale of locales) {
-        const localeLandingPath = config.landing_path.includes(`/${defaultLocale}/`)
-          ? config.landing_path.replace(`/${defaultLocale}/`, `/${locale}/`)
-          : config.landing_path;
-        const localeConfig = { ...config, locale, landing_path: localeLandingPath };
-        const label = locales.length > 1 ? ` [${locale}]` : '';
-
-        // Hard check: skip if file already exists locally or slug already being generated
-        const targetFile = join(cwd, localeLandingPath, `${kw.target_slug}.md`);
-        if (existsSync(targetFile)) {
-          console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
-          kw.status = 'done';
-          continue;
+        if (await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedPages)) {
+          producedAtLeastOne = true;
         }
-        if (generatedPages.some(p => p.slug === kw.target_slug && p.locale === locale)) {
-          console.log(chalk.yellow(`  Skipping ${kw.target_slug}${label} — slug collision with another keyword`));
-          continue;
-        }
-
-        let markdown;
-        let valid = false;
-        let lastResult;
-
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null);
-          lastResult = validate(markdown, kw);
-          if (lastResult.ok) { valid = true; break; }
-        }
-
-        if (!valid) {
-          console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
-          kw.status = 'validation_failed';
-          continue;
-        }
-
-        if (dryRun) {
-          console.log(chalk.cyan(`\n--- ${kw.keyword}${label} ---\n`));
-          console.log(markdown.slice(0, 600) + '\n...');
-          continue;
-        }
-
-        // Landing path: swap locale segment if multi-locale
-        const landingPath = locales.length > 1
-          ? config.landing_path.replace(/\/(de|en)\//, `/${locale}/`)
-          : config.landing_path;
-
-        const filePath = join(landingPath, `${kw.target_slug}.md`).replace(/\\/g, '/');
-        generatedPages.push({ keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown });
-        producedAtLeastOne = true;
       }
-
-      if (producedAtLeastOne) kw.status = 'pr_opened';
+      if (producedAtLeastOne) kw.status = KEYWORD_STATUS.PR_OPENED;
     }
 
     if (!dryRun && generatedPages.length > 0) {
@@ -114,7 +115,7 @@ export async function runCommand(opts) {
         // Reset status so keywords are retried next run
         generatedPages.forEach(p => {
           const kw = keywordsData.keywords.find(k => k.keyword === p.keyword);
-          if (kw) kw.status = 'proposed';
+          if (kw) kw.status = KEYWORD_STATUS.PROPOSED;
         });
         saveKeywords(keywordsData, cwd);
       }

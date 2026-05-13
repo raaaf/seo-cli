@@ -4,6 +4,14 @@ import { format } from './date.js';
 
 export const KEYWORDS_FILE = 'seo/keywords.json';
 
+export const KEYWORD_STATUS = {
+  PROPOSED: 'proposed',
+  DONE: 'done',
+  SKIP: 'skip',
+  PR_OPENED: 'pr_opened',
+  VALIDATION_FAILED: 'validation_failed',
+};
+
 export function loadKeywords(cwd = process.cwd()) {
   const path = join(cwd, KEYWORDS_FILE);
   if (!existsSync(path)) return { version: 1, keywords: [] };
@@ -32,6 +40,6 @@ export function upsertKeyword(data, incoming) {
 
 export function getPending(data, scoreCutoff) {
   return data.keywords.filter(
-    k => k.status === 'proposed' && k.score >= scoreCutoff
+    k => k.status === KEYWORD_STATUS.PROPOSED && k.score >= scoreCutoff
   );
 }
