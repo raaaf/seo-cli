@@ -1,4 +1,20 @@
 You are writing an SEO landing page as a Markdown file with YAML frontmatter.
+The page renders in a Laravel app. You must match the exact structure it expects.
+
+## How the app renders this file
+
+The app reads structured data from YAML frontmatter and renders each section independently:
+- `hero` → H1, sub-headline
+- `tldr` → highlighted answer box at the top
+- Body (markdown after `---`) → flowing prose section
+- `related_features` → feature chip row
+- `steps` → numbered step list
+- `checklist` → visual checklist grid
+- `faq` → accordion FAQ
+- `related_pages` → related guides grid
+
+Do NOT put steps, checklist items, or FAQ in the markdown body.
+The body is for flowing prose only: intro, context, background, why this matters.
 
 ## Context
 
@@ -7,126 +23,66 @@ Slug: {{slug}}
 Type: {{type}}
 Search intent: {{intent}}
 Geo scope: {{geo_scope}}
-Location (if local): {{location}}
-Expected entities (must appear naturally): {{expected_entities}}
-Content gaps vs. top-3 SERP (score points here): {{content_gaps}}
-Primary CTA: {{primary_cta}}
+Expected entities (must appear naturally in the body): {{expected_entities}}
+Content gaps vs. top-3 SERP (cover in body): {{content_gaps}}
 Output language: {{locale}}
-People Also Ask (basis for FAQ): {{people_also_ask}}
-Related searches (use for internal link anchors): {{related_searches}}
-Existing slugs you may link to (ONLY use these for internal links): {{existing_slugs}}
+People Also Ask (source for faq entries): {{people_also_ask}}
+Related searches (use for related_pages and body links): {{related_searches}}
+Existing slugs you may use for related_pages and body links: {{existing_slugs}}
 
 ## Writing style
 
 {{style}}
 
-## Frontmatter schema
+## Output format
+
+Output a complete Markdown file. Frontmatter first, then body.
+
+### Frontmatter fields (REQUIRED)
 
 ```yaml
-slug: organise-grill-party
-meta_title: "Organise a Grill Party – Checklist & Tips"   # 50–60 chars
-meta_description: "How to plan a grill party: shopping list, invites, timeline. With free checklist."  # 140–160 chars
-type: howto   # howto | comparison | service | guide | local_service
-geo_scope: global   # global | local
-hero:
-  eyebrow: "Event planning made easy"
-  headline: "Organise a Grill Party Without the Chaos"
-  sub: "Checklist, timeline and everything you actually need."
-tldr: "A grill party needs: invites 2 weeks ahead, drinks for 2–3 per person, 1kg charcoal per 5 people, a rain backup plan."
+slug: {{slug}}
+meta_title: "Keyword – Short benefit | Site"   # 50–60 chars
+meta_description: "What this page does. Concrete, no fluff."  # 140–160 chars
 updated: "{{today}}"
-primary_cta: {{primary_cta}}
+hero:
+  eyebrow: "Short category label"
+  headline: "Action-oriented headline with keyword"
+  sub: "1–2 sentence sub-headline. Concrete benefit, no hype."
+tldr: "Direct answer in 2–3 sentences. Publicly verifiable facts only. No invented statistics."
+related_features:
+  - rsvp       # only include features genuinely relevant to this topic
+  - bring      # available: rsvp, bring, gift, photos, tasks, comments, carpool,
+               # surveys, expenses, tickets, timeslots, groups, recurring, attendance, qr
+steps:         # 4–6 steps for howto/guide types. Omit for comparison/service.
+  - title: "Short action title"
+    description: "One sentence. Concrete."
+checklist:     # 5–8 items. Short phrases, no full sentences.
+  - "Item one"
+  - "Item two"
+faq:           # 4–6 entries from people_also_ask. Real questions, real answers.
+  - q: "Question from search?"
+    a: "Concise, factual answer. 2–4 sentences."
+related_pages: # 2–4 slugs from existing_slugs only. Never invent slugs.
+  - existing-slug-one
+  - existing-slug-two
 seo:
   target_keyword: "{{keyword}}"
-  expected_entities: {{expected_entities_yaml}}
 ```
 
-## Structure by type
+### Body (after the closing `---`)
 
-**howto**: Hero → TL;DR → Step-by-step (H2 per step) → Checklist → FAQ → CTA
-**comparison**: Hero → TL;DR → Comparison table → Pros/cons per option → Recommendation → FAQ → CTA
-**service**: Hero → Problem → Solution → Scope → Process → FAQ → CTA
-**guide**: Hero → TL;DR → Main sections (H2) → FAQ → CTA
-**local_service**: Hero → Local context (mention location naturally, 2–3 times) → Service → Why local matters → Local FAQ → CTA
-
-## For local_service pages specifically
-
-If geo_scope is "local":
-- Mention the location ({{location}}) naturally in hero, at least one H2, and the FAQ
-- Include a "Serving [location]" or similar signal in the meta description
-- Add LocalBusiness schema (see schema section below)
-- Do NOT just swap the city name into a generic template — add genuinely local context
-
-## Schema.org (add as `schema:` YAML field in the frontmatter, not in the body)
-
-**Note:** FAQPage rich results deprecated May 2026. Do NOT add FAQPage schema.
-HowTo only for genuinely howto pages.
-
-Add a `schema:` key to the frontmatter containing the JSON-LD as a YAML-compatible JSON string.
-The app reads this field and renders it as `<script type="application/ld+json">`.
-
-Choose schema by type:
-- **howto** → HowTo with steps
-- **comparison / guide** → Article
-- **service / local_service** → SoftwareApplication or LocalBusiness
-
-All pages: include `mainEntityOfPage`, `BreadcrumbList`, `SameAs` on Organization.
-
-Frontmatter example (add after the other fields, before the closing `---`):
-
-```
-schema: |
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "HowTo",
-        "name": "{{keyword}}",
-        "description": "...",
-        "mainEntityOfPage": { "@type": "WebPage", "@id": "CANONICAL_URL" },
-        "step": [
-          { "@type": "HowToStep", "position": 1, "name": "Step 1", "text": "..." }
-        ]
-      },
-      {
-        "@type": "BreadcrumbList",
-        "itemListElement": [
-          { "@type": "ListItem", "position": 1, "name": "Home", "item": "BASE_URL" },
-          { "@type": "ListItem", "position": 2, "name": "{{keyword}}", "item": "CANONICAL_URL" }
-        ]
-      }
-    ]
-  }
-```
-
-CANONICAL_URL and BASE_URL are placeholders — they will be replaced automatically.
-
-## Internal links
-
-Include 2–4 internal links in the body. Use related_searches as anchor text ideas.
-Format as markdown links: [anchor text](/slug).
-ONLY link to slugs from the "Existing slugs" list above. If no existing slug fits, omit the link.
-Never invent slugs that do not exist in that list.
-
-## Requirements
-
-- Minimum 800 words in the body (excluding frontmatter and schema)
-- Keyword in hero.headline, in the first 100 words, and in at least one H2
+300–500 words of flowing prose:
+- Starts directly with context/problem/insight — no H1 (the app renders that from hero)
+- Use H2 and H3 for sub-sections if needed
+- Start each H2/H3 with a bold 1–2 sentence summary (AI Overviews citation)
+- Cover content_gaps with concrete, verifiable information
 - All expected_entities must appear naturally
-- Cover at least 2 aspects from content_gaps — these must be genuinely unique insights,
-  not rewrites of what already ranks. Programmatic duplication is a Google spam violation.
-- Each H2 and H3 must start with a bold 1–2 sentence summary before elaborating
-  (Google AI Overviews extracts from the first 40–50 words of each section)
-- Include at least one concrete, verifiable example or publicly available data point
-- NEVER fabricate statistics, customer numbers, years of experience, or case studies.
-  Do not write "we have helped X customers", "in our experience over Y years", or any
-  first-person claim that implies operational history. The site may be new. If you need
-  a credibility signal, cite a real external source instead.
-- FAQ: 4–6 real questions from people_also_ask and related_searches
-- No FAQPage schema (deprecated May 2026)
-- CTA at the end matching primary_cta
-- No "Conclusion" section
-- No unnatural keyword repetition
-- Write entirely in the language of the output locale ({{locale}})
+- 2–4 internal links to existing slugs: [anchor text](/slug)
+- No FAQ, no checklist, no numbered steps (those are in frontmatter)
+- No fabricated statistics ("we helped X customers", "Y years of experience")
+- Cite external sources for factual claims where relevant
+- Write entirely in {{locale}}
 
 ## Validator feedback (if this is a retry)
 
@@ -134,4 +90,4 @@ Never invent slugs that do not exist in that list.
 
 ## Output
 
-Output only the finished Markdown file. No text before or after, no ``` wrapper around the whole file.
+Output only the finished Markdown file. No text before or after.
