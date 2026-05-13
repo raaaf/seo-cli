@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { loadConfig, saveConfig, DEFAULTS } from '../lib/config.js';
 import { detectProject } from '../lib/detect.js';
+import { analyzeSite } from '../lib/analyze-site.js';
 
 export async function initCommand() {
   const cwd = process.cwd();
@@ -12,115 +13,129 @@ export async function initCommand() {
   let existing = {};
   if (existsSync(configPath)) {
     existing = loadConfig(cwd);
-    console.log(chalk.gray('Found existing seo.config.yaml — updating values (Enter to keep current).\n'));
-  } else {
-    console.log(chalk.blue('Analysing project...\n'));
-    const detected = detectProject(cwd);
-    const found = Object.entries(detected).filter(([, v]) => v != null);
-    if (found.length > 0) {
-      console.log(chalk.gray('Detected:'));
-      for (const [k, v] of found) {
-        console.log(chalk.gray(`  ${k}: ${Array.isArray(v) ? v.join(', ') : v}`));
-      }
-      console.log('');
-    }
-    existing = detected;
+    console.log(chalk.gray('Found existing seo.config.yaml — updating.\n'));
   }
 
-  const answers = await inquirer.prompt([
+  // Step 1: detect from filesystem
+  const detected = detectProject(cwd);
+
+  // Step 2: ask only for URL + repo (minimum needed to start)
+  const bootstrap = await inquirer.prompt([
     {
       type: 'input',
       name: 'repo',
       message: 'GitHub Repo (owner/name):',
-      default: existing.repo || '',
+      default: existing.repo || detected.repo || '',
       validate: v => v.includes('/') || 'Format: owner/name',
     },
     {
       type: 'input',
       name: 'gsc_property',
-      message: 'Website URL (wie in Google Search Console eingetragen):',
-      default: existing.gsc_property || '',
+      message: 'Website URL (wie in Google Search Console):',
+      default: existing.gsc_property || detected.gsc_property || '',
       validate: v => v.startsWith('http') || 'Muss mit http(s):// beginnen',
     },
+  ]);
+
+  // Step 3: Claude reads the site and extracts everything
+  let siteData = {};
+  if (bootstrap.gsc_property) {
+    process.stdout.write(chalk.blue(`\nAnalysiere ${bootstrap.gsc_property}...`));
+    try {
+      siteData = await analyzeSite(bootstrap.gsc_property);
+      process.stdout.write(chalk.green(' fertig.\n\n'));
+      console.log(chalk.gray(`  Thema:    ${siteData.topic}`));
+      console.log(chalk.gray(`  Cluster:  ${(siteData.clusters || []).join(', ')}`));
+      console.log(chalk.gray(`  CTA:      ${siteData.primary_cta}`));
+      console.log(chalk.gray(`  Sprache:  ${siteData.locale}`));
+      console.log('');
+    } catch (e) {
+      process.stdout.write(chalk.yellow(` fehlgeschlagen (${e.message})\n\n`));
+    }
+  }
+
+  // Step 4: only confirm/override what Claude extracted + landing path
+  const answers = await inquirer.prompt([
     {
       type: 'input',
       name: 'landing_path',
-      message: 'Wo sollen die generierten Seiten abgelegt werden?',
-      default: existing.landing_path || 'resources/landing/de/',
-    },
-    {
-      type: 'input',
-      name: 'topic',
-      message: 'Worum geht es auf dieser Website? (1–2 Sätze):',
-      default: existing.topic || '',
-    },
-    {
-      type: 'list',
-      name: 'primary_cta',
-      message: 'Was sollen Besucher auf den Seiten tun?',
-      choices: [
-        { name: 'Kostenlos registrieren', value: 'trial_signup' },
-        { name: 'Demo buchen', value: 'book_demo' },
-        { name: 'Kontakt aufnehmen', value: 'contact' },
-        { name: 'App herunterladen', value: 'download_app' },
-        { name: 'Mehr erfahren / Newsletter', value: 'learn_more' },
-      ],
-      default: existing.primary_cta || 'trial_signup',
+      message: 'Wo sollen generierte Seiten abgelegt werden?',
+      default: existing.landing_path || detected.landing_path || 'resources/landing/de/',
     },
     {
       type: 'list',
       name: 'weekly_cap',
-      message: 'Wie viele neue Seiten soll das Tool pro Woche erstellen?',
+      message: 'Wie viele neue Seiten pro Woche?',
       choices: [
-        { name: '1 Seite — ruhig, viel Kontrolle', value: 1 },
-        { name: '2 Seiten — guter Rhythmus (empfohlen)', value: 2 },
-        { name: '4 Seiten — aggressiv', value: 4 },
+        { name: '1 — ruhig, viel Kontrolle', value: 1 },
+        { name: '2 — guter Rhythmus (empfohlen)', value: 2 },
+        { name: '4 — aggressiv', value: 4 },
       ],
       default: existing.weekly_cap ?? 2,
     },
     {
-      type: 'input',
-      name: 'locale',
-      message: 'Sprache der Seiten (de / en):',
-      default: existing.locale || 'de',
+      type: 'confirm',
+      name: 'confirm_analysis',
+      message: `Stimmt die Analyse? (sonst kurz korrigieren)`,
+      default: true,
+      when: () => !!siteData.topic,
     },
   ]);
 
-  // Derive clusters from topic via Claude if not already set
-  let clusters = existing.clusters || [];
-  if (!clusters.length && answers.topic) {
-    process.stdout.write(chalk.gray('  Themen-Cluster werden abgeleitet...'));
-    try {
-      const { complete } = await import('../lib/claude.js');
-      const result = await complete({
-        system: 'Antworte ausschließlich mit einem JSON-Array aus Strings.',
-        prompt: `Website-Beschreibung: "${answers.topic}"\n\nLeite 3–5 prägnante Themen-Cluster ab (je 2–4 Wörter, Deutsch). Nur das JSON-Array, kein Text.`,
-        json: true,
-      });
-      clusters = Array.isArray(result) ? result : [];
-      process.stdout.write(` ${clusters.join(', ')}\n`);
-    } catch {
-      process.stdout.write(' übersprungen\n');
-    }
+  // Allow manual correction if analysis was wrong
+  let finalSiteData = siteData;
+  if (answers.confirm_analysis === false) {
+    const correction = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'topic',
+        message: 'Worum geht es auf dieser Website?',
+        default: siteData.topic || '',
+      },
+      {
+        type: 'input',
+        name: 'clusters',
+        message: 'Themen-Cluster (kommagetrennt):',
+        default: (siteData.clusters || []).join(', '),
+      },
+      {
+        type: 'list',
+        name: 'primary_cta',
+        message: 'Was sollen Besucher tun?',
+        choices: [
+          { name: 'Kostenlos registrieren', value: 'trial_signup' },
+          { name: 'Demo buchen', value: 'book_demo' },
+          { name: 'Kontakt aufnehmen', value: 'contact' },
+          { name: 'App herunterladen', value: 'download_app' },
+          { name: 'Mehr erfahren / Newsletter', value: 'learn_more' },
+        ],
+        default: siteData.primary_cta || 'trial_signup',
+      },
+    ]);
+    finalSiteData = {
+      ...siteData,
+      topic: correction.topic,
+      clusters: correction.clusters.split(',').map(s => s.trim()).filter(Boolean),
+      primary_cta: correction.primary_cta,
+    };
   }
 
   const config = {
-    project: answers.repo.split('/')[1],
-    repo: answers.repo,
-    gsc_property: answers.gsc_property,
+    project: bootstrap.repo.split('/')[1],
+    repo: bootstrap.repo,
+    gsc_property: bootstrap.gsc_property,
     landing_path: answers.landing_path,
-    locale: answers.locale,
-    primary_cta: answers.primary_cta,
-    style_doc: existing.style_doc || null,
+    locale: finalSiteData.locale || detected.locale || DEFAULTS.locale,
+    primary_cta: finalSiteData.primary_cta || detected.primary_cta || DEFAULTS.primary_cta,
+    style_doc: detected.style_doc || null,
     score_cutoff: DEFAULTS.score_cutoff,
     weekly_cap: answers.weekly_cap,
-    clusters,
-    topic: answers.topic,
+    clusters: finalSiteData.clusters || detected.clusters || [],
+    topic: finalSiteData.topic || '',
   };
 
   saveConfig(config, cwd);
-  console.log(chalk.green('\nConfig saved to seo.config.yaml'));
-  console.log(chalk.gray('\nNext steps:'));
-  console.log(chalk.white('  1. Copy .env.example to .env and fill in your API keys'));
-  console.log(chalk.white('  2. seo run --dry-run'));
+  console.log(chalk.green('\nConfig gespeichert in seo.config.yaml'));
+  console.log(chalk.gray('\nNächster Schritt:'));
+  console.log(chalk.white('  seo run --dry-run'));
 }
