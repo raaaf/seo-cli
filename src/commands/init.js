@@ -74,6 +74,19 @@ export async function initCommand() {
       default: existing.weekly_cap ?? 2,
     },
     {
+      type: 'list',
+      name: 'locales',
+      message: 'In welcher Sprache sollen Seiten generiert werden?',
+      choices: [
+        { name: 'Nur Deutsch', value: ['de'] },
+        { name: 'Nur Englisch', value: ['en'] },
+        { name: 'Deutsch + Englisch (beide in einem Run)', value: ['de', 'en'] },
+      ],
+      default: existing.locales
+        ? JSON.stringify(existing.locales)
+        : JSON.stringify(['de']),
+    },
+    {
       type: 'confirm',
       name: 'confirm_analysis',
       message: `Stimmt die Analyse? (sonst kurz korrigieren)`,
@@ -125,7 +138,8 @@ export async function initCommand() {
     repo: bootstrap.repo,
     gsc_property: bootstrap.gsc_property,
     landing_path: answers.landing_path,
-    locale: finalSiteData.locale || detected.locale || DEFAULTS.locale,
+    locales: answers.locales,
+    locale: answers.locales[0],
     primary_cta: finalSiteData.primary_cta || detected.primary_cta || DEFAULTS.primary_cta,
     style_doc: detected.style_doc || null,
     score_cutoff: DEFAULTS.score_cutoff,
