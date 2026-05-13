@@ -10,6 +10,7 @@ Keyword: {{keyword}}
 GSC data: Impressions {{impressions}}, Position {{position}}, Clicks {{clicks}}
 Topic clusters: {{clusters}}
 Existing slugs: {{existing_slugs}}
+Locale: {{locale}}
 Top SERP titles: {{serp_titles}}
 Top SERP snippets: {{serp_snippets}}
 People Also Ask: {{people_also_ask}}
@@ -31,7 +32,7 @@ Reply exclusively with JSON:
   "score": 8,
   "type": "howto",
   "intent": "informational",
-  "target_slug": "grill-party-organise",
+  "target_slug": "stunden-erfassen-freelancer",
   "expected_entities": ["invitation", "drinks", "grill", "sides", "playlist"],
   "content_gaps": ["vegan options", "downloadable checklist", "timeline"],
   "reason": "High impressions at position 11, top SERP has no concrete checklist, strong cluster fit"

@@ -50,10 +50,15 @@ async function fetchPages(baseUrl) {
 }
 
 function stripHtml(html) {
-  return html
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const titlePrefix = titleMatch ? `Title: ${titleMatch[1].trim()}\n` : '';
+
+  const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+  return titlePrefix + text;
 }

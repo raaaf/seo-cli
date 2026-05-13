@@ -165,7 +165,14 @@ function getExistingLandingTitles(landingPath, cwd) {
     if (!existsSync(dir)) return [];
     return readdirSync(dir)
       .filter(f => f.endsWith('.md'))
-      .map(f => f.replace('.md', ''));
+      .map(f => {
+        try {
+          const content = readFileSync(join(dir, f), 'utf8');
+          const headlineMatch = content.match(/headline:\s*["']?(.+?)["']?\s*$/m);
+          if (headlineMatch) return headlineMatch[1].trim();
+        } catch {}
+        return f.replace('.md', '');
+      });
   } catch {
     return [];
   }
@@ -181,7 +188,8 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
     .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'none')
     .replace('{{serp_titles}}', serpData.top_titles.join('\n') || 'n/a')
     .replace('{{serp_snippets}}', serpData.top_snippets.join('\n') || 'n/a')
-    .replace('{{people_also_ask}}', serpData.people_also_ask.join('\n') || 'n/a');
+    .replace('{{people_also_ask}}', serpData.people_also_ask.join('\n') || 'n/a')
+    .replace('{{locale}}', config.locale || 'de');
 }
 
 function today() {
