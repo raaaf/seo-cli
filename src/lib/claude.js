@@ -1,11 +1,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+let client;
+function getClient() {
+  if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return client;
+}
 
 export async function complete({ system, prompt, model = 'claude-sonnet-4-6', maxTokens = 4096, json = false }) {
   const messages = [{ role: 'user', content: prompt }];
 
-  const res = await client.messages.create({
+  const res = await getClient().messages.create({
     model,
     max_tokens: maxTokens,
     system: [
