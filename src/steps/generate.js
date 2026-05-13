@@ -27,7 +27,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     .replace('{{locale}}', config.locale || 'de')
     .replace('{{people_also_ask}}', (keyword.serp?.people_also_ask || []).join('\n') || 'n/a')
     .replace('{{related_searches}}', (keyword.serp?.related_searches || []).join('\n') || 'n/a')
-    .replace('{{existing_slugs}}', getExistingSlugs(config, cwd).join(', ') || 'none')
+    .replace('{{existing_slugs}}', getExistingSlugs(config, cwd, config.locale).join(', ') || 'none')
     .replace('{{style}}', style)
     .replace('{{today}}', format(new Date()))
     .replace('{{expected_entities_yaml}}', JSON.stringify(keyword.expected_entities || []))
@@ -54,14 +54,30 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
   return markdown;
 }
 
-function getExistingSlugs(config, cwd) {
-  try {
-    const dir = join(cwd, config.landing_path);
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter(f => f.endsWith('.md'))
-      .map(f => f.replace('.md', ''));
-  } catch { return []; }
+function getExistingSlugs(config, cwd, locale) {
+  const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
+  const basePath = config.landing_path;
+
+  // Build locale-specific path: replace locale segment if present, else append locale
+  const localePath = basePath.includes(`/${defaultLocale}/`)
+    ? basePath.replace(`/${defaultLocale}/`, `/${locale}/`)
+    : basePath;
+
+  const tryDirs = [localePath];
+  // Fall back to default locale dir if locale-specific has no files
+  if (locale !== defaultLocale) tryDirs.push(basePath);
+
+  for (const dir of tryDirs) {
+    try {
+      const full = join(cwd, dir);
+      if (!existsSync(full)) continue;
+      const slugs = readdirSync(full)
+        .filter(f => f.endsWith('.md'))
+        .map(f => f.replace('.md', ''));
+      if (slugs.length > 0) return slugs;
+    } catch {}
+  }
+  return [];
 }
 
 function loadStyleDoc(config, cwd) {

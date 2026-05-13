@@ -64,8 +64,8 @@ faq:           # 4–6 entries from people_also_ask. Real questions, real answer
   - q: "Question from search?"
     a: "Concise, factual answer. 2–4 sentences."
 related_pages: # 2–4 slugs from existing_slugs only. Never invent slugs.
-  - existing-slug-one
-  - existing-slug-two
+  - existing-slug-one  # Only use slugs from the list above — they are pre-filtered for {{locale}}.
+  - existing-slug-two  # An EN page must only reference EN slugs; a DE page only DE slugs.
 seo:
   target_keyword: "{{keyword}}"
 ```

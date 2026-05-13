@@ -47,7 +47,11 @@ export async function runCommand(opts) {
 
     for (const kw of toGenerate) {
       for (const locale of locales) {
-        const localeConfig = { ...config, locale };
+        const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
+        const localeLandingPath = config.landing_path.includes(`/${defaultLocale}/`)
+          ? config.landing_path.replace(`/${defaultLocale}/`, `/${locale}/`)
+          : config.landing_path;
+        const localeConfig = { ...config, locale, landing_path: localeLandingPath };
         const label = locales.length > 1 ? ` [${locale}]` : '';
 
         let markdown;
