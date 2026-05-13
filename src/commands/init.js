@@ -38,53 +38,71 @@ export async function initCommand() {
     {
       type: 'input',
       name: 'gsc_property',
-      message: 'GSC Property URL:',
+      message: 'Website URL (wie in Google Search Console eingetragen):',
       default: existing.gsc_property || '',
-      validate: v => v.startsWith('http') || 'Must start with http(s)://',
+      validate: v => v.startsWith('http') || 'Muss mit http(s):// beginnen',
     },
     {
       type: 'input',
       name: 'landing_path',
-      message: 'Landing pages path (where .md files go):',
+      message: 'Wo sollen die generierten Seiten abgelegt werden?',
       default: existing.landing_path || 'resources/landing/de/',
     },
     {
       type: 'input',
-      name: 'locale',
-      message: 'Locale:',
-      default: existing.locale || DEFAULTS.locale,
+      name: 'topic',
+      message: 'Worum geht es auf dieser Website? (1–2 Sätze):',
+      default: existing.topic || '',
     },
     {
-      type: 'input',
+      type: 'list',
       name: 'primary_cta',
-      message: 'Primary CTA:',
-      default: existing.primary_cta || DEFAULTS.primary_cta,
+      message: 'Was sollen Besucher auf den Seiten tun?',
+      choices: [
+        { name: 'Kostenlos registrieren', value: 'trial_signup' },
+        { name: 'Demo buchen', value: 'book_demo' },
+        { name: 'Kontakt aufnehmen', value: 'contact' },
+        { name: 'App herunterladen', value: 'download_app' },
+        { name: 'Mehr erfahren / Newsletter', value: 'learn_more' },
+      ],
+      default: existing.primary_cta || 'trial_signup',
     },
     {
-      type: 'input',
-      name: 'style_doc',
-      message: "Path to style doc (empty = Rafael's default style):",
-      default: existing.style_doc || '',
-    },
-    {
-      type: 'number',
-      name: 'score_cutoff',
-      message: 'Min score for auto-approve (0–10):',
-      default: existing.score_cutoff ?? DEFAULTS.score_cutoff,
-    },
-    {
-      type: 'number',
+      type: 'list',
       name: 'weekly_cap',
-      message: 'Max pages to generate per run:',
-      default: existing.weekly_cap ?? DEFAULTS.weekly_cap,
+      message: 'Wie viele neue Seiten soll das Tool pro Woche erstellen?',
+      choices: [
+        { name: '1 Seite — ruhig, viel Kontrolle', value: 1 },
+        { name: '2 Seiten — guter Rhythmus (empfohlen)', value: 2 },
+        { name: '4 Seiten — aggressiv', value: 4 },
+      ],
+      default: existing.weekly_cap ?? 2,
     },
     {
       type: 'input',
-      name: 'clusters',
-      message: 'Topic clusters (comma-separated):',
-      default: (existing.clusters || []).join(', '),
+      name: 'locale',
+      message: 'Sprache der Seiten (de / en):',
+      default: existing.locale || 'de',
     },
   ]);
+
+  // Derive clusters from topic via Claude if not already set
+  let clusters = existing.clusters || [];
+  if (!clusters.length && answers.topic) {
+    process.stdout.write(chalk.gray('  Themen-Cluster werden abgeleitet...'));
+    try {
+      const { complete } = await import('../lib/claude.js');
+      const result = await complete({
+        system: 'Antworte ausschließlich mit einem JSON-Array aus Strings.',
+        prompt: `Website-Beschreibung: "${answers.topic}"\n\nLeite 3–5 prägnante Themen-Cluster ab (je 2–4 Wörter, Deutsch). Nur das JSON-Array, kein Text.`,
+        json: true,
+      });
+      clusters = Array.isArray(result) ? result : [];
+      process.stdout.write(` ${clusters.join(', ')}\n`);
+    } catch {
+      process.stdout.write(' übersprungen\n');
+    }
+  }
 
   const config = {
     project: answers.repo.split('/')[1],
@@ -93,10 +111,11 @@ export async function initCommand() {
     landing_path: answers.landing_path,
     locale: answers.locale,
     primary_cta: answers.primary_cta,
-    style_doc: answers.style_doc || null,
-    score_cutoff: answers.score_cutoff,
+    style_doc: existing.style_doc || null,
+    score_cutoff: DEFAULTS.score_cutoff,
     weekly_cap: answers.weekly_cap,
-    clusters: answers.clusters.split(',').map(s => s.trim()).filter(Boolean),
+    clusters,
+    topic: answers.topic,
   };
 
   saveConfig(config, cwd);
