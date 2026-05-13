@@ -117,7 +117,10 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
     let serpData = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
     try {
       serpData = await getSerp(kw.keyword, { locale: config.locale });
-    } catch {}
+      console.log(chalk.gray(`    SerpAPI: ${serpData.people_also_ask.length} PAA, ${serpData.related_searches.length} related for "${kw.keyword}"`));
+    } catch (e) {
+      console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
+    }
 
     upsertKeyword(data, {
       keyword: kw.keyword,
