@@ -42,14 +42,14 @@ Output a complete Markdown file. Frontmatter first, then body.
 
 ```yaml
 slug: {{slug}}
-meta_title: "Keyword – Short benefit | Site"   # 50–60 chars
-meta_description: "What this page does. Concrete, no fluff."  # 140–160 chars
+meta_title: "Keyword – Kurzer Nutzen"   # 50–60 chars. No English words (Guide, Tips, Howto) if locale is de. No site name suffix needed.
+meta_description: "Was diese Seite löst. Konkret, kein Blabla."  # 140–160 chars
 updated: "{{today}}"
 hero:
-  eyebrow: "Short category label"
-  headline: "Action-oriented headline with keyword"
-  sub: "1–2 sentence sub-headline. Concrete benefit, no hype."
-tldr: "Direct answer in 2–3 sentences. Publicly verifiable facts only. No invented statistics."
+  eyebrow: "Kurze Kategoriebezeichnung in {{locale}}"   # NEVER use English type labels like "Howto", "Guide", "Service"
+  headline: "Handlungsorientierte Headline mit Keyword"
+  sub: "1–2 Sätze. Konkreter Nutzen, kein Hype."
+tldr: "Direkte Antwort in 2–3 Sätzen. Nur öffentlich prüfbare Fakten. Keine erfundenen Statistiken."
 related_features:
   - rsvp       # only include features genuinely relevant to this topic
   - bring      # available: rsvp, bring, gift, photos, tasks, comments, carpool,
