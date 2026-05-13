@@ -15,12 +15,12 @@ export function validate(markdown, keyword) {
   const fm = fmMatch[1];
 
   // Required frontmatter fields
-  for (const field of ['slug', 'metaTitle', 'metaDescription', 'type']) {
+  for (const field of ['slug', 'meta_title', 'meta_description', 'type']) {
     if (!fm.includes(`${field}:`)) errors.push(`Missing frontmatter field: ${field}`);
   }
 
   // Meta title length
-  const titleMatch = fm.match(/metaTitle:\s*["']?(.+?)["']?\s*$/m);
+  const titleMatch = fm.match(/meta_title:\s*["']?(.+?)["']?\s*$/m);
   if (titleMatch) {
     const len = titleMatch[1].length;
     if (len < 40) warnings.push(`metaTitle too short (${len} chars, aim for 50–60)`);
@@ -28,7 +28,7 @@ export function validate(markdown, keyword) {
   }
 
   // Meta description length
-  const descMatch = fm.match(/metaDescription:\s*["']?(.+?)["']?\s*$/m);
+  const descMatch = fm.match(/meta_description:\s*["']?(.+?)["']?\s*$/m);
   if (descMatch) {
     const len = descMatch[1].length;
     if (len < 120) warnings.push(`metaDescription short (${len} chars, aim for 140–160)`);

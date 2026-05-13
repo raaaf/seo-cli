@@ -14,6 +14,7 @@ Primary CTA: {{primary_cta}}
 Output language: {{locale}}
 People Also Ask (basis for FAQ): {{people_also_ask}}
 Related searches (use for internal link anchors): {{related_searches}}
+Existing slugs you may link to (ONLY use these for internal links): {{existing_slugs}}
 
 ## Writing style
 
@@ -23,8 +24,8 @@ Related searches (use for internal link anchors): {{related_searches}}
 
 ```yaml
 slug: organise-grill-party
-metaTitle: "Organise a Grill Party – Checklist & Tips"   # 50–60 chars
-metaDescription: "How to plan a grill party: shopping list, invites, timeline. With free checklist."  # 140–160 chars
+meta_title: "Organise a Grill Party – Checklist & Tips"   # 50–60 chars
+meta_description: "How to plan a grill party: shopping list, invites, timeline. With free checklist."  # 140–160 chars
 type: howto   # howto | comparison | service | guide | local_service
 geo_scope: global   # global | local
 hero:
@@ -101,7 +102,9 @@ Use CANONICAL_URL and BASE_URL as placeholders — the app will replace them at 
 ## Internal links
 
 Include 2–4 internal links in the body. Use related_searches as anchor text ideas.
-Format as markdown links: [anchor text](/slug). Use descriptive anchors, not "click here".
+Format as markdown links: [anchor text](/slug).
+ONLY link to slugs from the "Existing slugs" list above. If no existing slug fits, omit the link.
+Never invent slugs that do not exist in that list.
 
 ## Requirements
 
@@ -112,7 +115,11 @@ Format as markdown links: [anchor text](/slug). Use descriptive anchors, not "cl
   not rewrites of what already ranks. Programmatic duplication is a Google spam violation.
 - Each H2 and H3 must start with a bold 1–2 sentence summary before elaborating
   (Google AI Overviews extracts from the first 40–50 words of each section)
-- Include at least one original data point, concrete example, or first-person observation
+- Include at least one concrete, verifiable example or publicly available data point
+- NEVER fabricate statistics, customer numbers, years of experience, or case studies.
+  Do not write "we have helped X customers", "in our experience over Y years", or any
+  first-person claim that implies operational history. The site may be new. If you need
+  a credibility signal, cite a real external source instead.
 - FAQ: 4–6 real questions from people_also_ask and related_searches
 - No FAQPage schema (deprecated May 2026)
 - CTA at the end matching primary_cta

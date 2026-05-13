@@ -149,6 +149,8 @@ export async function initCommand() {
     project: bootstrap.repo.split('/')[1],
     repo: bootstrap.repo,
     gsc_property: bootstrap.gsc_property,
+    base_url: bootstrap.gsc_property.replace(/\/$/, ''),
+    site_name: finalSiteData.topic?.split(' ').slice(0, 3).join(' ') || bootstrap.repo.split('/')[1],
     landing_path: answers.landing_path,
     locales: answers.locales,
     locale: answers.locales[0],

@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
@@ -27,6 +27,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     .replace('{{locale}}', config.locale || 'de')
     .replace('{{people_also_ask}}', (keyword.serp?.people_also_ask || []).join('\n') || 'n/a')
     .replace('{{related_searches}}', (keyword.serp?.related_searches || []).join('\n') || 'n/a')
+    .replace('{{existing_slugs}}', getExistingSlugs(config, cwd).join(', ') || 'none')
     .replace('{{style}}', style)
     .replace('{{today}}', format(new Date()))
     .replace('{{expected_entities_yaml}}', JSON.stringify(keyword.expected_entities || []))
@@ -34,14 +35,33 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
 
   console.log(chalk.blue(`  Generating: ${keyword.keyword}${validatorFeedback ? ' (retry)' : ''}`));
 
-  const markdown = await complete({
+  let markdown = await complete({
     system: 'You are an experienced SEO writer. Follow the instructions exactly.',
     prompt,
     model: 'claude-opus-4-7',
     maxTokens: 8000,
   });
 
+  // Replace schema placeholders
+  const baseUrl = (config.base_url || '').replace(/\/$/, '');
+  const localePath = config.locale === (config.locales?.[0] ?? config.locale) ? '' : `/${config.locale}`;
+  const canonicalUrl = `${baseUrl}${localePath}/${keyword.target_slug}`;
+  markdown = markdown
+    .replace(/CANONICAL_URL/g, canonicalUrl)
+    .replace(/BASE_URL/g, baseUrl)
+    .replace(/SITE_NAME/g, config.site_name || config.project || '');
+
   return markdown;
+}
+
+function getExistingSlugs(config, cwd) {
+  try {
+    const dir = join(cwd, config.landing_path);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter(f => f.endsWith('.md'))
+      .map(f => f.replace('.md', ''));
+  } catch { return []; }
 }
 
 function loadStyleDoc(config, cwd) {
