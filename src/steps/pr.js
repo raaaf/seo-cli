@@ -33,7 +33,7 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
 
   console.log(chalk.blue(`  Creating branch ${branch}, committing ${files.length} files...`));
 
-  await createBranchAndCommit({ files, message: commitMsg, cwd });
+  await createBranchAndCommit({ files, message: commitMsg, cwd, repo: config.repo });
 
   const prBody = buildPRBody(enrichedPages, sitemapPending, config);
   const prUrl = await openPR({
