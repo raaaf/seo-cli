@@ -20,6 +20,17 @@ export async function discover(config, cwd = process.cwd()) {
     data.keywords.filter(k => ['done', 'skip', 'pr_opened'].includes(k.status)).map(k => k.keyword)
   );
 
+  // Mark as done any keywords whose file already exists locally (merged PR)
+  const existingFiles = getExistingLandingTitles(config.landing_path, cwd);
+  let markedDone = 0;
+  for (const kw of data.keywords) {
+    if (kw.status === 'pr_opened' && kw.target_slug && existingFiles.includes(kw.target_slug)) {
+      kw.status = 'done';
+      markedDone++;
+    }
+  }
+  if (markedDone > 0) console.log(chalk.gray(`  Marked ${markedDone} keyword(s) as done (files found locally)`));
+
   const rows = await querySearchAnalytics(config.gsc_property);
   const minImpressions = config.min_impressions ?? 5;
   const candidates = rows.filter(
@@ -69,6 +80,14 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
       result = await complete({ system: 'You are an SEO expert. Reply exclusively with JSON.', prompt, json: true });
     } catch (e) {
       console.log(chalk.yellow(`  Score skip (${row.keyword}): ${e.message}`));
+      continue;
+    }
+
+    // Skip if slug already taken by another keyword
+    const slugTaken = result.target_slug &&
+      data.keywords.some(k => k.target_slug === result.target_slug && k.keyword !== row.keyword);
+    if (slugTaken) {
+      console.log(chalk.gray(`  Slug collision: ${result.target_slug} already taken, skipping ${row.keyword}`));
       continue;
     }
 

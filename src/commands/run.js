@@ -54,6 +54,20 @@ export async function runCommand(opts) {
         const localeConfig = { ...config, locale, landing_path: localeLandingPath };
         const label = locales.length > 1 ? ` [${locale}]` : '';
 
+        // Hard check: skip if file already exists locally or slug already being generated
+        const { join: pathJoin } = await import('path');
+        const { existsSync } = await import('fs');
+        const targetFile = pathJoin(cwd, localeLandingPath, `${kw.target_slug}.md`);
+        if (existsSync(targetFile)) {
+          console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
+          kw.status = 'done';
+          continue;
+        }
+        if (generatedPages.some(p => p.slug === kw.target_slug && p.locale === locale)) {
+          console.log(chalk.yellow(`  Skipping ${kw.target_slug}${label} — slug collision with another keyword`));
+          continue;
+        }
+
         let markdown;
         let valid = false;
         let lastResult;
