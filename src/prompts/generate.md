@@ -57,39 +57,46 @@ If geo_scope is "local":
 
 ## Schema.org (include as JSON-LD in a fenced ```json block at the end of the file)
 
-Choose the appropriate schema based on type:
+**Note:** FAQPage rich results were deprecated by Google on May 7, 2026. Do NOT add FAQPage schema.
+HowTo rich results are only shown on primary content pages — only add HowTo if the page type is genuinely howto.
 
-**howto** → HowTo schema with steps extracted from the content
-**comparison / guide** → Article schema (headline, description, datePublished)
-**service / local_service** → LocalBusiness or SoftwareApplication schema
-**All pages** → Add FAQPage schema from the FAQ section (still valuable for AI citation in 2026)
+Choose the appropriate primary schema:
 
-Example HowTo + FAQ:
+**howto** → HowTo with steps extracted from the content
+**comparison / guide** → Article (headline, description, datePublished, author)
+**service / local_service** → SoftwareApplication or LocalBusiness
+
+All pages must also include:
+- `WebPage` with `mainEntityOfPage` pointing to the canonical URL
+- `BreadcrumbList` with at least home → this page
+- `SameAs` on the Organization node linking to social profiles (if known)
+
+Example Article + Organization:
 ```json
 {
   "@context": "https://schema.org",
   "@graph": [
     {
-      "@type": "HowTo",
-      "name": "{{keyword}}",
+      "@type": "Article",
+      "headline": "{{keyword}}",
       "description": "...",
-      "step": [
-        { "@type": "HowToStep", "name": "Step 1", "text": "..." }
-      ]
+      "datePublished": "{{today}}",
+      "dateModified": "{{today}}",
+      "mainEntityOfPage": { "@type": "WebPage", "@id": "CANONICAL_URL" },
+      "author": { "@type": "Organization", "name": "SITE_NAME" }
     },
     {
-      "@type": "FAQPage",
-      "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "Question text",
-          "acceptedAnswer": { "@type": "Answer", "text": "Answer text" }
-        }
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": "BASE_URL" },
+        { "@type": "ListItem", "position": 2, "name": "{{keyword}}", "item": "CANONICAL_URL" }
       ]
     }
   ]
 }
 ```
+
+Use CANONICAL_URL and BASE_URL as placeholders — the app will replace them at render time.
 
 ## Internal links
 
@@ -101,8 +108,13 @@ Format as markdown links: [anchor text](/slug). Use descriptive anchors, not "cl
 - Minimum 800 words in the body (excluding frontmatter and schema)
 - Keyword in hero.headline, in the first 100 words, and in at least one H2
 - All expected_entities must appear naturally
-- Cover at least 2 aspects from content_gaps
-- FAQ: 4–6 questions from people_also_ask and related_searches
+- Cover at least 2 aspects from content_gaps — these must be genuinely unique insights,
+  not rewrites of what already ranks. Programmatic duplication is a Google spam violation.
+- Each H2 and H3 must start with a bold 1–2 sentence summary before elaborating
+  (Google AI Overviews extracts from the first 40–50 words of each section)
+- Include at least one original data point, concrete example, or first-person observation
+- FAQ: 4–6 real questions from people_also_ask and related_searches
+- No FAQPage schema (deprecated May 2026)
 - CTA at the end matching primary_cta
 - No "Conclusion" section
 - No unnatural keyword repetition
