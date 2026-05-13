@@ -5,27 +5,27 @@ export async function analyzeSite(url) {
   const pages = await fetchPages(url);
 
   const result = await complete({
-    system: 'Du analysierst Websites und antwortest ausschließlich mit JSON.',
-    prompt: `Analysiere diese Website und extrahiere die folgenden Informationen.
+    system: 'You analyze websites and reply exclusively with JSON.',
+    prompt: `Analyze this website and extract the following information.
 
 URL: ${url}
 
-Seiten-Inhalt:
+Page content:
 ${pages}
 
-Antworte mit diesem JSON:
+Reply with this JSON:
 \`\`\`json
 {
-  "topic": "1–2 Sätze was diese Website macht und für wen",
+  "topic": "1–2 sentences describing what this site does and for whom",
   "clusters": ["cluster 1", "cluster 2", "cluster 3"],
   "primary_cta": "trial_signup | book_demo | contact | download_app | learn_more",
   "locale": "de | en",
-  "tone": "direkt und nüchtern | freundlich und locker | professionell und formal"
+  "tone": "direct and no-nonsense | friendly and casual | professional and formal"
 }
 \`\`\`
 
-Erlaubte primary_cta Werte: trial_signup, book_demo, contact, download_app, learn_more
-Clusters: 3–5 prägnante Themen (2–4 Wörter), die beschreiben wofür Landing-Pages Sinn machen.`,
+Allowed primary_cta values: trial_signup, book_demo, contact, download_app, learn_more
+Clusters: 3–5 concise topics (2–4 words) describing what landing pages make sense for.`,
     json: true,
   });
 

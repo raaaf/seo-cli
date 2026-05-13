@@ -1,43 +1,43 @@
-Du bewertest Keywords für SEO-Landing-Pages und analysierst den SERP.
+You are evaluating a keyword for an SEO landing page and analyzing the SERP.
 
-## Aufgabe
+## Task
 
-Bewerte das Keyword und gib eine JSON-Antwort zurück.
+Score this keyword and return a JSON response.
 
-## Eingabe
+## Input
 
 Keyword: {{keyword}}
-GSC-Daten: Impressions {{impressions}}, Position {{position}}, Clicks {{clicks}}
-Projekt-Cluster: {{clusters}}
-Bestehende Seiten (Slugs): {{existing_slugs}}
-Top-SERP-Titles: {{serp_titles}}
-Top-SERP-Snippets: {{serp_snippets}}
+GSC data: Impressions {{impressions}}, Position {{position}}, Clicks {{clicks}}
+Topic clusters: {{clusters}}
+Existing slugs: {{existing_slugs}}
+Top SERP titles: {{serp_titles}}
+Top SERP snippets: {{serp_snippets}}
 People Also Ask: {{people_also_ask}}
 
-## Bewertungskriterien
+## Scoring criteria
 
 Score 0–10:
-- 0–4: Kein Fit (falsches Thema, zu generisch, bereits abgedeckt)
-- 5–6: Schwacher Fit (thematisch okay, aber wenig Potenzial)
-- 7–8: Guter Fit (passt zum Cluster, klare Suchintention, Lücke erkennbar)
-- 9–10: Starker Fit (hohe Impressions auf Seite 2, klare Lücke, eindeutige Intention)
+- 0–4: No fit (wrong topic, too generic, already covered)
+- 5–6: Weak fit (topically okay, low potential)
+- 7–8: Good fit (matches cluster, clear intent, visible gap)
+- 9–10: Strong fit (high impressions on page 2, clear gap, unambiguous intent)
 
 ## Output
 
-Antworte ausschließlich mit JSON:
+Reply exclusively with JSON:
 
 ```json
 {
   "score": 8,
   "type": "howto",
   "intent": "informational",
-  "target_slug": "grillparty-organisieren",
-  "expected_entities": ["einladung", "getränke", "grill", "beilagen", "playlist"],
-  "content_gaps": ["vegane Optionen", "Checkliste zum Download", "Zeitplan"],
-  "reason": "Hohe Impressions auf Position 11, Top-SERP hat keine konkrete Checkliste, Cluster-Fit sehr gut"
+  "target_slug": "grill-party-organise",
+  "expected_entities": ["invitation", "drinks", "grill", "sides", "playlist"],
+  "content_gaps": ["vegan options", "downloadable checklist", "timeline"],
+  "reason": "High impressions at position 11, top SERP has no concrete checklist, strong cluster fit"
 }
 ```
 
-Erlaubte Typen: howto, comparison, service, guide, local_service
+Allowed types: howto, comparison, service, guide, local_service
 
-Antworte nur mit dem JSON-Block, kein Text davor oder danach.
+Reply only with the JSON block, no text before or after.

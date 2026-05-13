@@ -6,34 +6,34 @@ export async function generateStyleDoc(siteUrl, outputPath, cwd = process.cwd())
   const pages = await fetchCopyHeavyPages(siteUrl);
 
   const styleGuide = await complete({
-    system: 'Du analysierst Website-Texte und leitest daraus einen Schreibstil-Guide ab. Antworte auf Deutsch.',
-    prompt: `Analysiere die folgenden Website-Texte und leite einen Schreibstil-Guide ab.
+    system: 'You analyze website copy and derive a writing style guide. Write the guide in the same language as the website copy.',
+    prompt: `Analyze the following website copy and derive a writing style guide.
 
 ${pages}
 
-Erstelle ein Markdown-Dokument mit diesem Aufbau:
+Create a Markdown document with this structure:
 
-# Schreibstil-Guide
+# Writing Style Guide
 
-## Tonalität
-(Wie klingt die Seite? Direkt/locker/formal? Wer ist die Zielgruppe?)
+## Tone
+(How does the site sound? Direct/casual/formal? Who is the audience?)
 
-## Sprache
-(Du/Sie? Aktiv/Passiv? Satzlänge? Besonderheiten?)
+## Language
+(You/Sie? Active/passive? Sentence length? Particularities?)
 
-## Verbotene Phrasen
-(Mindestens 15 Formulierungen die auf dieser Seite NIE vorkommen und nicht zum Stil passen)
+## Forbidden phrases
+(At least 15 formulations that should NEVER appear and don't fit the style)
 
-## Gute Beispiele
-(3–5 echte Sätze aus den Texten die den Stil gut zeigen)
+## Good examples
+(3–5 real sentences from the copy that demonstrate the style well)
 
-## So nicht / So ja
-(3 Gegenüberstellungen: generischer Text vs. wie es auf dieser Website klingen würde)
+## Don't / Do
+(3 side-by-side comparisons: generic text vs. how it would sound on this site)
 
-## CTA-Stil
-(Wie sind Handlungsaufforderungen formuliert? Beispiele.)
+## CTA style
+(How are calls to action phrased? Examples.)
 
-Sei konkret und spezifisch. Keine generischen Ratschläge.`,
+Be specific and concrete. No generic advice.`,
     maxTokens: 3000,
   });
 

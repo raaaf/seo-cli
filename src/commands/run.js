@@ -39,9 +39,9 @@ export async function runCommand(opts) {
   const toGenerate = pending.slice(0, config.weekly_cap);
 
   if (toGenerate.length === 0) {
-    console.log(chalk.gray('\nKeine Keywords zum Generieren. Nächster Run bringt neue Vorschläge.'));
+    console.log(chalk.gray('\nNo keywords to generate. Next run will surface new suggestions.'));
   } else {
-    console.log(chalk.bold(`\n${toGenerate.length} Seite(n) werden generiert:\n`));
+    console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
 
     const generatedPages = [];
 
@@ -61,7 +61,7 @@ export async function runCommand(opts) {
         }
 
         if (!valid) {
-          console.log(chalk.red(`  Übersprungen: ${kw.keyword}${label} (Validierung fehlgeschlagen)`));
+          console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed)`));
           continue;
         }
 
@@ -86,7 +86,7 @@ export async function runCommand(opts) {
     if (!dryRun && generatedPages.length > 0) {
       saveKeywords(keywordsData, cwd);
       const prUrl = await createPR({ generatedPages, keywordsJsonContent: keywordsData, config, cwd });
-      console.log(chalk.bold(`\nFertig. PR: ${prUrl}`));
+      console.log(chalk.bold(`\nDone. PR: ${prUrl}`));
     }
   }
 

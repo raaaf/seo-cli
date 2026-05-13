@@ -1,23 +1,24 @@
-Du schlägst SEO-Keywords für eine Landing-Page-Strategie vor.
+You are suggesting SEO keywords for a landing page strategy.
 
-## Kontext
+## Context
 
-Themen-Cluster: {{clusters}}
-Bestehende Slugs (nicht nochmal vorschlagen): {{existing_slugs}}
-Bestehende Landing-Titles: {{existing_landings}}
-Locale: {{locale}}
+Topic clusters: {{clusters}}
+Existing slugs (do not suggest again): {{existing_slugs}}
+Existing landing titles: {{existing_landings}}
+Target locale: {{locale}}
 
-## Aufgabe
+## Task
 
-Schlage 6 konkrete Keywords vor, für die eine Landing-Page Sinn macht. Jedes Keyword sollte:
-- Zur Zielgruppe der Cluster passen
-- Eine klare Suchintention haben
-- Noch nicht durch bestehende Slugs abgedeckt sein
-- Realistisch rankbar sein (nicht zu generisch, nicht zu nischig)
+Suggest 6 concrete keywords for which a landing page makes sense. Each keyword should:
+- Fit the target audience of the clusters
+- Have a clear search intent
+- Not already be covered by existing slugs
+- Be realistically rankable (not too generic, not too niche)
+- Match the locale language
 
 ## Output
 
-Antworte ausschließlich mit einem JSON-Array:
+Reply exclusively with a JSON array:
 
 ```json
 [
@@ -27,12 +28,12 @@ Antworte ausschließlich mit einem JSON-Array:
     "type": "howto",
     "intent": "informational",
     "score": 8,
-    "expected_entities": ["tagesordnung", "einladung", "protokoll", "abstimmung"],
-    "content_gaps": ["digitale Abstimmungstools", "hybride Treffen"]
+    "expected_entities": ["agenda", "invitation", "minutes", "vote"],
+    "content_gaps": ["digital voting tools", "hybrid meetings"]
   }
 ]
 ```
 
-Erlaubte Typen: howto, comparison, service, guide, local_service
+Allowed types: howto, comparison, service, guide, local_service
 
-Antworte nur mit dem JSON-Array, kein Text davor oder danach.
+Reply only with the JSON array, no text before or after.

@@ -41,28 +41,28 @@ export async function initCommand() {
   // Step 3: Claude reads the site and extracts everything
   let siteData = {};
   if (bootstrap.gsc_property) {
-    process.stdout.write(chalk.blue(`\nAnalysiere ${bootstrap.gsc_property}...`));
+    process.stdout.write(chalk.blue(`\nAnalysing ${bootstrap.gsc_property}...`));
     try {
       siteData = await analyzeSite(bootstrap.gsc_property);
-      process.stdout.write(chalk.green(' fertig.\n\n'));
-      console.log(chalk.gray(`  Thema:    ${siteData.topic}`));
-      console.log(chalk.gray(`  Cluster:  ${(siteData.clusters || []).join(', ')}`));
+      process.stdout.write(chalk.green(' done.\n\n'));
+      console.log(chalk.gray(`  Topic:    ${siteData.topic}`));
+      console.log(chalk.gray(`  Clusters: ${(siteData.clusters || []).join(', ')}`));
       console.log(chalk.gray(`  CTA:      ${siteData.primary_cta}`));
-      console.log(chalk.gray(`  Sprache:  ${siteData.locale}`));
+      console.log(chalk.gray(`  Locale:   ${siteData.locale}`));
       console.log('');
 
       // Generate style doc from website copy
       const styleDocPath = detected.style_doc || 'docs/writing-style.md';
-      process.stdout.write(chalk.blue(`  Schreibstil wird analysiert...`));
+      process.stdout.write(chalk.blue(`  Analysing writing style...`));
       try {
         await generateStyleDoc(bootstrap.gsc_property, styleDocPath, cwd);
         detected.style_doc = styleDocPath;
-        process.stdout.write(chalk.green(` gespeichert in ${styleDocPath}\n\n`));
+        process.stdout.write(chalk.green(` saved to ${styleDocPath}\n\n`));
       } catch (e) {
-        process.stdout.write(chalk.yellow(` übersprungen (${e.message})\n\n`));
+        process.stdout.write(chalk.yellow(` skipped (${e.message})\n\n`));
       }
     } catch (e) {
-      process.stdout.write(chalk.yellow(` fehlgeschlagen (${e.message})\n\n`));
+      process.stdout.write(chalk.yellow(` failed (${e.message})\n\n`));
     }
   }
 
@@ -71,28 +71,28 @@ export async function initCommand() {
     {
       type: 'input',
       name: 'landing_path',
-      message: 'Wo sollen generierte Seiten abgelegt werden?',
+      message: 'Where should generated pages be saved?',
       default: existing.landing_path || detected.landing_path || 'resources/landing/de/',
     },
     {
       type: 'list',
       name: 'weekly_cap',
-      message: 'Wie viele neue Seiten pro Woche?',
+      message: 'How many new pages per week?',
       choices: [
-        { name: '1 — ruhig, viel Kontrolle', value: 1 },
-        { name: '2 — guter Rhythmus (empfohlen)', value: 2 },
-        { name: '4 — aggressiv', value: 4 },
+        { name: '1 — slow, maximum control', value: 1 },
+        { name: '2 — good rhythm (recommended)', value: 2 },
+        { name: '4 — aggressive', value: 4 },
       ],
       default: existing.weekly_cap ?? 2,
     },
     {
       type: 'list',
       name: 'locales',
-      message: 'In welcher Sprache sollen Seiten generiert werden?',
+      message: 'Which language(s) should pages be generated in?',
       choices: [
-        { name: 'Nur Deutsch', value: ['de'] },
-        { name: 'Nur Englisch', value: ['en'] },
-        { name: 'Deutsch + Englisch (beide in einem Run)', value: ['de', 'en'] },
+        { name: 'German only', value: ['de'] },
+        { name: 'English only', value: ['en'] },
+        { name: 'German + English (both in one run)', value: ['de', 'en'] },
       ],
       default: existing.locales
         ? JSON.stringify(existing.locales)
@@ -101,7 +101,7 @@ export async function initCommand() {
     {
       type: 'confirm',
       name: 'confirm_analysis',
-      message: `Stimmt die Analyse? (sonst kurz korrigieren)`,
+      message: `Does the analysis look right?`,
       default: true,
       when: () => !!siteData.topic,
     },
@@ -114,25 +114,25 @@ export async function initCommand() {
       {
         type: 'input',
         name: 'topic',
-        message: 'Worum geht es auf dieser Website?',
+        message: 'What does this website do and for whom?',
         default: siteData.topic || '',
       },
       {
         type: 'input',
         name: 'clusters',
-        message: 'Themen-Cluster (kommagetrennt):',
+        message: 'Topic clusters (comma-separated):',
         default: (siteData.clusters || []).join(', '),
       },
       {
         type: 'list',
         name: 'primary_cta',
-        message: 'Was sollen Besucher tun?',
+        message: 'What should visitors do?',
         choices: [
-          { name: 'Kostenlos registrieren', value: 'trial_signup' },
-          { name: 'Demo buchen', value: 'book_demo' },
-          { name: 'Kontakt aufnehmen', value: 'contact' },
-          { name: 'App herunterladen', value: 'download_app' },
-          { name: 'Mehr erfahren / Newsletter', value: 'learn_more' },
+          { name: 'Sign up for free', value: 'trial_signup' },
+          { name: 'Book a demo', value: 'book_demo' },
+          { name: 'Get in touch', value: 'contact' },
+          { name: 'Download the app', value: 'download_app' },
+          { name: 'Learn more / newsletter', value: 'learn_more' },
         ],
         default: siteData.primary_cta || 'trial_signup',
       },
@@ -161,7 +161,7 @@ export async function initCommand() {
   };
 
   saveConfig(config, cwd);
-  console.log(chalk.green('\nConfig gespeichert in seo.config.yaml'));
-  console.log(chalk.gray('\nNächster Schritt:'));
+  console.log(chalk.green('\nConfig saved to seo.config.yaml'));
+  console.log(chalk.gray('\nNext:'));
   console.log(chalk.white('  seo run --dry-run'));
 }

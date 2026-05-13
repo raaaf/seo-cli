@@ -1,34 +1,34 @@
-Du schreibst eine SEO-Landing-Page als Markdown-Datei mit YAML-Frontmatter.
+You are writing an SEO landing page as a Markdown file with YAML frontmatter.
 
-## Kontext
+## Context
 
 Keyword: {{keyword}}
 Slug: {{slug}}
-Typ: {{type}}
-Suchintention: {{intent}}
-Erwartete Entities (müssen vorkommen): {{expected_entities}}
-Content-Lücken gegenüber Top-3-SERP (hier punkten): {{content_gaps}}
+Type: {{type}}
+Search intent: {{intent}}
+Expected entities (must appear naturally): {{expected_entities}}
+Content gaps vs. top-3 SERP (score points here): {{content_gaps}}
 Primary CTA: {{primary_cta}}
-Locale: {{locale}}
-People Also Ask (Basis für FAQ): {{people_also_ask}}
-Related Searches (für interne Links und semantische Tiefe): {{related_searches}}
+Output language: {{locale}}
+People Also Ask (basis for FAQ): {{people_also_ask}}
+Related searches (for internal links and semantic depth): {{related_searches}}
 
-## Schreibstil
+## Writing style
 
 {{style}}
 
-## Frontmatter-Schema
+## Frontmatter schema
 
 ```yaml
-slug: grillparty-organisieren
-metaTitle: "Grillparty organisieren – Checkliste & Tipps | Events App"   # 50–60 Zeichen
-metaDescription: "Wie du eine Grillparty planst: Einkaufsliste, Gäste einladen, Zeitplan. Mit kostenloser Checkliste."  # 140–160 Zeichen
+slug: organise-grill-party
+metaTitle: "Organise a Grill Party – Checklist & Tips | Events App"   # 50–60 chars
+metaDescription: "How to plan a grill party: shopping list, invites, timeline. With free checklist."  # 140–160 chars
 type: howto   # howto | comparison | service | guide | local_service
 hero:
-  eyebrow: "Eventplanung leicht gemacht"
-  headline: "Grillparty organisieren ohne Chaos"
-  sub: "Checkliste, Zeitplan und was du wirklich brauchst."
-tldr: "Eine Grillparty braucht: Einladungen 2 Wochen vorher, Getränke für 2–3 pro Person, Grillkohle für 1 kg pro 5 Personen, einen Regenwetter-Plan."
+  eyebrow: "Event planning made easy"
+  headline: "Organise a Grill Party Without the Chaos"
+  sub: "Checklist, timeline and everything you actually need."
+tldr: "A grill party needs: invites 2 weeks ahead, drinks for 2–3 per person, 1kg charcoal per 5 people, a rain backup plan."
 updated: "{{today}}"
 primary_cta: {{primary_cta}}
 geo_scope: global   # global | local
@@ -37,25 +37,26 @@ seo:
   expected_entities: {{expected_entities_yaml}}
 ```
 
-## Aufbau je nach Typ
+## Structure by type
 
-**howto**: Hero → TL;DR → Schritt-für-Schritt (H2 pro Schritt) → Checkliste → FAQ → CTA
-**comparison**: Hero → TL;DR → Vergleichstabelle → Pro/Contra je Option → Empfehlung → FAQ → CTA
-**service**: Hero → Problem → Lösung → Leistungsumfang → Prozess → FAQ → CTA
-**guide**: Hero → TL;DR → Hauptsektionen (H2) → Zusammenfassung → FAQ → CTA
-**local_service**: Hero → Lokaler Kontext → Leistung → Warum lokal → FAQ → CTA
+**howto**: Hero → TL;DR → Step-by-step (H2 per step) → Checklist → FAQ → CTA
+**comparison**: Hero → TL;DR → Comparison table → Pros/cons per option → Recommendation → FAQ → CTA
+**service**: Hero → Problem → Solution → Scope → Process → FAQ → CTA
+**guide**: Hero → TL;DR → Main sections (H2) → Summary → FAQ → CTA
+**local_service**: Hero → Local context → Service → Why local → FAQ → CTA
 
-## Anforderungen
+## Requirements
 
-- Mindestens 800 Wörter im Body
-- Keyword in H1, in den ersten 100 Wörtern, in mindestens einer H2
-- Alle expected_entities müssen natürlich vorkommen
-- Mindestens 2 Aspekte aus content_gaps abdecken
-- FAQ: 4–6 Fragen, aus people_also_ask und related_searches ableiten
-- CTA am Ende: je nach primary_cta passenden Text wählen
-- Kein "Fazit"-Abschnitt
-- Keine Keyword-Wiederholung die unnatürlich klingt
+- Minimum 800 words in the body
+- Keyword in hero.headline, in the first 100 words, and in at least one H2
+- All expected_entities must appear naturally
+- Cover at least 2 aspects from content_gaps
+- FAQ: 4–6 questions, derived from people_also_ask and related_searches
+- CTA at the end: choose wording appropriate for the primary_cta value
+- No "Conclusion" section
+- No unnatural keyword repetition
+- Write entirely in the language specified by the output locale ({{locale}})
 
 ## Output
 
-Gib ausschließlich die fertige Markdown-Datei aus. Kein Text davor oder danach, kein ```-Block drumherum.
+Output only the finished Markdown file. No text before or after, no ``` wrapper around it.

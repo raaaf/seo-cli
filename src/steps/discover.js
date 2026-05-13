@@ -64,7 +64,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
     const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData);
     let result;
     try {
-      result = await complete({ system: 'Du bist ein SEO-Experte. Antworte ausschließlich mit JSON.', prompt, json: true });
+      result = await complete({ system: 'You are an SEO expert. Reply exclusively with JSON.', prompt, json: true });
     } catch (e) {
       console.log(chalk.yellow(`  Score skip (${row.keyword}): ${e.message}`));
       continue;
@@ -92,14 +92,14 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
 
   const prompt = GREENFIELD_PROMPT
     .replace('{{clusters}}', (config.clusters || []).join(', '))
-    .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'keine')
-    .replace('{{existing_landings}}', existingLandings.join(', ') || 'keine')
+    .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'none')
+    .replace('{{existing_landings}}', existingLandings.join(', ') || 'none')
     .replace('{{locale}}', config.locale || 'de');
 
   let suggestions;
   try {
     suggestions = await complete({
-      system: 'Du bist ein SEO-Experte. Antworte ausschließlich mit JSON.',
+      system: 'You are an SEO expert. Reply exclusively with JSON.',
       prompt,
       json: true,
     });
@@ -157,7 +157,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
     .replace('{{position}}', row.position.toFixed(1))
     .replace('{{clicks}}', row.clicks)
     .replace('{{clusters}}', (config.clusters || []).join(', '))
-    .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'keine')
+    .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'none')
     .replace('{{serp_titles}}', serpData.top_titles.join('\n') || 'n/a')
     .replace('{{serp_snippets}}', serpData.top_snippets.join('\n') || 'n/a')
     .replace('{{people_also_ask}}', serpData.people_also_ask.join('\n') || 'n/a');
