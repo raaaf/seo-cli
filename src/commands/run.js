@@ -52,16 +52,17 @@ export async function runCommand(opts) {
 
         let markdown;
         let valid = false;
+        let lastResult;
 
         for (let attempt = 1; attempt <= 2; attempt++) {
-          markdown = await generatePage(kw, localeConfig, cwd);
-          const result = validate(markdown, kw);
-          if (result.ok) { valid = true; break; }
-          if (attempt === 1) console.log(chalk.yellow(`  Retry${label}...`));
+          markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null);
+          lastResult = validate(markdown, kw);
+          if (lastResult.ok) { valid = true; break; }
         }
 
         if (!valid) {
-          console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed)`));
+          console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
+          kw.status = 'validation_failed';
           continue;
         }
 
@@ -84,9 +85,19 @@ export async function runCommand(opts) {
     }
 
     if (!dryRun && generatedPages.length > 0) {
-      saveKeywords(keywordsData, cwd);
-      const prUrl = await createPR({ generatedPages, keywordsJsonContent: keywordsData, config, cwd });
-      console.log(chalk.bold(`\nDone. PR: ${prUrl}`));
+      try {
+        saveKeywords(keywordsData, cwd);
+        const prUrl = await createPR({ generatedPages, keywordsJsonContent: keywordsData, config, cwd });
+        console.log(chalk.bold(`\nDone. PR: ${prUrl}`));
+      } catch (e) {
+        console.error(chalk.red(`\nPR creation failed: ${e.message}`));
+        // Reset status so keywords are retried next run
+        generatedPages.forEach(p => {
+          const kw = keywordsData.keywords.find(k => k.keyword === p.keyword);
+          if (kw) kw.status = 'proposed';
+        });
+        saveKeywords(keywordsData, cwd);
+      }
     }
   }
 
