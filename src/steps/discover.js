@@ -16,11 +16,18 @@ export async function discover(config, cwd = process.cwd()) {
 
   // GSC: position 8–25, min 100 impressions
   const rows = await querySearchAnalytics(config.gsc_property);
+  const minImpressions = config.min_impressions ?? 5;
   const candidates = rows.filter(
-    r => r.position >= 8 && r.position <= 25 && r.impressions >= 100 && !doneKeywords.has(r.keyword)
+    r => r.position >= 8 && r.position <= 25 && r.impressions >= minImpressions && !doneKeywords.has(r.keyword)
   );
 
-  console.log(chalk.gray(`  GSC: ${rows.length} queries, ${candidates.length} candidates`));
+  if (rows.length > 0) {
+    console.log(chalk.gray(`  GSC data (top ${rows.length} queries):`));
+    rows.slice(0, 10).forEach(r =>
+      console.log(chalk.gray(`    pos ${r.position.toFixed(1).padStart(5)}  impr ${String(r.impressions).padStart(4)}  "${r.keyword}"`))
+    );
+  }
+  console.log(chalk.gray(`  ${candidates.length} candidates (pos 8–25, impr >= ${minImpressions})`));
 
   let scored = 0;
   for (const row of candidates.slice(0, 20)) {

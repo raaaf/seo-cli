@@ -23,4 +23,5 @@ export const DEFAULTS = {
   style_doc: null,
   score_cutoff: 7,
   weekly_cap: 2,
+  min_impressions: 5,
 };
