@@ -1,9 +1,9 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { loadConfig, saveConfig, DEFAULTS } from '../lib/config.js';
+import { detectProject } from '../lib/detect.js';
 
 export async function initCommand() {
   const cwd = process.cwd();
@@ -12,19 +12,27 @@ export async function initCommand() {
   let existing = {};
   if (existsSync(configPath)) {
     existing = loadConfig(cwd);
-    console.log(chalk.gray('Found existing seo.config.yaml — updating values (Enter to keep current).'));
+    console.log(chalk.gray('Found existing seo.config.yaml — updating values (Enter to keep current).\n'));
   } else {
-    console.log(chalk.blue('Setting up seo-cli for this project.\n'));
+    console.log(chalk.blue('Analysing project...\n'));
+    const detected = detectProject(cwd);
+    const found = Object.entries(detected).filter(([, v]) => v != null);
+    if (found.length > 0) {
+      console.log(chalk.gray('Detected:'));
+      for (const [k, v] of found) {
+        console.log(chalk.gray(`  ${k}: ${Array.isArray(v) ? v.join(', ') : v}`));
+      }
+      console.log('');
+    }
+    existing = detected;
   }
-
-  const repoDefault = existing.repo || guessRepo(cwd);
 
   const answers = await inquirer.prompt([
     {
       type: 'input',
       name: 'repo',
       message: 'GitHub Repo (owner/name):',
-      default: repoDefault,
+      default: existing.repo || '',
       validate: v => v.includes('/') || 'Format: owner/name',
     },
     {
@@ -37,7 +45,7 @@ export async function initCommand() {
     {
       type: 'input',
       name: 'landing_path',
-      message: 'Landing pages path in repo (where .md files go):',
+      message: 'Landing pages path (where .md files go):',
       default: existing.landing_path || 'resources/landing/de/',
     },
     {
@@ -49,13 +57,13 @@ export async function initCommand() {
     {
       type: 'input',
       name: 'primary_cta',
-      message: 'Primary CTA (e.g. trial_signup, contact, demo):',
+      message: 'Primary CTA:',
       default: existing.primary_cta || DEFAULTS.primary_cta,
     },
     {
       type: 'input',
       name: 'style_doc',
-      message: 'Path to style doc (leave empty for Rafael\'s default style):',
+      message: "Path to style doc (empty = Rafael's default style):",
       default: existing.style_doc || '',
     },
     {
@@ -92,17 +100,8 @@ export async function initCommand() {
   };
 
   saveConfig(config, cwd);
-  console.log(chalk.green(`\nConfig saved to seo.config.yaml`));
-  console.log(chalk.gray('\nNext: set env vars in .env (copy from .env.example), then run:'));
-  console.log(chalk.white('  seo run'));
-}
-
-function guessRepo(cwd) {
-  try {
-    const remote = execSync('git remote get-url origin', { cwd, encoding: 'utf8' }).trim();
-    const match = remote.match(/github\.com[:/](.+?)(?:\.git)?$/);
-    return match?.[1] ?? '';
-  } catch {
-    return '';
-  }
+  console.log(chalk.green('\nConfig saved to seo.config.yaml'));
+  console.log(chalk.gray('\nNext steps:'));
+  console.log(chalk.white('  1. Copy .env.example to .env and fill in your API keys'));
+  console.log(chalk.white('  2. seo run --dry-run'));
 }
