@@ -73,6 +73,12 @@ export async function initCommand() {
       name: 'landing_path',
       message: 'Where should generated pages be saved?',
       default: existing.landing_path || detected.landing_path || 'resources/landing/de/',
+      validate: v => {
+        if (!v || v.startsWith('/') || v.includes('..')) {
+          return 'Use a relative path that stays inside the project (e.g. resources/landing/de/)';
+        }
+        return true;
+      },
     },
     {
       type: 'list',

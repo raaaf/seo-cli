@@ -3,6 +3,9 @@ import { join } from 'path';
 import chalk from 'chalk';
 import { createBranchAndCommit, openPR } from '../lib/github.js';
 import { isoWeek, format } from '../lib/date.js';
+import { KEYWORDS_FILE } from '../lib/keywords.js';
+
+const SITEMAP_PENDING_FILE = 'seo/sitemap-pending.json';
 
 export async function createPR({ generatedPages, keywordsJsonContent, config, cwd = process.cwd() }) {
   const week = isoWeek();
@@ -12,10 +15,8 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
   const sitemapPending = loadSitemapPending(cwd);
   const locales = config.locales || [config.locale || 'de'];
   for (const page of generatedPages) {
-    for (const locale of locales) {
-      const slug = `/${locale === config.locales?.[0] ? '' : locale + '/'}${page.slug}`;
-      if (!sitemapPending.slugs.includes(slug)) sitemapPending.slugs.push(slug);
-    }
+    const slug = `/${page.locale === config.locales?.[0] ? '' : page.locale + '/'}${page.slug}`;
+    if (!sitemapPending.slugs.includes(slug)) sitemapPending.slugs.push(slug);
   }
 
   // Add hreflang frontmatter for multi-locale pages
@@ -25,11 +26,12 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
 
   const files = [
     ...enrichedPages.map(p => ({ path: p.filePath, content: p.markdown })),
-    { path: 'seo/keywords.json', content: JSON.stringify(keywordsJsonContent, null, 2) + '\n' },
-    { path: 'seo/sitemap-pending.json', content: JSON.stringify(sitemapPending, null, 2) + '\n' },
+    { path: KEYWORDS_FILE, content: JSON.stringify(keywordsJsonContent, null, 2) + '\n' },
+    { path: SITEMAP_PENDING_FILE, content: JSON.stringify(sitemapPending, null, 2) + '\n' },
   ];
 
-  const commitMsg = `seo: add landing pages for ${week}\n\n${generatedPages.map(p => `- ${p.keyword}`).join('\n')}`;
+  const safeKeyword = (kw) => String(kw ?? '').replace(/\r?\n/g, ' ').slice(0, 200);
+  const commitMsg = `seo: add landing pages for ${week}\n\n${generatedPages.map(p => `- ${safeKeyword(p.keyword)}`).join('\n')}`;
 
   console.log(chalk.blue(`  Creating branch ${branch}, committing ${files.length} files...`));
 
@@ -68,14 +70,21 @@ function injectHreflang(pages, locales) {
 }
 
 function loadSitemapPending(cwd) {
-  const path = join(cwd, 'seo/sitemap-pending.json');
+  const path = join(cwd, SITEMAP_PENDING_FILE);
   if (!existsSync(path)) return { updated: null, slugs: [] };
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return { updated: null, slugs: [] }; }
 }
 
+function mdCell(str) {
+  return String(str ?? '')
+    .replace(/\r?\n/g, ' ')
+    .replace(/\|/g, '\\|')
+    .replace(/`/g, '\\`');
+}
+
 function buildPRBody(pages, sitemapPending, config) {
   const rows = pages.map(p =>
-    `| ${p.keyword} | \`${p.slug}\` | ${p.locale || config.locale} | ${p.score} | ${p.type} |`
+    `| ${mdCell(p.keyword)} | \`${mdCell(p.slug)}\` | ${mdCell(p.locale || config.locale)} | ${mdCell(p.score)} | ${mdCell(p.type)} |`
   ).join('\n');
 
   const sitemapNote = sitemapPending.slugs.length

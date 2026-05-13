@@ -21,19 +21,17 @@ export function checkQuota() {
   return { used: q.used, remaining: WEEKLY_LIMIT - q.used, week };
 }
 
-function incrementQuota() {
+function bumpQuota(currentUsed) {
   const week = isoWeek();
-  const q = loadQuota();
-  const used = (q.week === week ? q.used : 0) + 1;
-  saveQuota({ week, used });
-  return used;
+  saveQuota({ week, used: currentUsed + 1 });
+  return currentUsed + 1;
 }
 
 export async function getSerp(keyword, { locale = 'de', gl = 'de' } = {}) {
   if (!process.env.SERPAPI_KEY) throw new Error('SERPAPI_KEY not set');
 
-  const { remaining } = checkQuota();
-  if (remaining <= 0) throw new Error(`SerpAPI weekly quota exhausted (${WEEKLY_LIMIT} searches/week)`);
+  const quota = checkQuota();
+  if (quota.remaining <= 0) throw new Error(`SerpAPI weekly quota exhausted (${WEEKLY_LIMIT} searches/week)`);
 
   const params = new URLSearchParams({
     q: keyword,
@@ -46,7 +44,7 @@ export async function getSerp(keyword, { locale = 'de', gl = 'de' } = {}) {
   const res = await fetch(`https://serpapi.com/search.json?${params}`);
   if (!res.ok) throw new Error(`SerpAPI error: ${res.status}`);
 
-  incrementQuota();
+  bumpQuota(quota.used);
 
   const data = await res.json();
   const results = (data.organic_results || []).slice(0, 5);

@@ -44,9 +44,18 @@ jobs:
 
       - name: Use direct secrets (no 1Password)
         if: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN == '' }}
+        env:
+          DIRECT_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DIRECT_SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
         run: |
-          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
-          echo "SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}" >> $GITHUB_ENV
+          {
+            echo "ANTHROPIC_API_KEY<<SECRET_EOF"
+            printf '%s\n' "$DIRECT_ANTHROPIC_API_KEY"
+            echo "SECRET_EOF"
+            echo "SERPAPI_KEY<<SECRET_EOF"
+            printf '%s\n' "$DIRECT_SERPAPI_KEY"
+            echo "SECRET_EOF"
+          } >> "$GITHUB_ENV"
 
       - name: Checkout seo-cli
         uses: actions/checkout@v4
@@ -59,9 +68,13 @@ jobs:
         working-directory: .seo-cli
 
       - name: Write Google credentials
+        env:
+          GSC_CREDENTIALS: ${{ secrets.GSC_CREDENTIALS }}
+          GSC_TOKEN: ${{ secrets.GSC_TOKEN }}
         run: |
-          echo '${{ secrets.GSC_CREDENTIALS }}' > /tmp/gsc-credentials.json
-          echo '${{ secrets.GSC_TOKEN }}' > "$HOME/.seo-cli-token.json"
+          umask 077
+          printf '%s' "$GSC_CREDENTIALS" > /tmp/gsc-credentials.json
+          printf '%s' "$GSC_TOKEN" > "$HOME/.seo-cli-token.json"
 
       - name: Run seo
         env:

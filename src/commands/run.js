@@ -1,4 +1,5 @@
 import { join } from 'path';
+import { existsSync } from 'fs';
 import chalk from 'chalk';
 import { loadConfig } from '../lib/config.js';
 import { saveKeywords, getPending } from '../lib/keywords.js';
@@ -28,6 +29,7 @@ export async function runCommand(opts) {
   const config = loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
   const locales = config.locales || [config.locale || 'de'];
+  const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
 
   console.log(chalk.bold(`\nseo run — ${config.project} [${locales.join('+')}] ${dryRun ? '(dry run)' : ''}\n`));
 
@@ -46,8 +48,9 @@ export async function runCommand(opts) {
     const generatedPages = [];
 
     for (const kw of toGenerate) {
+      let producedAtLeastOne = false;
+
       for (const locale of locales) {
-        const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
         const localeLandingPath = config.landing_path.includes(`/${defaultLocale}/`)
           ? config.landing_path.replace(`/${defaultLocale}/`, `/${locale}/`)
           : config.landing_path;
@@ -55,9 +58,7 @@ export async function runCommand(opts) {
         const label = locales.length > 1 ? ` [${locale}]` : '';
 
         // Hard check: skip if file already exists locally or slug already being generated
-        const { join: pathJoin } = await import('path');
-        const { existsSync } = await import('fs');
-        const targetFile = pathJoin(cwd, localeLandingPath, `${kw.target_slug}.md`);
+        const targetFile = join(cwd, localeLandingPath, `${kw.target_slug}.md`);
         if (existsSync(targetFile)) {
           console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
           kw.status = 'done';
@@ -97,9 +98,10 @@ export async function runCommand(opts) {
 
         const filePath = join(landingPath, `${kw.target_slug}.md`).replace(/\\/g, '/');
         generatedPages.push({ keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown });
+        producedAtLeastOne = true;
       }
 
-      kw.status = 'pr_opened';
+      if (producedAtLeastOne) kw.status = 'pr_opened';
     }
 
     if (!dryRun && generatedPages.length > 0) {

@@ -5,6 +5,7 @@ import { querySearchAnalytics } from '../lib/gsc.js';
 import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
 import { loadKeywords, saveKeywords, upsertKeyword } from '../lib/keywords.js';
+import { format } from '../lib/date.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -49,7 +50,7 @@ export async function discover(config, cwd = process.cwd()) {
   const useGreenfield = candidates.length === 0;
   if (useGreenfield) {
     console.log(chalk.yellow('  GSC data too sparse — switching to greenfield mode.'));
-    await discoverGreenfield({ config, data, existingSlugs, doneKeywords, cwd });
+    await discoverGreenfield({ config, data, existingSlugs, cwd });
   } else {
     await scoreAndSave({ candidates, config, data, existingSlugs });
   }
@@ -92,7 +93,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
     }
 
     upsertKeyword(data, result.score < config.score_cutoff
-      ? { keyword: row.keyword, status: 'skip', score: result.score, discovered_at: today() }
+      ? { keyword: row.keyword, status: 'skip', score: result.score, discovered_at: format(new Date()) }
       : {
           keyword: row.keyword, status: 'proposed', score: result.score,
           source: 'gsc', type: result.type, intent: result.intent,
@@ -100,7 +101,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
           content_gaps: result.content_gaps,
           serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
           gsc: { impressions: row.impressions, position: row.position, clicks: row.clicks },
-          discovered_at: today(),
+          discovered_at: format(new Date()),
         }
     );
     if (result.score >= config.score_cutoff) scored++;
@@ -154,7 +155,7 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
       expected_entities: kw.expected_entities || [],
       content_gaps: kw.content_gaps || [],
       serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
-      discovered_at: today(),
+      discovered_at: format(new Date()),
     });
   }
 }
@@ -180,7 +181,7 @@ function getExistingLandingTitles(landingPath, cwd) {
 
 function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
   return SCORE_PROMPT
-    .replace('{{keyword}}', keyword)
+    .replace('{{keyword}}', String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200))
     .replace('{{impressions}}', row.impressions)
     .replace('{{position}}', row.position.toFixed(1))
     .replace('{{clicks}}', row.clicks)
@@ -192,6 +193,3 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
     .replace('{{locale}}', config.locale || 'de');
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}

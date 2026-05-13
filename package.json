@@ -17,7 +17,6 @@
     "dotenv": "^16.4.0",
     "googleapis": "^140.0.0",
     "inquirer": "^9.3.0",
-    "js-yaml": "^4.1.0",
-    "simple-git": "^3.27.0"
+    "js-yaml": "^4.1.0"
   }
 }

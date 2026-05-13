@@ -2,25 +2,34 @@ import { google } from 'googleapis';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createServer } from 'http';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { subDays, format } from '../lib/date.js';
 
 const TOKEN_PATH = join(process.env.HOME, '.seo-cli-token.json');
 const SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly'];
+let cachedAuth;
 
 export async function getAuth() {
+  if (cachedAuth) return cachedAuth;
+
   const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (!credentialsPath) throw new Error('GOOGLE_APPLICATION_CREDENTIALS not set');
 
-  const credentials = JSON.parse(readFileSync(credentialsPath, 'utf8'));
+  let credentials;
+  try {
+    credentials = JSON.parse(readFileSync(credentialsPath, 'utf8'));
+  } catch (e) {
+    throw new Error(`Failed to read Google credentials at ${credentialsPath}: ${e.message}`);
+  }
 
   // Service account
   if (credentials.type === 'service_account') {
-    return new google.auth.JWT({
+    cachedAuth = new google.auth.JWT({
       email: credentials.client_email,
       key: credentials.private_key,
       scopes: SCOPES,
     });
+    return cachedAuth;
   }
 
   // OAuth2 desktop app
@@ -28,21 +37,27 @@ export async function getAuth() {
   const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
 
   if (existsSync(TOKEN_PATH)) {
-    oAuth2Client.setCredentials(JSON.parse(readFileSync(TOKEN_PATH, 'utf8')));
-    return oAuth2Client;
+    try {
+      oAuth2Client.setCredentials(JSON.parse(readFileSync(TOKEN_PATH, 'utf8')));
+    } catch (e) {
+      throw new Error(`Failed to read OAuth token at ${TOKEN_PATH}: ${e.message}`);
+    }
+    cachedAuth = oAuth2Client;
+    return cachedAuth;
   }
 
   // First run: start local server to catch redirect, open browser
-  const code = await getCodeViaLocalServer(oAuth2Client);
+  const code = await getCodeViaLocalServer(oAuth2Client, client_id, client_secret);
   const { tokens } = await oAuth2Client.getToken(code);
   oAuth2Client.setCredentials(tokens);
-  writeFileSync(TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+  writeFileSync(TOKEN_PATH, JSON.stringify(tokens), { encoding: 'utf8', mode: 0o600 });
   console.log('Token saved.');
 
-  return oAuth2Client;
+  cachedAuth = oAuth2Client;
+  return cachedAuth;
 }
 
-function getCodeViaLocalServer(oAuth2Client) {
+function getCodeViaLocalServer(oAuth2Client, client_id, client_secret) {
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
       const url = new URL(req.url, 'http://localhost');
@@ -55,9 +70,6 @@ function getCodeViaLocalServer(oAuth2Client) {
 
     server.listen(0, '127.0.0.1', async () => {
       const port = server.address().port;
-      const { client_id, client_secret } = oAuth2Client._clientId
-        ? { client_id: oAuth2Client._clientId, client_secret: oAuth2Client._clientSecret }
-        : oAuth2Client;
 
       // Recreate client with loopback redirect
       const loopback = new google.auth.OAuth2(client_id, client_secret, `http://localhost:${port}`);
@@ -70,7 +82,10 @@ function getCodeViaLocalServer(oAuth2Client) {
       });
 
       console.log('\nOpening browser for Google authorization...');
-      exec(`open "${authUrl}"`);
+      const platform = process.platform;
+      const opener = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open';
+      const args = platform === 'win32' ? ['/c', 'start', '', authUrl] : [authUrl];
+      execFile(opener, args, () => {});
     });
 
     server.on('error', reject);

@@ -24,7 +24,11 @@ export async function complete({ system, prompt, model = 'claude-sonnet-4-6', ma
       if (json) {
         const match = text.match(/```json\s*([\s\S]+?)\s*```/) || text.match(/(\{[\s\S]+\})/);
         if (!match) throw new Error(`Claude returned no JSON:\n${text.slice(0, 300)}`);
-        return JSON.parse(match[1]);
+        try {
+          return JSON.parse(match[1]);
+        } catch (parseErr) {
+          throw new Error(`Claude returned malformed JSON: ${parseErr.message}\n${match[1].slice(0, 300)}`);
+        }
       }
 
       return text;

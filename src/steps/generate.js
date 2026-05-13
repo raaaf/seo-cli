@@ -7,7 +7,15 @@ import { format } from '../lib/date.js';
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
 
+let styleDocCache = null;
+let styleDocCacheKey = null;
+const existingSlugsCache = new Map();
+
 export async function generatePage(keyword, config, cwd = process.cwd(), validatorFeedback = null) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(keyword.target_slug || '')) {
+    throw new Error(`Invalid target_slug: ${JSON.stringify(keyword.target_slug)}. Must match /^[a-z0-9][a-z0-9-]*$/.`);
+  }
+
   const style = loadStyleDoc(config, cwd);
 
   const feedbackBlock = validatorFeedback
@@ -57,16 +65,16 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
 function getExistingSlugs(config, cwd, locale) {
   const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
   const basePath = config.landing_path;
-
-  // Build locale-specific path: replace locale segment if present, else append locale
   const localePath = basePath.includes(`/${defaultLocale}/`)
     ? basePath.replace(`/${defaultLocale}/`, `/${locale}/`)
     : basePath;
+  const cacheKey = `${cwd}::${localePath}::${locale}::${defaultLocale}`;
+  if (existingSlugsCache.has(cacheKey)) return existingSlugsCache.get(cacheKey);
 
   const tryDirs = [localePath];
-  // Fall back to default locale dir if locale-specific has no files
   if (locale !== defaultLocale) tryDirs.push(basePath);
 
+  let result = [];
   for (const dir of tryDirs) {
     try {
       const full = join(cwd, dir);
@@ -74,18 +82,29 @@ function getExistingSlugs(config, cwd, locale) {
       const slugs = readdirSync(full)
         .filter(f => f.endsWith('.md'))
         .map(f => f.replace('.md', ''));
-      if (slugs.length > 0) return slugs;
+      if (slugs.length > 0) { result = slugs; break; }
     } catch {}
   }
-  return [];
+  existingSlugsCache.set(cacheKey, result);
+  return result;
 }
 
 function loadStyleDoc(config, cwd) {
-  if (!config.style_doc) return DEFAULT_STYLE;
-  const path = join(cwd, config.style_doc);
-  if (!existsSync(path)) {
-    console.log(chalk.yellow(`  style_doc not found at ${path}, using default.`));
-    return DEFAULT_STYLE;
+  const key = `${cwd}::${config.style_doc || ''}`;
+  if (styleDocCacheKey === key) return styleDocCache;
+  let result;
+  if (!config.style_doc) {
+    result = DEFAULT_STYLE;
+  } else {
+    const path = join(cwd, config.style_doc);
+    if (!existsSync(path)) {
+      console.log(chalk.yellow(`  style_doc not found at ${path}, using default.`));
+      result = DEFAULT_STYLE;
+    } else {
+      result = readFileSync(path, 'utf8');
+    }
   }
-  return readFileSync(path, 'utf8');
+  styleDocCache = result;
+  styleDocCacheKey = key;
+  return result;
 }

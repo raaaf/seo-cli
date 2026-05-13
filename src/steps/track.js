@@ -4,6 +4,14 @@ import chalk from 'chalk';
 import { queryPagePerformance } from '../lib/gsc.js';
 import { isoWeek, format } from '../lib/date.js';
 
+function csvCell(value) {
+  const s = String(value ?? '');
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
 export async function track(config, cwd = process.cwd()) {
   console.log(chalk.blue('Tracking rankings...'));
 
@@ -18,7 +26,7 @@ export async function track(config, cwd = process.cwd()) {
   const lines = rows.map(r => {
     const url = r.keys[0];
     const query = r.keys[1];
-    return `${today},${url},${query},${r.position.toFixed(1)},${r.impressions},${r.clicks},${r.ctr.toFixed(4)}`;
+    return `${today},${csvCell(url)},${csvCell(query)},${r.position.toFixed(1)},${r.impressions},${r.clicks},${r.ctr.toFixed(4)}`;
   });
 
   const existing = existsSync(csvPath) ? readFileSync(csvPath, 'utf8') : header;
