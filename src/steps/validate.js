@@ -35,13 +35,15 @@ export function validate(markdown, keyword) {
     if (len > 170) errors.push(`metaDescription too long (${len} chars, max 170)`);
   }
 
-  // H1 exists
-  if (!body.match(/^#\s+.+/m)) errors.push('No H1 found');
+  // H1: either in body or in frontmatter hero.headline
+  const bodyH1 = body.match(/^#\s+(.+)/m);
+  const fmHeroHeadline = fm.match(/headline:\s*["']?(.+?)["']?\s*$/m);
+  const h1Text = bodyH1?.[1] || fmHeroHeadline?.[1] || null;
+  if (!h1Text) errors.push('No H1 found (neither # in body nor hero.headline in frontmatter)');
 
   // H1 contains keyword
-  const h1Match = body.match(/^#\s+(.+)/m);
-  if (h1Match && !h1Match[1].toLowerCase().includes(keyword.keyword.toLowerCase().split(' ')[0])) {
-    warnings.push(`H1 may not contain target keyword: "${h1Match[1]}"`);
+  if (h1Text && !h1Text.toLowerCase().includes(keyword.keyword.toLowerCase().split(' ')[0])) {
+    warnings.push(`H1 may not contain target keyword: "${h1Text}"`);
   }
 
   // Min word count
