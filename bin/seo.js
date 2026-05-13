@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import { config as dotenv } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+// Load global keys from seo-cli dir, then project .env overrides
+const cliDir = dirname(dirname(fileURLToPath(import.meta.url)));
+dotenv({ path: join(cliDir, '.env') });
+dotenv({ path: join(process.cwd(), '.env'), override: true });
+
 import { program } from 'commander';
 import { initCommand } from '../src/commands/init.js';
 import { runCommand } from '../src/commands/run.js';
