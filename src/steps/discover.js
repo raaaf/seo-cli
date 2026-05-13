@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { querySearchAnalytics } from '../lib/gsc.js';
-import { getSerp } from '../lib/serpapi.js';
+import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
 import { loadKeywords, saveKeywords, upsertKeyword } from '../lib/keywords.js';
 
@@ -11,6 +11,8 @@ const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', impor
 
 export async function discover(config, cwd = process.cwd()) {
   console.log(chalk.blue('Discovering keywords...'));
+  const quota = checkQuota();
+  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.used + quota.remaining} used this week`));
 
   const data = loadKeywords(cwd);
   const existingSlugs = data.keywords.map(k => k.target_slug).filter(Boolean);
