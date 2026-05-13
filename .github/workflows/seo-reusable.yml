@@ -1,0 +1,62 @@
+name: SEO (reusable)
+
+on:
+  workflow_call:
+    secrets:
+      OP_SERVICE_ACCOUNT_TOKEN:
+        required: true
+      GSC_CREDENTIALS:
+        required: true
+      GSC_TOKEN:
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Load shared secrets from 1Password
+        uses: 1password/load-secrets-action@v4
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://development/seo-cli/ANTHROPIC_API_KEY
+          SERPAPI_KEY: op://development/seo-cli/SERPAPI_KEY
+
+      - name: Checkout seo-cli
+        uses: actions/checkout@v4
+        with:
+          repository: raaaf/seo-cli
+          path: .seo-cli
+
+      - name: Install seo-cli dependencies
+        run: npm ci
+        working-directory: .seo-cli
+
+      - name: Write Google credentials
+        run: |
+          echo '${{ secrets.GSC_CREDENTIALS }}' > /tmp/gsc-credentials.json
+          echo '${{ secrets.GSC_TOKEN }}' > "$HOME/.seo-cli-token.json"
+
+      - name: Run seo
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
+        run: node .seo-cli/bin/seo.js run
+
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f /tmp/gsc-credentials.json
+          rm -f "$HOME/.seo-cli-token.json"
