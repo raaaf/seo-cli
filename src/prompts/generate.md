@@ -56,48 +56,49 @@ If geo_scope is "local":
 - Add LocalBusiness schema (see schema section below)
 - Do NOT just swap the city name into a generic template — add genuinely local context
 
-## Schema.org (include as JSON-LD in a fenced ```json block at the end of the file)
+## Schema.org (add as `schema:` YAML field in the frontmatter, not in the body)
 
-**Note:** FAQPage rich results were deprecated by Google on May 7, 2026. Do NOT add FAQPage schema.
-HowTo rich results are only shown on primary content pages — only add HowTo if the page type is genuinely howto.
+**Note:** FAQPage rich results deprecated May 2026. Do NOT add FAQPage schema.
+HowTo only for genuinely howto pages.
 
-Choose the appropriate primary schema:
+Add a `schema:` key to the frontmatter containing the JSON-LD as a YAML-compatible JSON string.
+The app reads this field and renders it as `<script type="application/ld+json">`.
 
-**howto** → HowTo with steps extracted from the content
-**comparison / guide** → Article (headline, description, datePublished, author)
-**service / local_service** → SoftwareApplication or LocalBusiness
+Choose schema by type:
+- **howto** → HowTo with steps
+- **comparison / guide** → Article
+- **service / local_service** → SoftwareApplication or LocalBusiness
 
-All pages must also include:
-- `WebPage` with `mainEntityOfPage` pointing to the canonical URL
-- `BreadcrumbList` with at least home → this page
-- `SameAs` on the Organization node linking to social profiles (if known)
+All pages: include `mainEntityOfPage`, `BreadcrumbList`, `SameAs` on Organization.
 
-Example Article + Organization:
-```json
-{
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "Article",
-      "headline": "{{keyword}}",
-      "description": "...",
-      "datePublished": "{{today}}",
-      "dateModified": "{{today}}",
-      "mainEntityOfPage": { "@type": "WebPage", "@id": "CANONICAL_URL" },
-      "author": { "@type": "Organization", "name": "SITE_NAME" }
-    },
-    {
-      "@type": "BreadcrumbList",
-      "itemListElement": [
-        { "@type": "ListItem", "position": 1, "name": "Home", "item": "BASE_URL" },
-        { "@type": "ListItem", "position": 2, "name": "{{keyword}}", "item": "CANONICAL_URL" }
-      ]
-    }
-  ]
-}
+Frontmatter example (add after the other fields, before the closing `---`):
+
+```
+schema: |
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "HowTo",
+        "name": "{{keyword}}",
+        "description": "...",
+        "mainEntityOfPage": { "@type": "WebPage", "@id": "CANONICAL_URL" },
+        "step": [
+          { "@type": "HowToStep", "position": 1, "name": "Step 1", "text": "..." }
+        ]
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home", "item": "BASE_URL" },
+          { "@type": "ListItem", "position": 2, "name": "{{keyword}}", "item": "CANONICAL_URL" }
+        ]
+      }
+    ]
+  }
 ```
 
-Use CANONICAL_URL and BASE_URL as placeholders — the app will replace them at render time.
+CANONICAL_URL and BASE_URL are placeholders — they will be replaced automatically.
 
 ## Internal links
 
