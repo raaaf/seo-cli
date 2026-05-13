@@ -3,8 +3,15 @@ name: SEO (reusable)
 on:
   workflow_call:
     secrets:
+      # Option A: 1Password (ANTHROPIC_API_KEY + SERPAPI_KEY werden aus 1Password geladen)
       OP_SERVICE_ACCOUNT_TOKEN:
-        required: true
+        required: false
+      # Option B: Direkte Secrets (wenn kein 1Password vorhanden)
+      ANTHROPIC_API_KEY:
+        required: false
+      SERPAPI_KEY:
+        required: false
+      # Immer projektspezifisch:
       GSC_CREDENTIALS:
         required: true
       GSC_TOKEN:
@@ -26,6 +33,7 @@ jobs:
           node-version: '22'
 
       - name: Load shared secrets from 1Password
+        if: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
         uses: 1password/load-secrets-action@v4
         with:
           export-env: true
@@ -33,6 +41,12 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           ANTHROPIC_API_KEY: op://development/seo-cli/ANTHROPIC_API_KEY
           SERPAPI_KEY: op://development/seo-cli/SERPAPI_KEY
+
+      - name: Use direct secrets (no 1Password)
+        if: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN == '' }}
+        run: |
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_ENV
+          echo "SERPAPI_KEY=${{ secrets.SERPAPI_KEY }}" >> $GITHUB_ENV
 
       - name: Checkout seo-cli
         uses: actions/checkout@v4
