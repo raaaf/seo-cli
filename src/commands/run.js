@@ -1,4 +1,3 @@
-import { join } from 'path';
 import chalk from 'chalk';
 import { loadConfig } from '../lib/config.js';
 import { saveKeywords, getPending } from '../lib/keywords.js';
@@ -8,7 +7,22 @@ import { validate } from '../steps/validate.js';
 import { createPR } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 
+const REQUIRED_ENV = [
+  'ANTHROPIC_API_KEY',
+  'GOOGLE_APPLICATION_CREDENTIALS',
+  'SERPAPI_KEY',
+  'GITHUB_TOKEN',
+];
+
 export async function runCommand(opts) {
+  const missing = REQUIRED_ENV.filter(k => !process.env[k]);
+  if (missing.length) {
+    console.error(chalk.red('\nMissing env vars:'));
+    missing.forEach(k => console.error(chalk.red(`  ${k}`)));
+    console.error(chalk.gray('\nAdd them to /Users/rafael/Local Sites/seo-cli/.env'));
+    process.exit(1);
+  }
+
   const cwd = process.cwd();
   const config = loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
