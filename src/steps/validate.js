@@ -46,10 +46,10 @@ export function validate(markdown, keyword) {
   const faqCount = (fm.match(/^\s+- q:/gm) || []).length;
   if (faqCount < 3) errors.push(`Too few FAQ entries (${faqCount}, min 3)`);
 
-  // Body word count (prose only, shorter since structured content is in frontmatter)
+  // Body word count — must pass events app thin-content guard (>= 800)
   const wordCount = body.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 150) errors.push(`Body too short: ${wordCount} words (min 150)`);
-  if (wordCount > 700) warnings.push(`Body long: ${wordCount} words (aim 300–500)`);
+  if (wordCount < 800) errors.push(`Body too short: ${wordCount} words (min 800 — events app test requires this)`);
+  if (wordCount > 1400) warnings.push(`Body very long: ${wordCount} words (aim 800–1200)`);
 
   // No steps/FAQ/checklist sections in body (those belong in frontmatter)
   if (body.match(/^#{1,3}\s.*(FAQ|Häufige|Checklist|Schritt|Step)/im)) {
@@ -76,6 +76,23 @@ export function validate(markdown, keyword) {
       warnings.push(`Entity coverage ${(coverage * 100).toFixed(0)}% (aim 70%+). Missing: ${missing.join(', ')}`);
     }
   }
+
+  // tldr word count (40–60 words)
+  const tldrMatch = fm.match(/^tldr:\s*["']?(.+?)["']?\s*$/m);
+  if (tldrMatch) {
+    const tldrWords = tldrMatch[1].split(/\s+/).filter(Boolean).length;
+    if (tldrWords < 40) errors.push(`tldr too short: ${tldrWords} words (min 40)`);
+    if (tldrWords > 60) errors.push(`tldr too long: ${tldrWords} words (max 60)`);
+  }
+
+  // Information density: >= 5 digits in body
+  const digitCount = (body.match(/\d/g) || []).length;
+  if (digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
+
+  // Tonality: no em-dash, no double-hyphen separator, no emoji
+  if (markdown.includes('—')) errors.push('Em-dash (—) found — use comma, colon or period');
+  if (/(?<![-])\s--\s(?![-])/.test(markdown)) errors.push('Double-hyphen separator found — use em-dash alternative');
+  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(markdown)) errors.push('Emoji found — remove all emoji');
 
   // No fabricated claims
   const fabricated = [

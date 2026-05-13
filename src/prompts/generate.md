@@ -49,7 +49,7 @@ hero:
   eyebrow: "Kurze Kategoriebezeichnung in {{locale}}"   # NEVER use English type labels like "Howto", "Guide", "Service"
   headline: "Handlungsorientierte Headline mit Keyword"
   sub: "1–2 Sätze. Konkreter Nutzen, kein Hype."
-tldr: "Direkte Antwort in 2–3 Sätzen. Nur öffentlich prüfbare Fakten. Keine erfundenen Statistiken."
+tldr: "Direkte Antwort in genau 40–60 Wörtern (wird maschinell geprüft). Nur öffentlich prüfbare Fakten."
 related_features:
   - rsvp       # only include features genuinely relevant to this topic
   - bring      # available: rsvp, bring, gift, photos, tasks, comments, carpool,
@@ -72,16 +72,22 @@ seo:
 
 ### Body (after the closing `---`)
 
-300–500 words of flowing prose:
-- Starts directly with context/problem/insight — no H1 (the app renders that from hero)
-- Use H2 and H3 for sub-sections if needed
-- Start each H2/H3 with a bold 1–2 sentence summary (AI Overviews citation)
+800–1200 words of flowing prose. This is the main content — steps/faq/checklist in the
+frontmatter are UI supplements, not a replacement for the body.
+
+- Starts directly with context/problem/insight — no H1 (the app renders hero)
+- 3–5 H2 sections, each with a bold 1–2 sentence summary (AI Overviews citation)
+- Use H3 for sub-points where needed
 - Cover content_gaps with concrete, verifiable information
 - All expected_entities must appear naturally
 - 2–4 internal links to existing slugs: [anchor text](/slug)
-- No FAQ, no checklist, no numbered steps (those are in frontmatter)
+- No FAQ accordion, no checklist, no numbered step list (those are in frontmatter)
 - No fabricated statistics ("we helped X customers", "Y years of experience")
+- Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)
 - Cite external sources for factual claims where relevant
+- NO em-dashes (—). Use comma, colon, or period instead.
+- NO double-hyphen separator ( -- ). Restructure the sentence.
+- NO emoji anywhere in the file
 - Write entirely in {{locale}}
 
 ## Validator feedback (if this is a retry)
