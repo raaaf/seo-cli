@@ -1,6 +1,8 @@
 import { google } from 'googleapis';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { createServer } from 'http';
+import { exec } from 'child_process';
 import { subDays, format } from '../lib/date.js';
 
 const TOKEN_PATH = join(process.env.HOME, '.seo-cli-token.json');
@@ -30,26 +32,48 @@ export async function getAuth() {
     return oAuth2Client;
   }
 
-  // First run: open browser for auth
-  const authUrl = oAuth2Client.generateAuthUrl({ access_type: 'offline', scope: SCOPES });
-  console.log('\nOpen this URL in your browser to authorize GSC access:\n');
-  console.log(authUrl);
-  console.log('');
-
-  const code = await prompt('Paste the authorization code here: ');
+  // First run: start local server to catch redirect, open browser
+  const code = await getCodeViaLocalServer(oAuth2Client);
   const { tokens } = await oAuth2Client.getToken(code);
   oAuth2Client.setCredentials(tokens);
   writeFileSync(TOKEN_PATH, JSON.stringify(tokens), 'utf8');
-  console.log('Token saved to', TOKEN_PATH);
+  console.log('Token saved.');
 
   return oAuth2Client;
 }
 
-function prompt(question) {
-  return new Promise(resolve => {
-    process.stdout.write(question);
-    process.stdin.setEncoding('utf8');
-    process.stdin.once('data', data => resolve(data.trim()));
+function getCodeViaLocalServer(oAuth2Client) {
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      const code = url.searchParams.get('code');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<html><body><h2>seo-cli authorized. You can close this tab.</h2></body></html>');
+      server.close();
+      if (code) resolve(code); else reject(new Error('No code in redirect'));
+    });
+
+    server.listen(0, '127.0.0.1', async () => {
+      const port = server.address().port;
+      const { client_id, client_secret } = oAuth2Client._clientId
+        ? { client_id: oAuth2Client._clientId, client_secret: oAuth2Client._clientSecret }
+        : oAuth2Client;
+
+      // Recreate client with loopback redirect
+      const loopback = new google.auth.OAuth2(client_id, client_secret, `http://localhost:${port}`);
+      Object.assign(oAuth2Client, loopback);
+
+      const authUrl = oAuth2Client.generateAuthUrl({
+        access_type: 'offline',
+        scope: SCOPES,
+        redirect_uri: `http://localhost:${port}`,
+      });
+
+      console.log('\nOpening browser for Google authorization...');
+      exec(`open "${authUrl}"`);
+    });
+
+    server.on('error', reject);
   });
 }
 
