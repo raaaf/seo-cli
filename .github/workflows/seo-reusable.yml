@@ -82,6 +82,20 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
         run: node .seo-cli/bin/seo.js run
 
+      - name: Report PR URL
+        run: |
+          PR_URL=$(node -e "
+            try {
+              const f = require('./seo/last-pr.json');
+              console.log(f.pr_url || '');
+            } catch { console.log(''); }
+          " 2>/dev/null || echo "")
+          if [ -n "$PR_URL" ]; then
+            echo "PR ready for review: $PR_URL"
+          else
+            echo "No new PR this run"
+          fi
+
       - name: Clean up credentials
         if: always()
         run: |

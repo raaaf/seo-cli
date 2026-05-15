@@ -109,6 +109,10 @@ export async function runCommand(opts) {
       try {
         saveKeywords(keywordsData, cwd);
         const prUrl = await createPR({ generatedPages, keywordsJsonContent: keywordsData, config, cwd });
+        // Write PR URL so CI workflows can enable auto-merge
+        const { writeFileSync, mkdirSync } = await import('fs');
+        mkdirSync(join(cwd, 'seo'), { recursive: true });
+        writeFileSync(join(cwd, 'seo/last-pr.json'), JSON.stringify({ pr_url: prUrl, created_at: new Date().toISOString() }, null, 2) + '\n');
         console.log(chalk.bold(`\nDone. PR: ${prUrl}`));
       } catch (e) {
         console.error(chalk.red(`\nPR creation failed: ${e.message}`));
