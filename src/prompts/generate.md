@@ -1,13 +1,11 @@
 You are writing an SEO landing page as a Markdown file with YAML frontmatter.
-The page renders in a Laravel app. You must match the exact structure it expects.
+The app reads structured data from YAML frontmatter and renders each section independently.
 
 ## How the app renders this file
 
-The app reads structured data from YAML frontmatter and renders each section independently:
 - `hero` → H1, sub-headline
 - `tldr` → highlighted answer box at the top
 - Body (markdown after `---`) → flowing prose section
-- `related_features` → feature chip row
 - `steps` → numbered step list
 - `checklist` → visual checklist grid
 - `faq` → accordion FAQ
@@ -50,10 +48,6 @@ hero:
   headline: "Handlungsorientierte Headline mit Keyword"
   sub: "1–2 Sätze. Konkreter Nutzen, kein Hype."
 tldr: "Direkte Antwort in genau 40–60 Wörtern (wird maschinell geprüft). Nur öffentlich prüfbare Fakten."
-related_features:
-  - rsvp       # only include features genuinely relevant to this topic
-  - bring      # available: rsvp, bring, gift, photos, tasks, comments, carpool,
-               # surveys, expenses, tickets, timeslots, groups, recurring, attendance, qr
 steps:         # 4–6 steps for howto/guide types. Omit for comparison/service.
   - title: "Short action title"
     description: "One sentence. Concrete."
@@ -66,25 +60,25 @@ faq:           # 4–6 entries from people_also_ask. Real questions, real answer
 related_pages: # 2–4 slugs from existing_slugs only. Never invent slugs.
   - existing-slug-one  # Only use slugs from the list above — they are pre-filtered for {{locale}}.
   - existing-slug-two  # An EN page must only reference EN slugs; a DE page only DE slugs.
-seo:
-  target_keyword: "{{keyword}}"
 ```
 
 ### Body (after the closing `---`)
 
-800–1200 words of flowing prose. This is the main content — steps/faq/checklist in the
-frontmatter are UI supplements, not a replacement for the body.
+MINIMUM 800 WORDS. Count carefully before finishing — if the body is under 800 words, keep writing.
+Target 900–1100 words. The body is the main content; frontmatter steps/faq/checklist are UI supplements only.
 
 - Starts directly with context/problem/insight — no H1 (the app renders hero)
-- 3–5 H2 sections, each with a bold 1–2 sentence summary (AI Overviews citation)
+- Exactly 4–5 H2 sections, each introduced by a bold 1–2 sentence summary (AI Overviews citation bait)
+- Each H2 section: minimum 150 words of prose
 - Use H3 for sub-points where needed
 - Cover content_gaps with concrete, verifiable information
 - All expected_entities must appear naturally
 - 2–4 internal links to existing slugs: [anchor text](/slug)
-- No FAQ accordion, no checklist, no numbered step list (those are in frontmatter)
+- NEVER put FAQ questions, numbered steps, or bullet checklists in the body — those belong in frontmatter only
 - No fabricated statistics ("we helped X customers", "Y years of experience")
 - Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)
-- Cite external sources for factual claims where relevant
+- Cite external sources for factual claims: use markdown links [Quelle](https://...) for studies, statistics, organizations (e.g. Statista, BVDW, w3techs.com)
+- Include at least 1–2 external links to authoritative sources — strengthens GEO/E-E-A-T
 - NO em-dashes (—). Use comma, colon, or period instead.
 - NO double-hyphen separator ( -- ). Restructure the sentence.
 - NO emoji anywhere in the file
