@@ -24,6 +24,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    env:
+      HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +35,7 @@ jobs:
           node-version: '22'
 
       - name: Load shared secrets from 1Password
-        if: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
+        if: env.HAVE_OP_TOKEN == 'true'
         uses: 1password/load-secrets-action@v4
         with:
           export-env: true
@@ -43,7 +45,7 @@ jobs:
           SERPAPI_KEY: op://development/seo-cli/SERPAPI_KEY
 
       - name: Use direct secrets (no 1Password)
-        if: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN == '' }}
+        if: env.HAVE_OP_TOKEN != 'true'
         env:
           DIRECT_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DIRECT_SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
