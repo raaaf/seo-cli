@@ -1,7 +1,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { complete } from './claude.js';
-import { safeFetch } from './safe-fetch.js';
+import { fetchPages } from './site-fetch.js';
 
 export async function generateStyleDoc(siteUrl, outputPath, cwd = process.cwd()) {
   const pages = await fetchCopyHeavyPages(siteUrl);
@@ -59,29 +59,22 @@ async function fetchCopyHeavyPages(baseUrl) {
     `${base}/hilfe`,
   ];
 
-  const fetched = await Promise.all(candidates.map(async (url) => {
-    try {
-      const res = await safeFetch(url, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) return null;
-      const html = await res.text();
-      const text = extractMainCopy(html);
-      return text.length > 200 ? `--- ${url} ---\n${text.slice(0, 1500)}` : null;
-    } catch {
-      return null;
-    }
-  }));
-  const results = fetched.filter(Boolean).slice(0, 3);
+  const fetched = await fetchPages(candidates);
+  const results = fetched.map(({ url, html }) => {
+    const text = extractMainCopy(html);
+    return text.length > 200 ? `--- ${url} ---\n${text.slice(0, 1500)}` : null;
+  }).filter(Boolean).slice(0, 3);
 
   return results.join('\n\n') || '(Keine Texte gefunden)';
 }
 
 function extractMainCopy(html) {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<nav[\s\S]*?<\/nav>/gi, '')
     .replace(/<footer[\s\S]*?<\/footer>/gi, '')
     .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

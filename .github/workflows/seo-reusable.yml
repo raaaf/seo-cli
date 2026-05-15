@@ -88,7 +88,8 @@ jobs:
         run: |
           PR_URL=$(node -e "
             try {
-              const f = require('./seo/last-pr.json');
+              const fs = require('fs');
+              const f = JSON.parse(fs.readFileSync('./seo/last-pr.json', 'utf8'));
               console.log(f.pr_url || '');
             } catch { console.log(''); }
           " 2>/dev/null || echo "")

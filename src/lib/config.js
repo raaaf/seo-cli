@@ -24,6 +24,4 @@ export const DEFAULTS = {
   score_cutoff: 7,
   weekly_cap: 2,
   min_impressions: 5,
-  base_url: '',
-  site_name: '',
 };

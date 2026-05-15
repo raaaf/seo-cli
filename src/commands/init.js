@@ -67,6 +67,16 @@ export async function initCommand() {
   }
 
   // Step 4: only confirm/override what Claude extracted + landing path
+  // Locale choices for the list prompt
+  const localeChoices = [
+    { name: 'German only', value: ['de'] },
+    { name: 'English only', value: ['en'] },
+    { name: 'German + English (both in one run)', value: ['de', 'en'] },
+  ];
+  const defaultLocaleIndex = existing.locales
+    ? localeChoices.findIndex(c => JSON.stringify(c.value) === JSON.stringify(existing.locales))
+    : 0;
+
   const answers = await inquirer.prompt([
     {
       type: 'input',
@@ -95,14 +105,8 @@ export async function initCommand() {
       type: 'list',
       name: 'locales',
       message: 'Which language(s) should pages be generated in?',
-      choices: [
-        { name: 'German only', value: ['de'] },
-        { name: 'English only', value: ['en'] },
-        { name: 'German + English (both in one run)', value: ['de', 'en'] },
-      ],
-      default: existing.locales
-        ? JSON.stringify(existing.locales)
-        : JSON.stringify(['de']),
+      choices: localeChoices,
+      default: defaultLocaleIndex === -1 ? 0 : defaultLocaleIndex,
     },
     {
       type: 'confirm',

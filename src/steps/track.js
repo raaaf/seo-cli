@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { queryPagePerformance } from '../lib/gsc.js';
@@ -20,6 +20,13 @@ export async function track(config, cwd = process.cwd()) {
   const week = isoWeek();
   const csvPath = join(cwd, `seo/rankings/${week}.csv`);
   mkdirSync(join(cwd, 'seo/rankings'), { recursive: true });
+
+  const MAX_CSV_BYTES = 5 * 1024 * 1024; // 5 MB soft cap
+  const sizeBytes = existsSync(csvPath) ? statSync(csvPath).size : 0;
+  if (sizeBytes > MAX_CSV_BYTES) {
+    console.log(chalk.yellow(`  Track skipped: ${csvPath} exceeds ${MAX_CSV_BYTES} bytes. Rotate (rename) the file to start a fresh week.`));
+    return;
+  }
 
   const header = 'date,url,query,position,impressions,clicks,ctr\n';
   const today = format(new Date());

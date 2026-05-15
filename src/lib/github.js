@@ -1,9 +1,11 @@
 import { Octokit } from '@octokit/rest';
 import { isoWeek } from './date.js';
 
+let octokit;
 function getOctokit() {
   if (!process.env.GITHUB_TOKEN) throw new Error('GITHUB_TOKEN not set');
-  return new Octokit({ auth: process.env.GITHUB_TOKEN });
+  if (!octokit) octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  return octokit;
 }
 
 export async function openPR({ repo, branch, title, body, baseBranch = 'main' }) {

@@ -1,11 +1,12 @@
 import { google } from 'googleapis';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { createServer } from 'http';
 import { execFile } from 'child_process';
 import { subDays, format } from '../lib/date.js';
 
-const TOKEN_PATH = join(process.env.HOME, '.seo-cli-token.json');
+const TOKEN_PATH = join(homedir(), '.seo-cli-token.json');
 const SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly'];
 let cachedAuth;
 
@@ -33,7 +34,11 @@ export async function getAuth() {
   }
 
   // OAuth2 desktop app
-  const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
+  const oauthConfig = credentials.installed || credentials.web;
+  if (!oauthConfig) {
+    throw new Error(`Invalid Google credentials at ${credentialsPath}: missing "installed" or "web" key`);
+  }
+  const { client_secret, client_id, redirect_uris } = oauthConfig;
   const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
 
   if (existsSync(TOKEN_PATH)) {
@@ -92,19 +97,26 @@ function getCodeViaLocalServer(oAuth2Client, client_id, client_secret) {
   });
 }
 
-export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, rowLimit = 200 } = {}) {
+const gscCache = new Map();
+
+async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit = 200 } = {}) {
+  const cacheKey = JSON.stringify({ gscProperty, dimensions, days, lag, rowLimit });
+  if (gscCache.has(cacheKey)) return gscCache.get(cacheKey);
   const auth = await getAuth();
   const sc = google.searchconsole({ version: 'v1', auth });
-
   const endDate = format(subDays(new Date(), lag));
   const startDate = format(subDays(new Date(), lag + days));
-
   const res = await sc.searchanalytics.query({
     siteUrl: gscProperty,
-    requestBody: { startDate, endDate, dimensions: ['query'], rowLimit },
+    requestBody: { startDate, endDate, dimensions, rowLimit },
   });
+  gscCache.set(cacheKey, res.data.rows || []);
+  return gscCache.get(cacheKey);
+}
 
-  return (res.data.rows || []).map(r => ({
+export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, rowLimit = 200 } = {}) {
+  const rows = await gscQuery(gscProperty, ['query'], { days, lag, rowLimit });
+  return rows.map(r => ({
     keyword: r.keys[0],
     impressions: r.impressions,
     clicks: r.clicks,
@@ -114,16 +126,5 @@ export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, ro
 }
 
 export async function queryPagePerformance(gscProperty, { days = 28, lag = 7 } = {}) {
-  const auth = await getAuth();
-  const sc = google.searchconsole({ version: 'v1', auth });
-
-  const endDate = format(subDays(new Date(), lag));
-  const startDate = format(subDays(new Date(), lag + days));
-
-  const res = await sc.searchanalytics.query({
-    siteUrl: gscProperty,
-    requestBody: { startDate, endDate, dimensions: ['page', 'query'], rowLimit: 500 },
-  });
-
-  return res.data.rows || [];
+  return gscQuery(gscProperty, ['page', 'query'], { days, lag, rowLimit: 500 });
 }

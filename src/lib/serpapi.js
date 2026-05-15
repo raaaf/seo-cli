@@ -1,16 +1,23 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { homedir } from 'os';
 import { isoWeek } from './date.js';
+import { safeFetch } from './safe-fetch.js';
 
-const QUOTA_FILE = join(process.env.HOME, '.seo-cli-serpapi.json');
+const QUOTA_FILE = join(homedir(), '.seo-cli-serpapi.json');
 const WEEKLY_LIMIT = 240; // leave 10 as buffer from the 250 free tier
 
+let quotaCache = null;
 function loadQuota() {
-  if (!existsSync(QUOTA_FILE)) return { week: null, used: 0 };
-  try { return JSON.parse(readFileSync(QUOTA_FILE, 'utf8')); } catch { return { week: null, used: 0 }; }
+  if (quotaCache !== null) return quotaCache;
+  if (!existsSync(QUOTA_FILE)) { quotaCache = { week: null, used: 0 }; return quotaCache; }
+  try { quotaCache = JSON.parse(readFileSync(QUOTA_FILE, 'utf8')); }
+  catch { quotaCache = { week: null, used: 0 }; }
+  return quotaCache;
 }
 
 function saveQuota(q) {
+  quotaCache = q;
   writeFileSync(QUOTA_FILE, JSON.stringify(q), 'utf8');
 }
 
@@ -23,15 +30,24 @@ export function checkQuota() {
 
 function bumpQuota(currentUsed) {
   const week = isoWeek();
-  saveQuota({ week, used: currentUsed + 1 });
-  return currentUsed + 1;
+  const next = currentUsed + 1;
+  saveQuota({ week, used: next });
+  return next;
+}
+
+function rollbackQuota(reservedUsed) {
+  const q = loadQuota();
+  if (q.used === reservedUsed) {
+    saveQuota({ week: q.week, used: reservedUsed - 1 });
+  }
 }
 
 export async function getSerp(keyword, { locale = 'de', gl = 'de' } = {}) {
   if (!process.env.SERPAPI_KEY) throw new Error('SERPAPI_KEY not set');
 
-  const quota = checkQuota();
-  if (quota.remaining <= 0) throw new Error(`SerpAPI weekly quota exhausted (${WEEKLY_LIMIT} searches/week)`);
+  const before = checkQuota();
+  if (before.remaining <= 0) throw new Error(`SerpAPI weekly quota exhausted (${WEEKLY_LIMIT} searches/week)`);
+  const reservedUsed = bumpQuota(before.used);
 
   const params = new URLSearchParams({
     q: keyword,
@@ -41,10 +57,17 @@ export async function getSerp(keyword, { locale = 'de', gl = 'de' } = {}) {
     api_key: process.env.SERPAPI_KEY,
   });
 
-  const res = await fetch(`https://serpapi.com/search.json?${params}`);
-  if (!res.ok) throw new Error(`SerpAPI error: ${res.status}`);
-
-  bumpQuota(quota.used);
+  let res;
+  try {
+    res = await safeFetch(`https://serpapi.com/search.json?${params}`);
+  } catch (e) {
+    rollbackQuota(reservedUsed);
+    throw e;
+  }
+  if (!res.ok) {
+    rollbackQuota(reservedUsed);
+    throw new Error(`SerpAPI error: ${res.status}`);
+  }
 
   const data = await res.json();
   const results = (data.organic_results || []).slice(0, 5);

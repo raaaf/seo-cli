@@ -67,19 +67,41 @@ export function detectProject(cwd) {
   return hints;
 }
 
+function isLikelyPublicDomain(urlString) {
+  const RESERVED_TLDS = new Set(['localhost', 'internal', 'corp', 'lan', 'local', 'home', 'test', 'example', 'invalid']);
+
+  try {
+    const u = new URL(urlString);
+    const host = u.hostname.toLowerCase();
+    if (!host.includes('.')) return false;
+    const tld = host.split('.').pop();
+    if (RESERVED_TLDS.has(tld)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function detectDomain(cwd) {
   // package.json homepage
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
-    if (pkg.homepage) return pkg.homepage.replace(/\/$/, '');
+    if (pkg.homepage) {
+      const url = pkg.homepage.replace(/\/$/, '');
+      if (isLikelyPublicDomain(url)) return url;
+    }
   } catch {}
 
   // CLAUDE.md — look for URLs
   for (const f of ['CLAUDE.md', '.claude/CLAUDE.md']) {
     try {
       const content = readFileSync(join(cwd, f), 'utf8');
-      const match = content.match(/https?:\/\/[a-z0-9.-]+\.[a-z]{2,}/i);
-      if (match) return match[0];
+      const matches = content.match(/https?:\/\/[a-z0-9.-]+\.[a-z]{2,}/gi);
+      if (matches) {
+        for (const match of matches) {
+          if (isLikelyPublicDomain(match)) return match;
+        }
+      }
     } catch {}
   }
 
@@ -88,7 +110,7 @@ function detectDomain(cwd) {
     try {
       const content = readFileSync(join(cwd, f), 'utf8');
       const match = content.match(/APP_URL=["']?(https?:\/\/[^\s"']+)/);
-      if (match) return match[1];
+      if (match && isLikelyPublicDomain(match[1])) return match[1];
     } catch {}
   }
 

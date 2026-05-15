@@ -1,49 +1,49 @@
 import chalk from 'chalk';
+import { parseFrontmatter } from '../lib/frontmatter.js';
 
 export function validate(markdown, keyword) {
   const errors = [];
   const warnings = [];
 
-  const fmMatch = markdown.match(/^---\n([\s\S]+?)\n---/);
-  if (!fmMatch) {
+  const { parsed, body, matched, error } = parseFrontmatter(markdown);
+  if (!matched) {
     errors.push('No YAML frontmatter found');
     return { ok: false, errors, warnings };
   }
-
-  const body = markdown.slice(fmMatch[0].length).trim();
-  const fm = fmMatch[1];
+  if (error) {
+    errors.push(`Frontmatter YAML parse error: ${error.message}`);
+    return { ok: false, errors, warnings };
+  }
 
   // Required frontmatter fields
   for (const field of ['slug', 'meta_title', 'meta_description', 'hero', 'tldr', 'faq']) {
-    if (!fm.includes(`${field}:`)) errors.push(`Missing frontmatter field: ${field}`);
+    if (!(field in parsed)) errors.push(`Missing frontmatter field: ${field}`);
   }
 
   // meta_title length
-  const titleMatch = fm.match(/meta_title:\s*["']?(.+?)["']?\s*$/m);
-  if (titleMatch) {
-    const len = titleMatch[1].length;
+  if (parsed.meta_title != null) {
+    const len = String(parsed.meta_title).length;
     if (len < 40) warnings.push(`meta_title short (${len} chars, aim 50–60)`);
     if (len > 65) errors.push(`meta_title too long (${len} chars, max 65)`);
   }
 
   // meta_description length
-  const descMatch = fm.match(/meta_description:\s*["']?(.+?)["']?\s*$/m);
-  if (descMatch) {
-    const len = descMatch[1].length;
+  if (parsed.meta_description != null) {
+    const len = String(parsed.meta_description).length;
     if (len < 120) warnings.push(`meta_description short (${len} chars, aim 140–160)`);
     if (len > 170) errors.push(`meta_description too long (${len} chars, max 170)`);
   }
 
   // hero.headline exists and contains keyword
-  const headlineMatch = fm.match(/headline:\s*["']?(.+?)["']?\s*$/m);
-  if (!headlineMatch) {
+  const headline = parsed.hero?.headline;
+  if (!headline) {
     errors.push('Missing hero.headline');
-  } else if (!headlineMatch[1].toLowerCase().includes(keyword.keyword.toLowerCase().split(' ')[0])) {
-    warnings.push(`hero.headline may not contain target keyword: "${headlineMatch[1]}"`);
+  } else if (!String(headline).toLowerCase().includes(keyword.keyword.toLowerCase().split(' ')[0])) {
+    warnings.push(`hero.headline may not contain target keyword: "${headline}"`);
   }
 
   // faq has entries
-  const faqCount = (fm.match(/^\s+- q:/gm) || []).length;
+  const faqCount = Array.isArray(parsed.faq) ? parsed.faq.length : 0;
   if (faqCount < 3) errors.push(`Too few FAQ entries (${faqCount}, min 3)`);
 
   // Body word count — must pass events app thin-content guard (>= 800)
@@ -69,7 +69,7 @@ export function validate(markdown, keyword) {
   // Entity coverage
   const entities = keyword.expected_entities || [];
   if (entities.length > 0) {
-    const fullText = (fm + '\n' + body).toLowerCase();
+    const fullText = (JSON.stringify(parsed) + '\n' + body).toLowerCase();
     const missing = entities.filter(e => !fullText.includes(e.toLowerCase()));
     const coverage = (entities.length - missing.length) / entities.length;
     if (coverage < 0.6) {
@@ -78,9 +78,8 @@ export function validate(markdown, keyword) {
   }
 
   // tldr word count (40–60 words)
-  const tldrMatch = fm.match(/^tldr:\s*["']?(.+?)["']?\s*$/m);
-  if (tldrMatch) {
-    const tldrWords = tldrMatch[1].split(/\s+/).filter(Boolean).length;
+  if (parsed.tldr != null) {
+    const tldrWords = String(parsed.tldr).split(/\s+/).filter(Boolean).length;
     if (tldrWords < 40) errors.push(`tldr too short: ${tldrWords} words (min 40)`);
     if (tldrWords > 60) errors.push(`tldr too long: ${tldrWords} words (max 60)`);
   }

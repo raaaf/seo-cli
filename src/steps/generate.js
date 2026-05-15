@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
 import { format } from '../lib/date.js';
 import { getExistingSlugs } from '../lib/landings.js';
+import { fillTemplate } from '../lib/template.js';
 
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
@@ -22,24 +23,24 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
     : '(first attempt — no prior feedback)';
 
-  const prompt = GENERATE_PROMPT
-    .replace('{{keyword}}', keyword.keyword)
-    .replace('{{slug}}', keyword.target_slug)
-    .replace('{{type}}', keyword.type || 'guide')
-    .replace('{{intent}}', keyword.intent || 'informational')
-    .replace('{{geo_scope}}', keyword.geo_scope || 'global')
-    .replace('{{location}}', keyword.location || 'n/a')
-    .replace('{{expected_entities}}', (keyword.expected_entities || []).join(', '))
-    .replace('{{content_gaps}}', (keyword.content_gaps || []).join(', '))
-    .replace('{{primary_cta}}', config.primary_cta || 'trial_signup')
-    .replace('{{locale}}', config.locale || 'de')
-    .replace('{{people_also_ask}}', (keyword.serp?.people_also_ask || []).join('\n') || 'n/a')
-    .replace('{{related_searches}}', (keyword.serp?.related_searches || []).join('\n') || 'n/a')
-    .replace('{{existing_slugs}}', getExistingSlugs(config, cwd, config.locale).join(', ') || 'none')
-    .replace('{{style}}', style)
-    .replace('{{today}}', format(new Date()))
-    .replace('{{expected_entities_yaml}}', JSON.stringify(keyword.expected_entities || []))
-    .replace('{{validator_feedback}}', feedbackBlock);
+  const vars = {
+    keyword: keyword.keyword,
+    slug: keyword.target_slug,
+    type: keyword.type || 'guide',
+    intent: keyword.intent || 'informational',
+    geo_scope: keyword.geo_scope || 'global',
+    expected_entities: (keyword.expected_entities || []).join(', '),
+    content_gaps: (keyword.content_gaps || []).join(', '),
+    locale: config.locale || 'de',
+    people_also_ask: (keyword.serp?.people_also_ask || []).join('\n') || 'n/a',
+    related_searches: (keyword.serp?.related_searches || []).join('\n') || 'n/a',
+    existing_slugs: getExistingSlugs(config, cwd, config.locale).join(', ') || 'none',
+    style,
+    today: format(new Date()),
+    validator_feedback: feedbackBlock,
+  };
+
+  const prompt = fillTemplate(GENERATE_PROMPT, vars);
 
   console.log(chalk.blue(`  Generating: ${keyword.keyword}${validatorFeedback ? ' (retry)' : ''}`));
 

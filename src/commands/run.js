@@ -2,12 +2,27 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import chalk from 'chalk';
 import { loadConfig } from '../lib/config.js';
-import { saveKeywords, getPending, KEYWORD_STATUS } from '../lib/keywords.js';
+import { saveKeywords, getPending, KEYWORD_STATUS, saveLastPR } from '../lib/keywords.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
 import { validate } from '../steps/validate.js';
 import { createPR } from '../steps/pr.js';
 import { track } from '../steps/track.js';
+
+function pLimit(concurrency) {
+  const queue = [];
+  let active = 0;
+  const next = () => {
+    if (active >= concurrency || queue.length === 0) return;
+    active++;
+    const { fn, resolve, reject } = queue.shift();
+    fn().then(resolve, reject).finally(() => { active--; next(); });
+  };
+  return (fn) => new Promise((resolve, reject) => {
+    queue.push({ fn, resolve, reject });
+    next();
+  });
+}
 
 const REQUIRED_ENV = [
   'ANTHROPIC_API_KEY',
@@ -16,7 +31,7 @@ const REQUIRED_ENV = [
   'GITHUB_TOKEN',
 ];
 
-async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedPages) {
+async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedKeys) {
   const localeLandingPath = config.landing_path.includes(`/${defaultLocale}/`)
     ? config.landing_path.replace(`/${defaultLocale}/`, `/${locale}/`)
     : config.landing_path;
@@ -27,11 +42,11 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale,
   if (existsSync(targetFile)) {
     console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
     kw.status = KEYWORD_STATUS.DONE;
-    return false;
+    return null;
   }
-  if (generatedPages.some(p => p.slug === kw.target_slug && p.locale === locale)) {
+  if (generatedKeys.has(`${kw.target_slug}::${locale}`)) {
     console.log(chalk.yellow(`  Skipping ${kw.target_slug}${label} — slug collision with another keyword`));
-    return false;
+    return null;
   }
 
   let markdown;
@@ -47,21 +62,17 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale,
   if (!valid) {
     console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
     kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
-    return false;
+    return null;
   }
 
   if (dryRun) {
     console.log(chalk.cyan(`\n--- ${kw.keyword}${label} ---\n`));
     console.log(markdown.slice(0, 600) + '\n...');
-    return false;
+    return null;
   }
 
-  const landingPath = (config.locales?.length ?? 1) > 1
-    ? config.landing_path.replace(/\/(de|en)\//, `/${locale}/`)
-    : config.landing_path;
-  const filePath = join(landingPath, `${kw.target_slug}.md`).replace(/\\/g, '/');
-  generatedPages.push({ keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown });
-  return true;
+  const filePath = join(localeLandingPath, `${kw.target_slug}.md`).replace(/\\/g, '/');
+  return { keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown };
 }
 
 export async function runCommand(opts) {
@@ -94,25 +105,31 @@ export async function runCommand(opts) {
     console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
 
     const generatedPages = [];
-
+    const GENERATE_CONCURRENCY = 2;
+    const limit = pLimit(GENERATE_CONCURRENCY);
+    const generatedKeysAtomic = new Set();
+    const tasks = [];
     for (const kw of toGenerate) {
-      let producedAtLeastOne = false;
       for (const locale of locales) {
-        if (await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedPages)) {
-          producedAtLeastOne = true;
-        }
+        tasks.push(limit(async () => {
+          const page = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedKeysAtomic);
+          if (page) {
+            generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
+            generatedPages.push(page);
+            if (kw.status !== KEYWORD_STATUS.PR_OPENED) kw.status = KEYWORD_STATUS.PR_OPENED;
+          }
+          return page;
+        }));
       }
-      if (producedAtLeastOne) kw.status = KEYWORD_STATUS.PR_OPENED;
     }
+    await Promise.all(tasks);
 
     if (!dryRun && generatedPages.length > 0) {
       try {
         saveKeywords(keywordsData, cwd);
         const prUrl = await createPR({ generatedPages, keywordsJsonContent: keywordsData, config, cwd });
         // Write PR URL so CI workflows can enable auto-merge
-        const { writeFileSync, mkdirSync } = await import('fs');
-        mkdirSync(join(cwd, 'seo'), { recursive: true });
-        writeFileSync(join(cwd, 'seo/last-pr.json'), JSON.stringify({ pr_url: prUrl, created_at: new Date().toISOString() }, null, 2) + '\n');
+        saveLastPR(prUrl, cwd);
         console.log(chalk.bold(`\nDone. PR: ${prUrl}`));
       } catch (e) {
         console.error(chalk.red(`\nPR creation failed: ${e.message}`));

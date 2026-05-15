@@ -1,9 +1,9 @@
 import { complete } from './claude.js';
-import { safeFetch } from './safe-fetch.js';
+import { fetchPages, stripHtml } from './site-fetch.js';
 
 export async function analyzeSite(url) {
   // Fetch homepage + a few key pages
-  const pages = await fetchPages(url);
+  const pages = await buildPageContent(url);
 
   const result = await complete({
     system: 'You analyze websites and reply exclusively with JSON.',
@@ -35,35 +35,17 @@ Clusters: 3–5 concise topics (2–4 words) describing what landing pages make 
   return result;
 }
 
-async function fetchPages(baseUrl) {
-  const urls = [baseUrl, `${baseUrl.replace(/\/$/, '')}/preise`, `${baseUrl.replace(/\/$/, '')}/ueber-uns`];
+async function buildPageContent(baseUrl) {
+  const base = baseUrl.replace(/\/$/, '');
+  const urls = [baseUrl, `${base}/preise`, `${base}/ueber-uns`];
 
-  const fetched = await Promise.all(urls.map(async (url) => {
-    try {
-      const res = await safeFetch(url, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) return null;
-      const html = await res.text();
-      const text = stripHtml(html).slice(0, 2000);
-      return text.trim() ? `--- ${url} ---\n${text}` : null;
-    } catch {
-      return null;
-    }
-  }));
-  const results = fetched.filter(Boolean);
+  const fetched = await fetchPages(urls);
+  const results = fetched.map(({ url, html, text }) => {
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const titlePrefix = titleMatch ? `Title: ${titleMatch[1].trim()}\n` : '';
+    const excerpt = (titlePrefix + text).slice(0, 2000).trim();
+    return excerpt ? `--- ${url} ---\n${excerpt}` : null;
+  }).filter(Boolean);
 
   return results.join('\n\n') || '(Seite nicht erreichbar)';
-}
-
-function stripHtml(html) {
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const titlePrefix = titleMatch ? `Title: ${titleMatch[1].trim()}\n` : '';
-
-  const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return titlePrefix + text;
 }

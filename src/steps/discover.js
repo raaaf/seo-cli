@@ -5,7 +5,8 @@ import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
 import { loadKeywords, saveKeywords, upsertKeyword, KEYWORD_STATUS } from '../lib/keywords.js';
 import { format } from '../lib/date.js';
-import { getExistingTitles } from '../lib/landings.js';
+import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
+import { fillTemplate } from '../lib/template.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -22,7 +23,7 @@ export async function discover(config, cwd = process.cwd()) {
   );
 
   // Mark as done any keywords whose file already exists locally (merged PR)
-  const existingFiles = getExistingTitles(config.landing_path, cwd);
+  const existingFiles = getExistingSlugs(config, cwd, config.locale);
   let markedDone = 0;
   for (const kw of data.keywords) {
     if (kw.status === KEYWORD_STATUS.PR_OPENED && kw.target_slug && existingFiles.includes(kw.target_slug)) {
@@ -66,24 +67,25 @@ function isSlugTaken(targetSlug, keyword, data) {
   return Boolean(targetSlug && data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword));
 }
 
-function buildKeywordEntry(keyword, row, serpData, result, config) {
-  if (result.score < config.score_cutoff) {
-    return { keyword, status: KEYWORD_STATUS.SKIP, score: result.score, discovered_at: format(new Date()) };
+function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, expected_entities, content_gaps, serp, gsc, scoreCutoff }) {
+  if (score < scoreCutoff) {
+    return { keyword, status: KEYWORD_STATUS.SKIP, score, discovered_at: format(new Date()) };
   }
-  return {
+  const entry = {
     keyword,
     status: KEYWORD_STATUS.PROPOSED,
-    score: result.score,
-    source: 'gsc',
-    type: result.type,
-    intent: result.intent,
-    target_slug: result.target_slug,
-    expected_entities: result.expected_entities,
-    content_gaps: result.content_gaps,
-    serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
-    gsc: { impressions: row.impressions, position: row.position, clicks: row.clicks },
+    score,
+    source,
+    type,
+    intent,
+    target_slug,
+    expected_entities: expected_entities || [],
+    content_gaps: content_gaps || [],
+    serp: { people_also_ask: serp.people_also_ask, related_searches: serp.related_searches },
     discovered_at: format(new Date()),
   };
+  if (gsc) entry.gsc = gsc;
+  return entry;
 }
 
 async function scoreAndSave({ candidates, config, data, existingSlugs }) {
@@ -108,12 +110,29 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
       continue;
     }
 
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(result.target_slug || '')) {
+      console.log(chalk.yellow(`  Skipping invalid slug from Claude: ${JSON.stringify(result.target_slug)}`));
+      continue;
+    }
+
     if (isSlugTaken(result.target_slug, row.keyword, data)) {
       console.log(chalk.gray(`  Slug collision: ${result.target_slug} already taken, skipping ${row.keyword}`));
       continue;
     }
 
-    upsertKeyword(data, buildKeywordEntry(row.keyword, row, serpData, result, config));
+    upsertKeyword(data, buildKeywordEntry({
+      keyword: row.keyword,
+      source: 'gsc',
+      score: result.score,
+      type: result.type,
+      intent: result.intent,
+      target_slug: result.target_slug,
+      expected_entities: result.expected_entities,
+      content_gaps: result.content_gaps,
+      serp: serpData,
+      gsc: { impressions: row.impressions, position: row.position, clicks: row.clicks },
+      scoreCutoff: config.score_cutoff,
+    }));
     if (result.score >= config.score_cutoff) scored++;
     if (scored >= 10) break;
   }
@@ -122,11 +141,12 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
 async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
   const existingLandings = getExistingTitles(config.landing_path, cwd);
 
-  const prompt = GREENFIELD_PROMPT
-    .replace('{{clusters}}', (config.clusters || []).join(', '))
-    .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'none')
-    .replace('{{existing_landings}}', existingLandings.join(', ') || 'none')
-    .replace('{{locale}}', config.locale || 'de');
+  const prompt = fillTemplate(GREENFIELD_PROMPT, {
+    clusters: (config.clusters || []).join(', '),
+    existing_slugs: existingSlugs.join(', ') || 'none',
+    existing_landings: existingLandings.join(', ') || 'none',
+    locale: config.locale || 'de',
+  });
 
   let suggestions;
   try {
@@ -143,44 +163,58 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
   const keywords = Array.isArray(suggestions) ? suggestions : suggestions.keywords || [];
   console.log(chalk.gray(`  Greenfield: ${keywords.length} suggestions from Claude`));
 
-  for (const kw of keywords) {
+  const serpResults = await Promise.all(
+    keywords.map(async (kw) => {
+      if (!kw.keyword) return null;
+      try {
+        return await getSerp(kw.keyword, { locale: config.locale });
+      } catch (e) {
+        console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
+        return { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
+      }
+    })
+  );
+
+  for (let i = 0; i < keywords.length; i++) {
+    const kw = keywords[i];
     if (!kw.keyword) continue;
 
-    let serpData = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
-    try {
-      serpData = await getSerp(kw.keyword, { locale: config.locale });
-      console.log(chalk.gray(`    SerpAPI: ${serpData.people_also_ask.length} PAA, ${serpData.related_searches.length} related for "${kw.keyword}"`));
-    } catch (e) {
-      console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(kw.target_slug || '')) {
+      console.log(chalk.yellow(`  Skipping invalid slug from Claude: ${JSON.stringify(kw.target_slug)}`));
+      continue;
     }
 
-    upsertKeyword(data, {
+    const serpData = serpResults[i] || { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
+    console.log(chalk.gray(`    SerpAPI: ${serpData.people_also_ask.length} PAA, ${serpData.related_searches.length} related for "${kw.keyword}"`));
+
+    upsertKeyword(data, buildKeywordEntry({
       keyword: kw.keyword,
-      status: KEYWORD_STATUS.PROPOSED,
-      score: kw.score ?? 7,
       source: 'greenfield',
+      score: kw.score ?? 7,
       type: kw.type,
       intent: kw.intent,
       target_slug: kw.target_slug,
-      expected_entities: kw.expected_entities || [],
-      content_gaps: kw.content_gaps || [],
-      serp: { people_also_ask: serpData.people_also_ask, related_searches: serpData.related_searches },
-      discovered_at: format(new Date()),
-    });
+      expected_entities: kw.expected_entities,
+      content_gaps: kw.content_gaps,
+      serp: serpData,
+      scoreCutoff: config.score_cutoff,
+    }));
   }
 }
 
 function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
-  return SCORE_PROMPT
-    .replace('{{keyword}}', String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200))
-    .replace('{{impressions}}', row.impressions)
-    .replace('{{position}}', row.position.toFixed(1))
-    .replace('{{clicks}}', row.clicks)
-    .replace('{{clusters}}', (config.clusters || []).join(', '))
-    .replace('{{existing_slugs}}', existingSlugs.join(', ') || 'none')
-    .replace('{{serp_titles}}', serpData.top_titles.join('\n') || 'n/a')
-    .replace('{{serp_snippets}}', serpData.top_snippets.join('\n') || 'n/a')
-    .replace('{{people_also_ask}}', serpData.people_also_ask.join('\n') || 'n/a')
-    .replace('{{locale}}', config.locale || 'de');
+  const vars = {
+    keyword: String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200),
+    impressions: row.impressions,
+    position: row.position.toFixed(1),
+    clicks: row.clicks,
+    clusters: (config.clusters || []).join(', '),
+    existing_slugs: existingSlugs.join(', ') || 'none',
+    serp_titles: serpData.top_titles.join('\n') || 'n/a',
+    serp_snippets: serpData.top_snippets.join('\n') || 'n/a',
+    people_also_ask: serpData.people_also_ask.join('\n') || 'n/a',
+    locale: config.locale || 'de',
+  };
+  return fillTemplate(SCORE_PROMPT, vars);
 }
 

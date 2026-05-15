@@ -3,9 +3,12 @@ import { join } from 'path';
 import chalk from 'chalk';
 import { createBranchAndCommit, openPR } from '../lib/github.js';
 import { isoWeek, format } from '../lib/date.js';
-import { KEYWORDS_FILE } from '../lib/keywords.js';
+import { parseFrontmatter } from '../lib/frontmatter.js';
+import { KEYWORDS_FILE, SITEMAP_PENDING_FILE } from '../lib/keywords.js';
 
-const SITEMAP_PENDING_FILE = 'seo/sitemap-pending.json';
+function localeSlug(slug, locale, locales) {
+  return `/${locale === locales[0] ? '' : locale + '/'}${slug}`;
+}
 
 export async function createPR({ generatedPages, keywordsJsonContent, config, cwd = process.cwd() }) {
   const week = isoWeek();
@@ -15,7 +18,7 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
   const sitemapPending = loadSitemapPending(cwd);
   const locales = config.locales || [config.locale || 'de'];
   for (const page of generatedPages) {
-    const slug = `/${page.locale === config.locales?.[0] ? '' : page.locale + '/'}${page.slug}`;
+    const slug = localeSlug(page.slug, page.locale, locales);
     if (!sitemapPending.slugs.includes(slug)) sitemapPending.slugs.push(slug);
   }
 
@@ -60,7 +63,7 @@ function injectHreflang(pages, locales) {
   return pages.map(p => {
     const siblings = bySlug[p.slug];
     const hreflangLines = Object.entries(siblings)
-      .map(([loc, sibling]) => `  ${loc}: /${loc === locales[0] ? '' : loc + '/'}${sibling.slug}`)
+      .map(([loc, sibling]) => `  ${loc}: ${localeSlug(sibling.slug, loc, locales)}`)
       .join('\n');
 
     const hreflangBlock = `hreflang:\n${hreflangLines}`;
@@ -79,26 +82,24 @@ function mdCell(str) {
   return String(str ?? '')
     .replace(/\r?\n/g, ' ')
     .replace(/\|/g, '\\|')
-    .replace(/`/g, '\\`');
+    .replace(/`/g, '\\`')
+    .replace(/\[/g, '\\[')
+    .replace(/\]/g, '\\]');
 }
 
 function seoCheck(page) {
-  const fm = page.markdown.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? '';
-  const body = page.markdown.replace(/^---[\s\S]*?---\n/, '');
+  const { parsed, body } = parseFrontmatter(page.markdown);
 
-  const getField = (key) => fm.match(new RegExp(`^${key}:\\s*["']?(.+?)["']?\\s*$`, 'm'))?.[1] ?? '';
-
-  const metaTitle = getField('meta_title');
-  const metaDesc = getField('meta_description');
-  const tldr = getField('tldr');
-
+  const metaTitle = String(parsed.meta_title ?? '');
+  const metaDesc = String(parsed.meta_description ?? '');
+  const tldr = String(parsed.tldr ?? '');
   const titleLen = metaTitle.length;
   const descLen = metaDesc.length;
   const tldrWords = tldr.split(/\s+/).filter(Boolean).length;
   const bodyWords = body.split(/\s+/).filter(Boolean).length;
   const extLinks = (body.match(/\[.*?\]\(https?:\/\//g) ?? []).length;
-  const hasFaq = fm.includes('faq:');
-  const hasRelated = fm.includes('related_pages:') && /related_pages:\s*\n\s+-/.test(fm);
+  const hasFaq = Array.isArray(parsed.faq) && parsed.faq.length > 0;
+  const hasRelated = Array.isArray(parsed.related_pages) && parsed.related_pages.length > 0;
 
   const status = (ok, warn) => ok ? '✅' : warn ? '⚠️' : '❌';
 
