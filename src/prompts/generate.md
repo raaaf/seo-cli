@@ -82,7 +82,24 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
 - NO em-dashes (—). Use comma, colon, or period instead.
 - NO double-hyphen separator ( -- ). Restructure the sentence.
 - NO emoji anywhere in the file
-- Write entirely in {{locale}}
+- Write entirely in {{locale}}. For DE pages: do NOT drop English nouns mid-sentence
+  (no "venue", "invitations", "entertainment", "theme" as bare lowercase words —
+  use Location/Veranstaltungsort, Einladungen, Unterhaltung, Motto).
+  Established loanwords used in German (Catering, Tool, App, SaaS) are OK but must
+  be capitalized as German nouns when used as such.
+- NO anglicism "in 2026" — write "2026" or "im Jahr 2026".
+- Brand casing must be correct: WordPress, GitHub, GitLab, JavaScript, TypeScript,
+  PostgreSQL, MySQL, macOS, iOS — never lowercase or wrong-case variants.
+- Do NOT fabricate product or tool names. Only mention software you are certain exists.
+  If unsure, omit the name and describe the category instead ("eine Rechnungssoftware
+  mit Zeiterfassungs-Schnittstelle"). Common safe examples: Lexware Office, sevDesk,
+  FastBill, Billomat, Bonsai, Toggl, Clockify, Harvest, Stripe, Vercel, Railway.
+- Tax/legal facts must reflect law currently in force. German thresholds as of 2026:
+  Kleinunternehmer 25.000 EUR Vorjahr / 100.000 EUR laufendes Jahr (§19 UStG, seit 2025);
+  Grundfreibetrag ca. 12.348 EUR (2026); Betriebsveranstaltungs-Freibetrag 110 EUR (§19
+  Abs. 1 Nr. 1a EStG). Never cite outdated thresholds with old year labels as if current.
+- Cite source years only when sourcing a specific study; do not write "im Jahr 2024" for
+  a fact stated as currently true.
 
 ## Validator feedback (if this is a retry)
 

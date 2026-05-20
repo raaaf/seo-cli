@@ -64,3 +64,24 @@ Direct and specific:
 - Include a FAQ section (4–6 real questions) — valuable for AI Overview citations
   even though FAQ schema no longer produces rich results in Google Search
 - No "Conclusion" section
+
+## Language purity (German pages)
+
+- Do not drop English nouns mid-sentence in DE prose. If German has a word, use it.
+  Bad: "Die venue entscheidet", "Beim catering", "Gute entertainment", "Ein klares Theme".
+  Good: "Die Location entscheidet", "Beim Catering", "Gute Unterhaltung", "Ein klares Motto".
+- Established loanwords are OK when they are common usage in German and capitalized as
+  nouns: Catering, Tool, App, SaaS, MVP, Stack, Hosting, Plugin, Template, Workshop.
+- No anglicism "in 2026" — write "2026" or "im Jahr 2026".
+
+## Facts must be current
+
+- Use German tax/legal thresholds as currently in force, not values from older years
+  stamped with a past year label as if still authoritative.
+- For statistics from studies, name the source year explicitly only when the source
+  itself is dated and you have verified the citation. Otherwise phrase neutrally.
+
+## Real names only
+
+- Never invent product, tool, software, organization, or person names.
+- If you cannot confidently name a real tool that fits, describe the category instead.
