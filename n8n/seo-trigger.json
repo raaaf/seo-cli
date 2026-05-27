@@ -1,0 +1,120 @@
+{
+  "name": "SEO: Trigger GitHub Workflows",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 3"
+            }
+          ]
+        }
+      },
+      "id": "trigger-001",
+      "name": "Weekly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/raaaf/portfolio-2025/actions/workflows/seo.yml/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github.v3+json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"ref\": \"main\" }",
+        "options": {}
+      },
+      "id": "dispatch-001",
+      "name": "Trigger portfolio-2025",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 200],
+      "credentials": {
+        "httpHeaderAuth": { "id": "GITHUB_TOKEN_CREDENTIAL_ID", "name": "GitHub Token" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/rafaelalex-dev/events/actions/workflows/seo.yml/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github.v3+json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"ref\": \"main\" }",
+        "options": {}
+      },
+      "id": "dispatch-002",
+      "name": "Trigger events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 400],
+      "credentials": {
+        "httpHeaderAuth": { "id": "GITHUB_TOKEN_CREDENTIAL_ID", "name": "GitHub Token" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/rafaelalex-dev/zeit/actions/workflows/seo.yml/dispatches",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github.v3+json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"ref\": \"main\" }",
+        "options": {}
+      },
+      "id": "dispatch-003",
+      "name": "Trigger zeit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 600],
+      "credentials": {
+        "httpHeaderAuth": { "id": "GITHUB_TOKEN_CREDENTIAL_ID", "name": "GitHub Token" }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly Schedule": {
+      "main": [
+        [
+          { "node": "Trigger portfolio-2025", "type": "main", "index": 0 },
+          { "node": "Trigger events", "type": "main", "index": 0 },
+          { "node": "Trigger zeit", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "saveManualExecutions": true
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "SEO", "id": "tag-seo" }
+  ],
+  "triggerCount": 1
+}
