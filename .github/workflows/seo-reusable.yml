@@ -16,6 +16,9 @@ on:
         required: true
       GSC_TOKEN:
         required: true
+      # Optional: n8n-Webhook-URL fuer E-Mail-Benachrichtigung (merged / needs review)
+      SEO_NOTIFY_WEBHOOK:
+        required: false
 
 jobs:
   run:
@@ -84,8 +87,13 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
         run: node .seo-cli/bin/seo.js run
 
-      - name: Report PR URL
+      - name: Gate — validate, auto-merge, notify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
         run: |
+          set -uo pipefail
+
           PR_URL=$(node -e "
             try {
               const fs = require('fs');
@@ -93,10 +101,54 @@ jobs:
               console.log(f.pr_url || '');
             } catch { console.log(''); }
           " 2>/dev/null || echo "")
-          if [ -n "$PR_URL" ]; then
-            echo "PR ready for review: $PR_URL"
+
+          if [ -z "$PR_URL" ]; then
+            echo "No new PR this run — nothing to gate."
+            exit 0
+          fi
+
+          PR_NUM="${PR_URL##*/}"
+          echo "Gating PR #$PR_NUM ($PR_URL)"
+
+          # Changed markdown files in the PR
+          mapfile -t MD < <(gh pr view "$PR_NUM" --json files -q '.files[].path' | grep -E '\.md$' || true)
+          if [ ${#MD[@]} -eq 0 ]; then
+            echo "PR has no markdown pages — skipping gate."
+            exit 0
+          fi
+
+          # Check out the PR branch so its pages + seo/keywords.json are present
+          gh pr checkout "$PR_NUM"
+
+          node .seo-cli/bin/seo.js check "${MD[@]}" | tee /tmp/seo-check.out
+          CHECK_EXIT=${PIPESTATUS[0]}
+
+          REPORT=$(grep -o 'SEO_CHECK_JSON=.*' /tmp/seo-check.out | sed 's/^SEO_CHECK_JSON=//' | tail -1)
+          [ -z "$REPORT" ] && REPORT='{}'
+
+          if [ "$CHECK_EXIT" -eq 0 ]; then
+            if gh pr merge "$PR_NUM" --squash --delete-branch; then
+              STATUS=merged
+            else
+              STATUS=merge_failed
+            fi
           else
-            echo "No new PR this run"
+            STATUS=needs_review
+          fi
+          echo "Gate result: $STATUS"
+
+          if [ -n "${NOTIFY_WEBHOOK:-}" ]; then
+            jq -n \
+              --arg repo "${GITHUB_REPOSITORY}" \
+              --arg status "$STATUS" \
+              --arg pr_url "$PR_URL" \
+              --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --argjson report "$REPORT" \
+              '{repo:$repo, status:$status, pr_url:$pr_url, run_url:$run_url, files:($report.pages // [] | map(.file)), report:$report}' \
+              | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \
+              || echo "Notify webhook call failed (non-fatal)."
+          else
+            echo "No SEO_NOTIFY_WEBHOOK configured — skipping email notification."
           fi
 
       - name: Clean up credentials
