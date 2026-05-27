@@ -7,9 +7,10 @@ import { execFile } from 'child_process';
 import { subDays, format } from '../lib/date.js';
 
 const TOKEN_PATH = join(homedir(), '.seo-cli-token.json');
-const SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly'];
-// Writing (e.g. submitting a sitemap) needs the full webmasters scope.
-const WRITE_SCOPES = ['https://www.googleapis.com/auth/webmasters'];
+// Full webmasters scope: covers read (Search Analytics) AND write (sitemap submit).
+// Re-authorize / re-mint the OAuth token after changing this so it carries write access.
+const SCOPES = ['https://www.googleapis.com/auth/webmasters'];
+const WRITE_SCOPES = SCOPES;
 let cachedAuth;
 
 export async function getAuth(scopes = SCOPES) {
