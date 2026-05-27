@@ -51,9 +51,9 @@ export async function discover(config, cwd = process.cwd()) {
   const useGreenfield = candidates.length === 0;
   if (useGreenfield) {
     console.log(chalk.yellow('  GSC data too sparse — switching to greenfield mode.'));
-    await discoverGreenfield({ config, data, existingSlugs, cwd });
+    await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd });
   } else {
-    await scoreAndSave({ candidates, config, data, existingSlugs });
+    await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles });
   }
 
   saveKeywords(data, cwd);
@@ -63,8 +63,14 @@ export async function discover(config, cwd = process.cwd()) {
   return data;
 }
 
-function isSlugTaken(targetSlug, keyword, data) {
-  return Boolean(targetSlug && data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword));
+// A slug is unavailable if another keyword already claims it in keywords.json,
+// or if a landing page with that slug already exists on disk (a merged page).
+// The latter guards against re-proposing a slug whose keywords.json entry was
+// lost because its PR never merged.
+function isSlugTaken(targetSlug, keyword, data, existingFiles = []) {
+  if (!targetSlug) return false;
+  if (existingFiles.includes(targetSlug)) return true;
+  return data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword);
 }
 
 function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, expected_entities, content_gaps, serp, gsc, scoreCutoff }) {
@@ -88,7 +94,7 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
   return entry;
 }
 
-async function scoreAndSave({ candidates, config, data, existingSlugs }) {
+async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [] }) {
   let scored = 0;
   for (const row of candidates.slice(0, 20)) {
     const existing = data.keywords.find(k => k.keyword === row.keyword);
@@ -115,7 +121,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
       continue;
     }
 
-    if (isSlugTaken(result.target_slug, row.keyword, data)) {
+    if (isSlugTaken(result.target_slug, row.keyword, data, existingFiles)) {
       console.log(chalk.gray(`  Slug collision: ${result.target_slug} already taken, skipping ${row.keyword}`));
       continue;
     }
@@ -138,7 +144,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs }) {
   }
 }
 
-async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
+async function discoverGreenfield({ config, data, existingSlugs, existingFiles = [], cwd }) {
   const existingLandings = getExistingTitles(config.landing_path, cwd);
 
   const prompt = fillTemplate(GREENFIELD_PROMPT, {
@@ -181,6 +187,11 @@ async function discoverGreenfield({ config, data, existingSlugs, cwd }) {
 
     if (!/^[a-z0-9][a-z0-9-]*$/.test(kw.target_slug || '')) {
       console.log(chalk.yellow(`  Skipping invalid slug from Claude: ${JSON.stringify(kw.target_slug)}`));
+      continue;
+    }
+
+    if (isSlugTaken(kw.target_slug, kw.keyword, data, existingFiles)) {
+      console.log(chalk.gray(`  Slug collision: ${kw.target_slug} already taken, skipping ${kw.keyword}`));
       continue;
     }
 
