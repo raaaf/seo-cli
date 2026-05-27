@@ -91,6 +91,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
         run: |
           set -uo pipefail
 
@@ -136,6 +137,8 @@ jobs:
               else
                 echo "Deploy dispatch skipped (no deploy.yml or no workflow_dispatch trigger)."
               fi
+              # (Re)submit the sitemap so Google re-crawls the new pages. Non-fatal.
+              node .seo-cli/bin/seo.js submit-sitemap || echo "Sitemap submit skipped/failed (non-fatal)."
             else
               STATUS=merge_failed
             fi

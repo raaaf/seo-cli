@@ -15,6 +15,7 @@ import { program } from 'commander';
 import { initCommand } from '../src/commands/init.js';
 import { runCommand } from '../src/commands/run.js';
 import { checkCommand } from '../src/commands/check.js';
+import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
 
 program
   .name('seo')
@@ -37,5 +38,10 @@ program
   .description('Validate already-generated landing-page markdown files (CI gate)')
   .argument('<files...>', 'markdown files to validate (e.g. the PR\'s changed .md files)')
   .action(checkCommand);
+
+program
+  .command('submit-sitemap')
+  .description('(Re)submit <base_url>/sitemap.xml to Google Search Console')
+  .action(submitSitemapCommand);
 
 program.parse();
