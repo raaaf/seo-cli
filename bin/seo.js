@@ -14,6 +14,7 @@ dotenv({ path: join(process.cwd(), '.env'), override: true });
 import { program } from 'commander';
 import { initCommand } from '../src/commands/init.js';
 import { runCommand } from '../src/commands/run.js';
+import { checkCommand } from '../src/commands/check.js';
 
 program
   .name('seo')
@@ -30,5 +31,11 @@ program
   .description('Discover keywords, generate pages, open PR')
   .option('--dry-run', 'print generated markdown, do not commit or open PR')
   .action(runCommand);
+
+program
+  .command('check')
+  .description('Validate already-generated landing-page markdown files (CI gate)')
+  .argument('<files...>', 'markdown files to validate (e.g. the PR\'s changed .md files)')
+  .action(checkCommand);
 
 program.parse();

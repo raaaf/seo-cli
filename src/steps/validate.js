@@ -100,11 +100,23 @@ export function validate(markdown, keyword) {
     /mehr als \d+ (kunden|paare|teams|nutzer)/i,
     /we (have )?helped .{0,20}customers/i,
     /over .{0,5}years of experience/i,
+    // First-person consultant anecdotes / invented client stories
+    /\b(in|aus) meiner praxis\b/i,
+    /\bbaute ich\b/i,
+    /\bein kunde (wollte|kam|bat|wünschte|fragte|brauchte)\b/i,
+    /\bfür einen (kunden|auftraggeber)\b/i,
+    /\bin (einem|meinem) (kunden|projekt)?projekt\b/i,
   ];
   for (const pattern of fabricated) {
     if (pattern.test(body)) {
       errors.push(`Fabricated claim detected: "${body.match(pattern)?.[0]}"`);
     }
+  }
+
+  // Weak citations: markdown links to bare homepages used as evidence
+  const homepageCites = body.match(/\]\(https?:\/\/[^/)]+\/?\)/g) || [];
+  for (const cite of homepageCites) {
+    warnings.push(`Homepage-only citation (link deep or drop it): ${cite}`);
   }
 
   const ok = errors.length === 0;
