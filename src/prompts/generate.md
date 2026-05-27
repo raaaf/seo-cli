@@ -76,9 +76,23 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
 - 2–4 internal links to existing slugs: [anchor text](/slug)
 - NEVER put FAQ questions, numbered steps, or bullet checklists in the body — those belong in frontmatter only
 - No fabricated statistics ("we helped X customers", "Y years of experience")
+- NO first-person consultant anecdotes or invented client stories. Never write
+  "ein Kunde wollte...", "in meiner Praxis", "aus meiner Praxis", "baute ich",
+  "arbeite ich mit...", "wir haben für einen Kunden...". You do not know the author's
+  real client history, so any such story is fabricated. Use neutral, hypothetical
+  framing instead: "Ein typisches Szenario:", "In vielen Projekten zeigt sich, dass...",
+  "Häufig genügt...". Illustrative cost/effort examples are fine only when framed
+  generically ("ein internes Tool dieser Art liegt bei rund X Euro"), never as
+  "aus meiner Praxis".
 - Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)
-- Cite external sources for factual claims: use markdown links [Quelle](https://...) for studies, statistics, organizations (e.g. Statista, BVDW, w3techs.com)
-- Include at least 1–2 external links to authoritative sources — strengthens GEO/E-E-A-T
+- Cite external sources only when you can name a specific, real document and link
+  DEEP to it (a concrete article/report page, not a homepage). Never invent a study
+  ("eine BVDW-Studie zeigt...") and never link only to a root domain like
+  https://www.bvdw.org/ or https://w3techs.com/ as evidence for a claim. If you cannot
+  point to a specific verifiable page, state the fact plainly without a citation.
+- Prefer 1–2 external links to authoritative, deep-linked sources where they genuinely
+  support a claim (strengthens GEO/E-E-A-T). Zero links is better than a fake or
+  homepage-only citation.
 - NO em-dashes (—). Use comma, colon, or period instead.
 - NO double-hyphen separator ( -- ). Restructure the sentence.
 - NO emoji anywhere in the file
