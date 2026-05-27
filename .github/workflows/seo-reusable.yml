@@ -129,6 +129,13 @@ jobs:
           if [ "$CHECK_EXIT" -eq 0 ]; then
             if gh pr merge "$PR_NUM" --squash --delete-branch; then
               STATUS=merged
+              # A merge by GITHUB_TOKEN does not trigger other workflows (incl. deploy).
+              # Dispatch the deploy explicitly so the merged pages go live.
+              if gh workflow run deploy.yml --ref main; then
+                echo "Deploy workflow dispatched."
+              else
+                echo "Deploy dispatch skipped (no deploy.yml or no workflow_dispatch trigger)."
+              fi
             else
               STATUS=merge_failed
             fi
