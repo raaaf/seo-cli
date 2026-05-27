@@ -15,7 +15,7 @@
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "dotenv": "^16.4.0",
-    "googleapis": "^140.0.0",
+    "googleapis": "^172.0.0",
     "inquirer": "^9.3.0",
     "js-yaml": "^4.1.0"
   }
