@@ -51,6 +51,10 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     maxTokens: 8000,
   });
 
+  // The model sometimes wraps the whole document in a ```markdown fence, which
+  // pushes the `---` frontmatter off the first line and makes it unparseable.
+  markdown = stripCodeFence(markdown);
+
   // Replace schema placeholders
   const baseUrl = (config.base_url || '').replace(/\/$/, '');
   const localePath = config.locale === (config.locales?.[0] ?? config.locale) ? '' : `/${config.locale}`;
@@ -61,6 +65,18 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     .replace(/SITE_NAME/g, config.site_name || config.project || '');
 
   return markdown;
+}
+
+// Remove a surrounding ```/```markdown code fence the model may have added
+// around the entire document. Only strips when an opening fence is present, so
+// genuine content is never touched.
+function stripCodeFence(text) {
+  let t = String(text ?? '').trim();
+  const open = t.match(/^```[a-zA-Z]*\n/);
+  if (open) {
+    t = t.slice(open[0].length).replace(/\n```$/, '');
+  }
+  return t.trim();
 }
 
 function loadStyleDoc(config, cwd) {
