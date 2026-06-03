@@ -61,6 +61,7 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale,
 
   if (!valid) {
     console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
+    (lastResult?.errors ?? []).forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
     kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
     return null;
   }
