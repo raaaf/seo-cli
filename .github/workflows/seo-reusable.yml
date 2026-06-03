@@ -118,6 +118,13 @@ jobs:
             exit 0
           fi
 
+          # `seo run` leaves tracked state files (seo/keywords.json,
+          # sitemap-pending.json, last-pr.json) modified in the working tree.
+          # They are already committed on the PR branch, so discard the local
+          # copies; otherwise the checkout below aborts with "local changes
+          # would be overwritten". (.seo-cli is untracked and is preserved.)
+          git checkout -- . 2>/dev/null || true
+
           # Check out the PR branch so its pages + seo/keywords.json are present
           gh pr checkout "$PR_NUM"
 
