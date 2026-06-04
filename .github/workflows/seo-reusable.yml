@@ -27,6 +27,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # Required so the gate can `gh workflow run deploy.yml` after auto-merge.
+      # A GITHUB_TOKEN merge does not trigger push workflows, so the deploy must
+      # be dispatched explicitly, which needs actions:write. The caller job must
+      # grant it too (caller permissions cap the reusable workflow's token).
+      actions: write
     env:
       HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
 
@@ -109,6 +114,10 @@ jobs:
           fi
 
           PR_NUM="${PR_URL##*/}"
+          if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
+            echo "Refusing to gate: PR number is not numeric ('$PR_NUM')."
+            exit 1
+          fi
           echo "Gating PR #$PR_NUM ($PR_URL)"
 
           # Changed markdown files in the PR
