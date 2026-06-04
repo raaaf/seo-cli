@@ -8,7 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 node bin/seo.js init          # interactive setup, writes seo.config.yaml in cwd
 node bin/seo.js run           # full pipeline: discover + generate + PR
 node bin/seo.js run --dry-run # preview generated markdown, no commit/PR
+node bin/seo.js dashboard     # cross-project overview (funnel, rankings, movers, suggestions)
+node bin/seo.js dashboard --live  # same, but pull current positions/clicks from GSC
 ```
+
+`dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated) and reads their committed state files. It does *not* run in the context of a single target project. Flags: `--live`, `--project <match>`, `--json`.
 
 No build step. No test suite. ESM (`"type": "module"`), Node 18+.
 

@@ -16,6 +16,7 @@ import { initCommand } from '../src/commands/init.js';
 import { runCommand } from '../src/commands/run.js';
 import { checkCommand } from '../src/commands/check.js';
 import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
+import { dashboardCommand } from '../src/commands/dashboard.js';
 
 program
   .name('seo')
@@ -38,6 +39,14 @@ program
   .description('Validate already-generated landing-page markdown files (CI gate)')
   .argument('<files...>', 'markdown files to validate (e.g. the PR\'s changed .md files)')
   .action(checkCommand);
+
+program
+  .command('dashboard')
+  .description('Cross-project SEO overview: funnel, rankings, movers, suggestions')
+  .option('--live', 'pull current positions/clicks from Search Console per project')
+  .option('--project <name>', 'limit to projects whose dir or name matches')
+  .option('--json', 'print the aggregated data as JSON')
+  .action(dashboardCommand);
 
 program
   .command('submit-sitemap')
