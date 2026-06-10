@@ -2,15 +2,16 @@ import chalk from 'chalk';
 import { discoverProjects } from '../lib/projects.js';
 import { projectSummary } from '../lib/dashboard.js';
 import { isoWeek } from '../lib/date.js';
+import { KEYWORD_STATUS } from '../lib/keywords.js';
 
 const STATUS_LABEL = {
-  proposed: 'todo',
-  pr_opened: 'in-PR',
-  done: 'done',
-  validation_failed: 'failed',
-  skip: 'skip',
+  [KEYWORD_STATUS.PROPOSED]: 'todo',
+  [KEYWORD_STATUS.PR_OPENED]: 'in-PR',
+  [KEYWORD_STATUS.DONE]: 'done',
+  [KEYWORD_STATUS.VALIDATION_FAILED]: 'failed',
+  [KEYWORD_STATUS.SKIP]: 'skip',
 };
-const STATUS_ORDER = ['proposed', 'pr_opened', 'done', 'validation_failed', 'skip'];
+const STATUS_ORDER = [KEYWORD_STATUS.PROPOSED, KEYWORD_STATUS.PR_OPENED, KEYWORD_STATUS.DONE, KEYWORD_STATUS.VALIDATION_FAILED, KEYWORD_STATUS.SKIP];
 
 function pad(str, width) {
   const s = String(str);
@@ -84,9 +85,9 @@ function renderOverview(summaries, week) {
     const avg = s.rank && s.rank.avgPos != null ? s.rank.avgPos.toFixed(1) : '—';
     const clicks = s.rank && s.rank.rows ? String(s.rank.clicks) : '—';
     return pad(s.project.dir, 16) +
-      pad(c.proposed || 0, 6) +
-      pad(c.pr_opened || 0, 7) +
-      pad(c.done || 0, 6) +
+      pad(c[KEYWORD_STATUS.PROPOSED] || 0, 6) +
+      pad(c[KEYWORD_STATUS.PR_OPENED] || 0, 7) +
+      pad(c[KEYWORD_STATUS.DONE] || 0, 6) +
       pad(avg, 8) +
       pad(clicks, 8);
   });

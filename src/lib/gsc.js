@@ -10,10 +10,9 @@ const TOKEN_PATH = join(homedir(), '.seo-cli-token.json');
 // Full webmasters scope: covers read (Search Analytics) AND write (sitemap submit).
 // Re-authorize / re-mint the OAuth token after changing this so it carries write access.
 const SCOPES = ['https://www.googleapis.com/auth/webmasters'];
-const WRITE_SCOPES = SCOPES;
 let cachedAuth;
 
-export async function getAuth(scopes = SCOPES) {
+export async function getAuth() {
   if (cachedAuth) return cachedAuth;
 
   const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -31,7 +30,7 @@ export async function getAuth(scopes = SCOPES) {
     cachedAuth = new google.auth.JWT({
       email: credentials.client_email,
       key: credentials.private_key,
-      scopes,
+      scopes: SCOPES,
     });
     return cachedAuth;
   }
@@ -135,7 +134,7 @@ export async function queryPagePerformance(gscProperty, { days = 28, lag = 7 } =
 // (Re)submit a sitemap to Google Search Console. Needs the full webmasters scope
 // AND the auth account being an owner/full user of the property — otherwise 403.
 export async function submitSitemap(gscProperty, sitemapUrl) {
-  const auth = await getAuth(WRITE_SCOPES);
+  const auth = await getAuth();
   const sc = google.searchconsole({ version: 'v1', auth });
   await sc.sitemaps.submit({ siteUrl: gscProperty, feedpath: sitemapUrl });
 }

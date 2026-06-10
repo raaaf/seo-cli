@@ -32,9 +32,9 @@ export async function initCommand() {
     {
       type: 'input',
       name: 'gsc_property',
-      message: 'Website URL (wie in Google Search Console):',
+      message: 'Website URL (as in Google Search Console):',
       default: existing.gsc_property || detected.gsc_property || '',
-      validate: v => v.startsWith('http') || 'Muss mit http(s):// beginnen',
+      validate: v => v.startsWith('http') || 'Must start with http(s)://',
     },
   ]);
 

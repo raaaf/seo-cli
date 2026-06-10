@@ -42,6 +42,9 @@ Be specific and concrete. No generic advice.`,
   });
 
   const fullPath = join(cwd, outputPath);
+  if (outputPath.startsWith('/') || outputPath.includes('..')) {
+    throw new Error(`Refusing to write style doc outside the project: ${outputPath}`);
+  }
   mkdirSync(dirname(fullPath), { recursive: true });
   writeFileSync(fullPath, styleGuide, 'utf8');
 

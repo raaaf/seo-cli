@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { loadKeywords } from './keywords.js';
+import { loadKeywords, KEYWORD_STATUS } from './keywords.js';
 
 // Minimal RFC-4180-ish CSV parser (handles quoted fields written by track.js).
 function parseCsv(text) {
@@ -134,8 +134,8 @@ function buildSuggestions({ counts, backlog, rank, cutoff }) {
     out.push({ kind: 'big_backlog', text: `${backlog.length} keywords ready to generate (≥ score ${cutoff})` });
   }
 
-  if (counts.validation_failed) {
-    out.push({ kind: 'validation_failed', text: `${counts.validation_failed} keyword(s) failed validation — review or skip` });
+  if (counts[KEYWORD_STATUS.VALIDATION_FAILED]) {
+    out.push({ kind: 'validation_failed', text: `${counts[KEYWORD_STATUS.VALIDATION_FAILED]} keyword(s) failed validation — review or skip` });
   }
 
   return out;
@@ -162,7 +162,7 @@ export async function projectSummary(project, { live = false } = {}) {
   for (const k of kw.keywords) counts[k.status] = (counts[k.status] || 0) + 1;
 
   const cutoff = project.config.score_cutoff ?? 7;
-  const backlog = kw.keywords.filter(k => k.status === 'proposed' && (k.score ?? 0) >= cutoff);
+  const backlog = kw.keywords.filter(k => k.status === KEYWORD_STATUS.PROPOSED && (k.score ?? 0) >= cutoff);
 
   let rank = rankingStats(project.path);
   let liveError = null;

@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import yaml from 'js-yaml';
+import { parseFrontmatter } from './frontmatter.js';
 
 export function detectProject(cwd) {
   const hints = {};
@@ -49,7 +49,7 @@ export function detectProject(cwd) {
       const files = readdirSync(dir).filter(f => f.endsWith('.md'));
       for (const file of files) {
         const content = readFileSync(join(dir, file), 'utf8');
-        const fm = parseFrontmatter(content);
+        const { parsed: fm } = parseFrontmatter(content);
         if (fm?.cluster) clusterSet.add(fm.cluster);
         if (fm?.primary_cta) ctaCounts[fm.primary_cta] = (ctaCounts[fm.primary_cta] || 0) + 1;
       }
@@ -117,12 +117,3 @@ function detectDomain(cwd) {
   return null;
 }
 
-function parseFrontmatter(content) {
-  const match = content.match(/^---\n([\s\S]+?)\n---/);
-  if (!match) return null;
-  try {
-    return yaml.load(match[1]);
-  } catch {
-    return null;
-  }
-}

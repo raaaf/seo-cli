@@ -14,6 +14,13 @@ export const KEYWORD_STATUS = {
   VALIDATION_FAILED: 'validation_failed',
 };
 
+// A valid landing-page slug: lowercase alphanumerics and hyphens, must start
+// with an alphanumeric. Used to validate LLM-returned slugs before any FS use.
+export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*$/;
+export function isValidSlug(slug) {
+  return SLUG_REGEX.test(String(slug ?? ''));
+}
+
 export function loadKeywords(cwd = process.cwd()) {
   const path = join(cwd, KEYWORDS_FILE);
   if (!existsSync(path)) return { version: 1, keywords: [] };

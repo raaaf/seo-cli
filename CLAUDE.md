@@ -10,6 +10,8 @@ node bin/seo.js run           # full pipeline: discover + generate + PR
 node bin/seo.js run --dry-run # preview generated markdown, no commit/PR
 node bin/seo.js dashboard     # cross-project overview (funnel, rankings, movers, suggestions)
 node bin/seo.js dashboard --live  # same, but pull current positions/clicks from GSC
+node bin/seo.js check <files...>  # validate already-generated landing markdown (CI gate)
+node bin/seo.js submit-sitemap    # (re)submit <base_url>/sitemap.xml to GSC
 ```
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated) and reads their committed state files. It does *not* run in the context of a single target project. Flags: `--live`, `--project <match>`, `--json`.
@@ -45,12 +47,23 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 | `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, 4 retry attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. |
 | `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. |
 | `src/lib/serpapi.js` | SerpAPI wrapper. Quota tracked in `~/.seo-cli-serpapi.json`, resets weekly. Hard stop at 240/week. |
-| `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum. |
+| `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum, `SLUG_REGEX`/`isValidSlug`, and state-file path constants. |
 | `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`. |
+| `src/lib/template.js` | `fillTemplate`: single-pass `{{placeholder}}` substitution. Substituted content is never re-scanned (guards against double-substitution injection). |
+| `src/lib/frontmatter.js` | `splitFrontmatter`/`parseFrontmatter`: parse YAML frontmatter from markdown. Canonical parser, shared by all consumers. |
+| `src/lib/safe-fetch.js` | `safeFetch`: SSRF guard. Resolves DNS and blocks private/reserved IPs before fetching. |
+| `src/lib/site-fetch.js` | `fetchPages`/`stripHtml`: fetch a list of URLs (via `safeFetch`) and strip to plain text. |
+| `src/lib/landings.js` | `getExistingSlugs`/`getExistingTitles`: enumerate on-disk landing pages. Module-scope memo cache. |
+| `src/lib/detect.js` | `detectProject`: heuristics for `seo init` (git remote, landing path, style doc, locale, clusters, domain). |
+| `src/lib/github.js` | Octokit wrapper: branch/commit creation and PR opening. |
+| `src/lib/projects.js` | `discoverProjects`: walk `SEO_PROJECT_ROOTS` for projects with a `seo.config.yaml` (used by `dashboard`). |
+| `src/lib/dashboard.js` | Aggregates funnel counts, ranking snapshots, movers, and suggestions per project. |
+| `src/lib/analyze-site.js` / `src/lib/generate-style-doc.js` | `seo init` helpers: Claude-derived site analysis and writing-style guide from fetched copy. |
+| `src/lib/date.js` | Date helpers (`format`, `subDays`, `isoWeek`). |
 
 ### Prompts
 
-`src/prompts/` contains markdown templates with `{{placeholder}}` substitution (simple `.replace()`, no templating engine):
+`src/prompts/` contains markdown templates with `{{placeholder}}` substitution via `lib/template.js#fillTemplate` (single-pass, no templating engine). Untrusted external data (SerpAPI titles/snippets, GSC queries, fetched site copy) is wrapped in `<<<UNTRUSTED_*_START>>>` / `<<<UNTRUSTED_*_END>>>` markers inside the templates so the model treats it as data, not instructions:
 
 - `score.md` — keyword scoring, returns JSON
 - `greenfield.md` — keyword discovery without GSC data

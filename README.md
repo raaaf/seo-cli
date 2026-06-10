@@ -52,6 +52,18 @@ seo run            # discover + generate + open PR
 seo run --dry-run  # preview without committing
 ```
 
+## Commands
+
+| Command | Description |
+|---|---|
+| `seo init` | Interactive setup, writes `seo.config.yaml` in the current project |
+| `seo run [--dry-run]` | Full pipeline: discover, generate, validate, open PR |
+| `seo check <files...>` | Validate already-generated landing-page markdown (CI gate) |
+| `seo dashboard [--live] [--project <name>] [--json]` | Cross-project overview: funnel, rankings, movers, suggestions |
+| `seo submit-sitemap` | (Re)submit `<base_url>/sitemap.xml` to Google Search Console |
+
+`dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated).
+
 ## Automation (GitHub Actions)
 
 Use the reusable workflow. Each project only needs its own GSC secrets.
@@ -136,6 +148,8 @@ clusters:
 | File | Description | Git |
 |---|---|---|
 | `seo/keywords.json` | Keyword backlog and status | commit |
+| `seo/sitemap-pending.json` | Slugs queued for sitemap submission | commit |
+| `seo/last-pr.json` | Last PR URL (used by CI auto-merge) | commit |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo.config.yaml` | Project config | commit |
 
@@ -155,7 +169,7 @@ Configure `landing_path` and `locale` in `seo.config.yaml` to match your project
 
 ## SerpAPI quota
 
-Free tier: 250 searches/month. The CLI tracks usage in `~/.seo-cli-serpapi.json` and shows remaining quota at the start of each run. Hard stop at 240 to keep a buffer.
+The CLI tracks usage in `~/.seo-cli-serpapi.json`, resets the counter each ISO week, and shows remaining quota at the start of each run. Hard stop at 240 searches per week (`WEEKLY_LIMIT` in `src/lib/serpapi.js`). Adjust the limit to match your SerpAPI plan.
 
 ## License
 

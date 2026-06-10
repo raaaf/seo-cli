@@ -1,0 +1,14 @@
+[
+  {
+    "pattern": "Module-scope caches (landings.js, gsc.js, serpapi.js) are unbounded with no eviction logic",
+    "reason": "Accepted as by-design in 2026-06-04 audit — CLI is short-lived; only dashboard --live holds the process alive with a small, bounded number of projects. GitHub issue #17 filed for awareness.",
+    "added": "2026-06-04",
+    "source": "2026-06-04-full-audit.md"
+  },
+  {
+    "pattern": "seoCheck thresholds in pr.js diverge from validate.js thresholds",
+    "reason": "Intentionally separate concerns (PR-body display vs validation gate) per 2026-06-04 audit. GitHub issue #18 filed. Two audits without a fix attempt confirms acceptance.",
+    "added": "2026-06-04",
+    "source": "2026-06-04-full-audit.md"
+  }
+]
