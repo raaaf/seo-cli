@@ -6,7 +6,7 @@ Automated SEO landing page pipeline. Discovers keyword opportunities via Google 
 
 ```
 seo run
-  ├── discover   GSC + SerpAPI + Claude scoring
+  ├── discover   GSC + SerpAPI + Claude scoring (greenfield fallback when GSC is thin)
   ├── generate   Claude writes markdown (prose + YAML frontmatter)
   ├── validate   structure, word count, entities, tone checks
   └── pr         commits to branch, opens PR

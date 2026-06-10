@@ -30,7 +30,7 @@ discover → generate → validate (up to 2 attempts) → pr → track
 
 All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 
-**discover** (`src/steps/discover.js`): Pulls the last 28 days of Search Console data (positions 8-25, filtered by `min_impressions`). Scores each candidate keyword via Claude + SerpAPI. Falls back to greenfield Claude suggestions when GSC data is sparse. Saves results to `seo/keywords.json` in the target project.
+**discover** (`src/steps/discover.js`): Pulls the last 28 days of Search Console data (positions 8-25, filtered by `min_impressions`). Scores each candidate keyword via Claude + SerpAPI. Falls back to greenfield Claude suggestions when GSC has no candidates, **or when GSC scoring yields fewer keywords above `score_cutoff` than `weekly_cap`** (tops up the backlog so GSC-poor sites, whose candidate pool is dominated by off-topic queries, still produce pages). Saves results to `seo/keywords.json` in the target project.
 
 **generate** (`src/steps/generate.js`): Calls Claude Opus (`claude-opus-4-7`, 8000 tokens) with a prompt assembled from `src/prompts/generate.md` and a style doc. Outputs markdown with YAML frontmatter. Placeholders `CANONICAL_URL`, `BASE_URL`, `SITE_NAME` are replaced post-generation.
 
