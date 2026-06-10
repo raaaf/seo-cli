@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { querySearchAnalytics } from '../lib/gsc.js';
 import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
-import { loadKeywords, saveKeywords, upsertKeyword, KEYWORD_STATUS } from '../lib/keywords.js';
+import { loadKeywords, saveKeywords, upsertKeyword, getPending, KEYWORD_STATUS, isValidSlug } from '../lib/keywords.js';
 import { format } from '../lib/date.js';
 import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
@@ -47,13 +47,21 @@ export async function discover(config, cwd = process.cwd()) {
   }
   console.log(chalk.gray(`  ${candidates.length} GSC candidates (pos 8–25, impr >= ${minImpressions})`));
 
-  // Greenfield fallback: when GSC has no usable data
-  const useGreenfield = candidates.length === 0;
-  if (useGreenfield) {
+  // Greenfield fallback: when GSC has no usable data, OR when GSC scoring did
+  // not yield enough keywords above the cutoff to fill the weekly cap. The
+  // latter covers GSC-poor sites whose candidate pool is dominated by
+  // off-topic queries that never clear the score cutoff — without it, discover
+  // returns 0 proposed week after week and no pages get generated.
+  if (candidates.length === 0) {
     console.log(chalk.yellow('  GSC data too sparse — switching to greenfield mode.'));
     await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd });
   } else {
     await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles });
+    const ready = getPending(data, config.score_cutoff).length;
+    if (ready < (config.weekly_cap ?? 2)) {
+      console.log(chalk.yellow(`  Only ${ready} keyword(s) cleared the cutoff (cap ${config.weekly_cap ?? 2}) — topping up via greenfield.`));
+      await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd });
+    }
   }
 
   saveKeywords(data, cwd);
@@ -116,7 +124,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       continue;
     }
 
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(result.target_slug || '')) {
+    if (!isValidSlug(result.target_slug)) {
       console.log(chalk.yellow(`  Skipping invalid slug from Claude: ${JSON.stringify(result.target_slug)}`));
       continue;
     }
@@ -185,7 +193,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
     const kw = keywords[i];
     if (!kw.keyword) continue;
 
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(kw.target_slug || '')) {
+    if (!isValidSlug(kw.target_slug)) {
       console.log(chalk.yellow(`  Skipping invalid slug from Claude: ${JSON.stringify(kw.target_slug)}`));
       continue;
     }
