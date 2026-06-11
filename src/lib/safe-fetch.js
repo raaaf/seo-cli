@@ -48,6 +48,24 @@ export async function assertPublicUrl(rawUrl) {
 // private IP. Acceptable for a CLI used against user-configured URLs in seo.config.yaml.
 
 export async function safeFetch(rawUrl, opts = {}) {
-  await assertPublicUrl(rawUrl);
-  return fetch(rawUrl, opts);
+  const MAX_REDIRECTS = 5;
+  let currentUrl = rawUrl;
+  let redirectCount = 0;
+
+  while (true) {
+    await assertPublicUrl(currentUrl);
+    const res = await fetch(currentUrl, { ...opts, redirect: 'manual' });
+
+    const isRedirect = [301, 302, 303, 307, 308].includes(res.status);
+    if (!isRedirect || !res.headers.get('location')) {
+      return res;
+    }
+
+    if (redirectCount >= MAX_REDIRECTS) {
+      throw new Error(`Too many redirects (max ${MAX_REDIRECTS}) from ${rawUrl}`);
+    }
+
+    currentUrl = new URL(res.headers.get('location'), currentUrl).href;
+    redirectCount++;
+  }
 }

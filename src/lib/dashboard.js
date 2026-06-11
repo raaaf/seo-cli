@@ -2,6 +2,12 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { loadKeywords, KEYWORD_STATUS } from './keywords.js';
 
+const NEAR_PAGE1_MIN_POSITION = 8;
+const NEAR_PAGE1_MAX_POSITION = 20;
+
+// Module-scope cache for rankingStats: keyed by resolved rankings directory path.
+const rankingStatsCache = new Map();
+
 // Minimal RFC-4180-ish CSV parser (handles quoted fields written by track.js).
 function parseCsv(text) {
   const rows = [];
@@ -58,7 +64,8 @@ function normalizeRow(r) {
 // Build snapshot metrics + week-over-week movers from the stored rankings CSVs.
 function rankingStats(projectPath) {
   const dir = join(projectPath, 'seo/rankings');
-  if (!existsSync(dir)) return null;
+  if (rankingStatsCache.has(dir)) return rankingStatsCache.get(dir);
+  if (!existsSync(dir)) { rankingStatsCache.set(dir, null); return null; }
   const files = readdirSync(dir).filter(f => f.endsWith('.csv'));
   const rows = [];
   for (const f of files) {
@@ -66,7 +73,7 @@ function rankingStats(projectPath) {
       if (rec.date && Number.isFinite(parseFloat(rec.position))) rows.push(normalizeRow(rec));
     }
   }
-  if (!rows.length) return null;
+  if (!rows.length) { rankingStatsCache.set(dir, null); return null; }
 
   const dates = [...new Set(rows.map(r => r.date))].sort();
   const latest = dates[dates.length - 1];
@@ -84,7 +91,9 @@ function rankingStats(projectPath) {
     movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }
 
-  return { ...snapshotMetrics(latestRows), snapshotDate: latest, earliestDate: earliest, dateCount: dates.length, movers, live: false };
+  const result = { ...snapshotMetrics(latestRows), snapshotDate: latest, earliestDate: earliest, dateCount: dates.length, movers, live: false };
+  rankingStatsCache.set(dir, result);
+  return result;
 }
 
 function snapshotMetrics(rows) {
@@ -108,7 +117,7 @@ function buildSuggestions({ counts, backlog, rank, cutoff }) {
       return [...m.values()];
     };
 
-    const nearPage1 = bestByQuery(rank.rows.filter(r => r.position >= 8 && r.position <= 20))
+    const nearPage1 = bestByQuery(rank.rows.filter(r => r.position >= NEAR_PAGE1_MIN_POSITION && r.position <= NEAR_PAGE1_MAX_POSITION))
       .sort((a, b) => b.impressions - a.impressions || a.position - b.position)
       .slice(0, 3);
     for (const r of nearPage1) {

@@ -1,5 +1,20 @@
 import chalk from 'chalk';
 import { parseFrontmatter } from '../lib/frontmatter.js';
+import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
+
+const FABRICATED_PATTERNS = Object.freeze([
+  /wir haben .{0,10}(kunden|paare|teams|nutzer|event)/i,
+  /in den letzten .{0,5}jahren/i,
+  /mehr als \d+ (kunden|paare|teams|nutzer)/i,
+  /we (have )?helped .{0,20}customers/i,
+  /over .{0,5}years of experience/i,
+  // First-person consultant anecdotes / invented client stories
+  /\b(in|aus) meiner praxis\b/i,
+  /\bbaute ich\b/i,
+  /\bein kunde (wollte|kam|bat|wünschte|fragte|brauchte)\b/i,
+  /\bfür einen (kunden|auftraggeber)\b/i,
+  /\bin (einem|meinem) (kunden|projekt)?projekt\b/i,
+]);
 
 export function validate(markdown, keyword) {
   const errors = [];
@@ -23,15 +38,15 @@ export function validate(markdown, keyword) {
   // meta_title length
   if (parsed.meta_title != null) {
     const len = String(parsed.meta_title).length;
-    if (len < 40) warnings.push(`meta_title short (${len} chars, aim 50–60)`);
-    if (len > 65) errors.push(`meta_title too long (${len} chars, max 65)`);
+    if (len < SEO_THRESHOLDS.metaTitle.shortWarn) warnings.push(`meta_title short (${len} chars, aim 50–60)`);
+    if (len > SEO_THRESHOLDS.metaTitle.errorMax) errors.push(`meta_title too long (${len} chars, max 65)`);
   }
 
   // meta_description length
   if (parsed.meta_description != null) {
     const len = String(parsed.meta_description).length;
-    if (len < 120) warnings.push(`meta_description short (${len} chars, aim 140–160)`);
-    if (len > 170) errors.push(`meta_description too long (${len} chars, max 170)`);
+    if (len < SEO_THRESHOLDS.metaDescription.shortWarn) warnings.push(`meta_description short (${len} chars, aim 140–160)`);
+    if (len > SEO_THRESHOLDS.metaDescription.errorMax) errors.push(`meta_description too long (${len} chars, max 170)`);
   }
 
   // hero.headline exists and contains keyword
@@ -44,12 +59,12 @@ export function validate(markdown, keyword) {
 
   // faq has entries
   const faqCount = Array.isArray(parsed.faq) ? parsed.faq.length : 0;
-  if (faqCount < 3) errors.push(`Too few FAQ entries (${faqCount}, min 3)`);
+  if (faqCount < SEO_THRESHOLDS.faqMin) errors.push(`Too few FAQ entries (${faqCount}, min 3)`);
 
-  // Body word count — must pass events app thin-content guard (>= 800)
+  // Body word count — min 800 words (thin-content guard)
   const wordCount = body.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 800) errors.push(`Body too short: ${wordCount} words (min 800 — events app test requires this)`);
-  if (wordCount > 1400) warnings.push(`Body very long: ${wordCount} words (aim 800–1200)`);
+  if (wordCount < SEO_THRESHOLDS.bodyWords.errorMin) errors.push(`Body too short: ${wordCount} words (min 800)`);
+  if (wordCount > SEO_THRESHOLDS.bodyWords.longWarn) warnings.push(`Body very long: ${wordCount} words (aim 800–1200)`);
 
   // No steps/FAQ/checklist sections in body (those belong in frontmatter)
   if (body.match(/^#{1,3}\s.*(FAQ|Häufige|Checklist|Schritt|Step)/im)) {
@@ -80,8 +95,8 @@ export function validate(markdown, keyword) {
   // tldr word count (40–60 words)
   if (parsed.tldr != null) {
     const tldrWords = String(parsed.tldr).split(/\s+/).filter(Boolean).length;
-    if (tldrWords < 40) errors.push(`tldr too short: ${tldrWords} words (min 40)`);
-    if (tldrWords > 60) errors.push(`tldr too long: ${tldrWords} words (max 60)`);
+    if (tldrWords < SEO_THRESHOLDS.tldrWords.errorMin) errors.push(`tldr too short: ${tldrWords} words (min 40)`);
+    if (tldrWords > SEO_THRESHOLDS.tldrWords.errorMax) errors.push(`tldr too long: ${tldrWords} words (max 60)`);
   }
 
   // Information density: >= 5 digits in body
@@ -94,20 +109,7 @@ export function validate(markdown, keyword) {
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(markdown)) errors.push('Emoji found — remove all emoji');
 
   // No fabricated claims
-  const fabricated = [
-    /wir haben .{0,10}(kunden|paare|teams|nutzer|event)/i,
-    /in den letzten .{0,5}jahren/i,
-    /mehr als \d+ (kunden|paare|teams|nutzer)/i,
-    /we (have )?helped .{0,20}customers/i,
-    /over .{0,5}years of experience/i,
-    // First-person consultant anecdotes / invented client stories
-    /\b(in|aus) meiner praxis\b/i,
-    /\bbaute ich\b/i,
-    /\bein kunde (wollte|kam|bat|wünschte|fragte|brauchte)\b/i,
-    /\bfür einen (kunden|auftraggeber)\b/i,
-    /\bin (einem|meinem) (kunden|projekt)?projekt\b/i,
-  ];
-  for (const pattern of fabricated) {
+  for (const pattern of FABRICATED_PATTERNS) {
     if (pattern.test(body)) {
       errors.push(`Fabricated claim detected: "${body.match(pattern)?.[0]}"`);
     }

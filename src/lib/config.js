@@ -9,7 +9,7 @@ export function loadConfig(cwd = process.cwd()) {
   if (!existsSync(path)) {
     throw new Error(`${CONFIG_FILE} not found. Run "seo init" first.`);
   }
-  return yaml.load(readFileSync(path, 'utf8'));
+  return { ...DEFAULTS, ...(yaml.load(readFileSync(path, 'utf8')) || {}) };
 }
 
 export function saveConfig(config, cwd = process.cwd()) {
@@ -25,3 +25,13 @@ export const DEFAULTS = {
   weekly_cap: 2,
   min_impressions: 5,
 };
+
+export function defaultLocale(config) {
+  return config.locales?.[0] ?? config.locale ?? 'de';
+}
+
+export function localeLandingPath(config, locale) {
+  const base = config.landing_path;
+  const def = defaultLocale(config);
+  return base.includes(`/${def}/`) ? base.replace(`/${def}/`, `/${locale}/`) : base;
+}

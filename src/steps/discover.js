@@ -11,6 +11,9 @@ import { fillTemplate } from '../lib/template.js';
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
 
+const MAX_GSC_CANDIDATES = 20;
+const MAX_SCORED_PER_RUN = 10;
+
 export async function discover(config, cwd = process.cwd()) {
   console.log(chalk.blue('Discovering keywords...'));
   const quota = checkQuota();
@@ -104,7 +107,7 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
 
 async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [] }) {
   let scored = 0;
-  for (const row of candidates.slice(0, 20)) {
+  for (const row of candidates.slice(0, MAX_GSC_CANDIDATES)) {
     const existing = data.keywords.find(k => k.keyword === row.keyword);
     if (existing?.score != null) continue;
 
@@ -148,7 +151,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       scoreCutoff: config.score_cutoff,
     }));
     if (result.score >= config.score_cutoff) scored++;
-    if (scored >= 10) break;
+    if (scored >= MAX_SCORED_PER_RUN) break;
   }
 }
 
@@ -209,7 +212,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
     upsertKeyword(data, buildKeywordEntry({
       keyword: kw.keyword,
       source: 'greenfield',
-      score: kw.score ?? 7,
+      score: kw.score ?? config.score_cutoff,
       type: kw.type,
       intent: kw.intent,
       target_slug: kw.target_slug,

@@ -1,7 +1,7 @@
 import { join } from 'path';
 import { existsSync } from 'fs';
 import chalk from 'chalk';
-import { loadConfig } from '../lib/config.js';
+import { loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as getLocaleLandingPath } from '../lib/config.js';
 import { saveKeywords, getPending, KEYWORD_STATUS, saveLastPR } from '../lib/keywords.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
@@ -31,14 +31,12 @@ const REQUIRED_ENV = [
   'GITHUB_TOKEN',
 ];
 
-async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedKeys) {
-  const localeLandingPath = config.landing_path.includes(`/${defaultLocale}/`)
-    ? config.landing_path.replace(`/${defaultLocale}/`, `/${locale}/`)
-    : config.landing_path;
-  const localeConfig = { ...config, locale, landing_path: localeLandingPath };
+async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys) {
+  const localeLandingPathStr = getLocaleLandingPath(config, locale);
+  const localeConfig = { ...config, locale, landing_path: localeLandingPathStr };
   const label = (config.locales?.length ?? 1) > 1 ? ` [${locale}]` : '';
 
-  const targetFile = join(cwd, localeLandingPath, `${kw.target_slug}.md`);
+  const targetFile = join(cwd, localeLandingPathStr, `${kw.target_slug}.md`);
   if (existsSync(targetFile)) {
     console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
     kw.status = KEYWORD_STATUS.DONE;
@@ -72,7 +70,7 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale,
     return null;
   }
 
-  const filePath = join(localeLandingPath, `${kw.target_slug}.md`).replace(/\\/g, '/');
+  const filePath = join(localeLandingPathStr, `${kw.target_slug}.md`).replace(/\\/g, '/');
   return { keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown };
 }
 
@@ -89,7 +87,7 @@ export async function runCommand(opts) {
   const config = loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
   const locales = config.locales || [config.locale || 'de'];
-  const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
+  const defaultLocaleVal = getDefaultLocale(config);
 
   console.log(chalk.bold(`\nseo run — ${config.project} [${locales.join('+')}] ${dryRun ? '(dry run)' : ''}\n`));
 
@@ -113,7 +111,7 @@ export async function runCommand(opts) {
     for (const kw of toGenerate) {
       for (const locale of locales) {
         tasks.push(limit(async () => {
-          const page = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocale, generatedKeysAtomic);
+          const page = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic);
           if (page) {
             generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
             generatedPages.push(page);

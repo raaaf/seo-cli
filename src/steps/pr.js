@@ -5,6 +5,7 @@ import { createBranchAndCommit, openPR } from '../lib/github.js';
 import { isoWeek, format } from '../lib/date.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { KEYWORDS_FILE, SITEMAP_PENDING_FILE } from '../lib/keywords.js';
+import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
 
 function localeSlug(slug, locale, locales) {
   return `/${locale === locales[0] ? '' : locale + '/'}${slug}`;
@@ -103,12 +104,13 @@ function seoCheck(page) {
 
   const status = (ok, warn) => ok ? '✅' : warn ? '⚠️' : '❌';
 
+  const { metaTitle: mt, metaDescription: md, tldrWords: tw, bodyWords: bw, extLinksMin } = SEO_THRESHOLDS;
   return [
-    `| meta_title (${titleLen} chars) | ${status(titleLen >= 50 && titleLen <= 60, titleLen >= 45 && titleLen <= 65)} |`,
-    `| meta_description (${descLen} chars) | ${status(descLen >= 140 && descLen <= 160, descLen >= 130 && descLen <= 165)} |`,
-    `| tldr (${tldrWords} words) | ${status(tldrWords >= 40 && tldrWords <= 60, tldrWords >= 35 && tldrWords <= 65)} |`,
-    `| body words (${bodyWords}) | ${status(bodyWords >= 800, bodyWords >= 700)} |`,
-    `| external links (${extLinks}) | ${status(extLinks >= 1, extLinks === 0)} |`,
+    `| meta_title (${titleLen} chars) | ${status(titleLen >= mt.idealMin && titleLen <= mt.idealMax, titleLen >= mt.okMin && titleLen <= mt.okMax)} |`,
+    `| meta_description (${descLen} chars) | ${status(descLen >= md.idealMin && descLen <= md.idealMax, descLen >= md.okMin && descLen <= md.okMax)} |`,
+    `| tldr (${tldrWords} words) | ${status(tldrWords >= tw.idealMin && tldrWords <= tw.idealMax, tldrWords >= tw.okMin && tldrWords <= tw.okMax)} |`,
+    `| body words (${bodyWords}) | ${status(bodyWords >= bw.okMin, bodyWords >= bw.warnMin)} |`,
+    `| external links (${extLinks}) | ${status(extLinks >= extLinksMin, extLinks === 0)} |`,
     `| FAQ entries | ${hasFaq ? '✅' : '❌'} |`,
     `| related_pages | ${hasRelated ? '✅' : '⚠️'} |`,
   ].join('\n');

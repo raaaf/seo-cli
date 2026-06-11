@@ -1,21 +1,19 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from './frontmatter.js';
+import { defaultLocale, localeLandingPath } from './config.js';
 
 const slugsCache = new Map();
 const titlesCache = new Map();
 
 export function getExistingSlugs(config, cwd, locale) {
-  const defaultLocale = config.locales?.[0] ?? config.locale ?? 'de';
-  const basePath = config.landing_path;
-  const localePath = basePath.includes(`/${defaultLocale}/`)
-    ? basePath.replace(`/${defaultLocale}/`, `/${locale}/`)
-    : basePath;
-  const cacheKey = `${cwd}::${localePath}::${locale}::${defaultLocale}`;
+  const def = defaultLocale(config);
+  const localePath = localeLandingPath(config, locale);
+  const cacheKey = `${cwd}::${localePath}::${locale}::${def}`;
   if (slugsCache.has(cacheKey)) return slugsCache.get(cacheKey);
 
   const tryDirs = [localePath];
-  if (locale !== defaultLocale) tryDirs.push(basePath);
+  if (locale !== def) tryDirs.push(config.landing_path);
 
   let result = [];
   for (const dir of tryDirs) {

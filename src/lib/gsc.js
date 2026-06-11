@@ -4,6 +4,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { createServer } from 'http';
 import { execFile } from 'child_process';
+import { randomBytes } from 'crypto';
 import { subDays, format } from '../lib/date.js';
 
 const TOKEN_PATH = join(homedir(), '.seo-cli-token.json');
@@ -66,13 +67,22 @@ export async function getAuth() {
 
 function getCodeViaLocalServer(oAuth2Client, client_id, client_secret) {
   return new Promise((resolve, reject) => {
+    const state = randomBytes(16).toString('hex');
+
     const server = createServer((req, res) => {
       const url = new URL(req.url, 'http://localhost');
       const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html><body><h2>seo-cli authorized. You can close this tab.</h2></body></html>');
       server.close();
-      if (code) resolve(code); else reject(new Error('No code in redirect'));
+      if (returnedState !== state) {
+        reject(new Error('OAuth state mismatch'));
+      } else if (code) {
+        resolve(code);
+      } else {
+        reject(new Error('No code in redirect'));
+      }
     });
 
     server.listen(0, '127.0.0.1', async () => {
@@ -86,6 +96,7 @@ function getCodeViaLocalServer(oAuth2Client, client_id, client_secret) {
         access_type: 'offline',
         scope: SCOPES,
         redirect_uri: `http://localhost:${port}`,
+        state,
       });
 
       console.log('\nOpening browser for Google authorization...');
