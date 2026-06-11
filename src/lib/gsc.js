@@ -23,7 +23,7 @@ export async function getAuth() {
   try {
     credentials = JSON.parse(readFileSync(credentialsPath, 'utf8'));
   } catch (e) {
-    throw new Error(`Failed to read Google credentials at ${credentialsPath}: ${e.message}`);
+    throw new Error(`Failed to read Google credentials at ${credentialsPath}: ${e.message}`, { cause: e });
   }
 
   // Service account
@@ -48,7 +48,7 @@ export async function getAuth() {
     try {
       oAuth2Client.setCredentials(JSON.parse(readFileSync(TOKEN_PATH, 'utf8')));
     } catch (e) {
-      throw new Error(`Failed to read OAuth token at ${TOKEN_PATH}: ${e.message}`);
+      throw new Error(`Failed to read OAuth token at ${TOKEN_PATH}: ${e.message}`, { cause: e });
     }
     cachedAuth = oAuth2Client;
     return cachedAuth;

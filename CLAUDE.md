@@ -16,7 +16,7 @@ node bin/seo.js submit-sitemap    # (re)submit <base_url>/sitemap.xml to GSC
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated) and reads their committed state files. It does *not* run in the context of a single target project. Flags: `--live`, `--project <match>`, `--json`.
 
-No build step. No test suite. ESM (`"type": "module"`), Node 18+.
+No build step. Tests: `npm test` (vitest, `test/*.test.js`). Linting: `npm run lint` (eslint flat config). ESM (`"type": "module"`), Node 18+.
 
 ## Architecture
 
@@ -44,12 +44,13 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 
 | File | Role |
 |---|---|
-| `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, 4 retry attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. |
+| `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, up to 4 total attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. |
 | `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. |
 | `src/lib/serpapi.js` | SerpAPI wrapper. Quota tracked in `~/.seo-cli-serpapi.json`, resets weekly. Hard stop at 240/week. |
 | `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum, `SLUG_REGEX`/`isValidSlug`, and state-file path constants. |
-| `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`. |
-| `src/lib/template.js` | `fillTemplate`: single-pass `{{placeholder}}` substitution. Substituted content is never re-scanned (guards against double-substitution injection). |
+| `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`, merges `DEFAULTS`. Also `defaultLocale`/`localeLandingPath` helpers. |
+| `src/lib/template.js` | `fillTemplate`: single-pass `{{placeholder}}` substitution. Substituted content is never re-scanned (guards against double-substitution injection). `sanitizeUntrusted` strips `<<<`/`>>>` fence markers from substituted values. |
+| `src/lib/seo-thresholds.js` | `SEO_THRESHOLDS`: shared meta/tldr/body limits consumed by `validate.js` and `pr.js` (prevents threshold drift). |
 | `src/lib/frontmatter.js` | `splitFrontmatter`/`parseFrontmatter`: parse YAML frontmatter from markdown. Canonical parser, shared by all consumers. |
 | `src/lib/safe-fetch.js` | `safeFetch`: SSRF guard. Resolves DNS and blocks private/reserved IPs before fetching. |
 | `src/lib/site-fetch.js` | `fetchPages`/`stripHtml`: fetch a list of URLs (via `safeFetch`) and strip to plain text. |

@@ -31,7 +31,7 @@ export async function complete({ system, prompt, model = 'claude-sonnet-4-6', ma
         try {
           return JSON.parse(match[1]);
         } catch (parseErr) {
-          throw new Error(`Claude returned malformed JSON: ${parseErr.message}\n${match[1].slice(0, 300)}`);
+          throw new Error(`Claude returned malformed JSON: ${parseErr.message}\n${match[1].slice(0, 300)}`, { cause: parseErr });
         }
       }
 

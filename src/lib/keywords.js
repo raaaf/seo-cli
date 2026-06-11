@@ -27,7 +27,7 @@ export function loadKeywords(cwd = process.cwd()) {
   try {
     return JSON.parse(readFileSync(path, 'utf8'));
   } catch (e) {
-    throw new Error(`Failed to parse ${KEYWORDS_FILE}: ${e.message}`);
+    throw new Error(`Failed to parse ${KEYWORDS_FILE}: ${e.message}`, { cause: e });
   }
 }
 

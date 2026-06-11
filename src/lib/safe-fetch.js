@@ -34,7 +34,7 @@ export async function assertPublicUrl(rawUrl) {
   try {
     resolved = await lookup(url.hostname, { all: true });
   } catch (e) {
-    throw new Error(`DNS lookup failed for ${url.hostname}: ${e.message}`);
+    throw new Error(`DNS lookup failed for ${url.hostname}: ${e.message}`, { cause: e });
   }
   for (const r of resolved) {
     if (isPrivateAddress(r.address)) {
