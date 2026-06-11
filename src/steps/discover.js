@@ -17,7 +17,7 @@ const MAX_SCORED_PER_RUN = 10;
 export async function discover(config, cwd = process.cwd()) {
   console.log(chalk.blue('Discovering keywords...'));
   const quota = checkQuota();
-  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.used + quota.remaining} used this week`));
+  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.used + quota.remaining} used this month`));
 
   const data = loadKeywords(cwd);
   const existingSlugs = data.keywords.map(k => k.target_slug).filter(Boolean);

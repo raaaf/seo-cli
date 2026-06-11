@@ -169,7 +169,7 @@ Configure `landing_path` and `locale` in `seo.config.yaml` to match your project
 
 ## SerpAPI quota
 
-The CLI tracks usage in `~/.seo-cli-serpapi.json`, resets the counter each ISO week, and shows remaining quota at the start of each run. Hard stop at 240 searches per week (`WEEKLY_LIMIT` in `src/lib/serpapi.js`). Adjust the limit to match your SerpAPI plan.
+The CLI tracks usage in `~/.seo-cli-serpapi.json`, resets the counter each calendar month, and shows remaining quota at the start of each run. Hard stop at 240 searches per month (`MONTHLY_LIMIT` in `src/lib/serpapi.js`), 10 below the 250/month SerpAPI free tier. Adjust the limit to match your plan. Failed requests refund their quota reservation; old weekly quota files are migrated automatically (existing count carries over as a conservative lower bound).
 
 ## License
 
