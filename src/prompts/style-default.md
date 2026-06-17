@@ -67,11 +67,19 @@ Direct and specific:
 
 ## Language purity (German pages)
 
-- Do not drop English nouns mid-sentence in DE prose. If German has a word, use it.
-  Bad: "Die venue entscheidet", "Beim catering", "Gute entertainment", "Ein klares Theme".
-  Good: "Die Location entscheidet", "Beim Catering", "Gute Unterhaltung", "Ein klares Motto".
-- Established loanwords are OK when they are common usage in German and capitalized as
-  nouns: Catering, Tool, App, SaaS, MVP, Stack, Hosting, Plugin, Template, Workshop.
+- Do not drop English words mid-sentence in DE prose, whether lowercase or capitalized.
+  Capitalizing an English noun does NOT turn it into an allowed loanword. If German has a
+  word, use it.
+  Bad (lowercase): "Die venue entscheidet", "Beim catering", "Gute entertainment", "Ein klares Theme".
+  Bad (capitalized, just as wrong): "ein gemeinsamer Activity Calendar", "Member Engagement entsteht",
+  "Volunteers koordinieren", "Geschenke für employee recognition".
+  Good: "Die Location entscheidet", "Beim Catering", "Gute Unterhaltung", "Ein klares Motto",
+  "ein gemeinsamer Jahreskalender", "Mitgliederbeteiligung entsteht", "Helfer koordinieren",
+  "Geschenke zur Mitarbeiterwürdigung".
+- Only a closed set of single-word established loanwords is allowed (common German usage,
+  capitalized as nouns): Catering, Tool, App, SaaS, MVP, Stack, Hosting, Plugin, Template, Workshop.
+  Anything outside this set that has a German equivalent must use the German word. Multi-word
+  English phrases are never acceptable in DE prose.
 - No anglicism "in 2026" — write "2026" or "im Jahr 2026".
 
 ## Facts must be current
