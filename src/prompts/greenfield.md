@@ -20,6 +20,12 @@ Suggest 6 concrete keywords for which a landing page makes sense. Each keyword s
 - Be realistically rankable (not too generic, not too niche)
 - Match the locale language
 
+`expected_entities` and `content_gaps` MUST be written in the target locale
+({{locale}}), the same language the page will be written in. For DE use German
+terms (Tagesordnung, Einladung, Protokoll, Abstimmung), never their English
+equivalents — these strings are later fed to the generator as terms to cover,
+so English entities cause English words to bleed into German prose.
+
 ## Output
 
 Reply exclusively with a JSON array:
@@ -32,8 +38,8 @@ Reply exclusively with a JSON array:
     "type": "howto",
     "intent": "informational",
     "score": 8,
-    "expected_entities": ["agenda", "invitation", "minutes", "vote"],
-    "content_gaps": ["digital voting tools", "hybrid meetings"]
+    "expected_entities": ["Tagesordnung", "Einladung", "Protokoll", "Abstimmung"],
+    "content_gaps": ["digitale Abstimmungstools", "hybride Treffen"]
   }
 ]
 ```

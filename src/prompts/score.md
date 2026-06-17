@@ -29,6 +29,12 @@ Score 0–10:
 
 ## Output
 
+`expected_entities` and `content_gaps` MUST be written in the target locale
+({{locale}}), the same language the page will be written in. For DE use German
+terms, never their English equivalents — these strings are later fed to the
+generator as terms to cover, so English entities cause English words to bleed
+into German prose.
+
 Reply exclusively with JSON:
 
 ```json
@@ -37,8 +43,8 @@ Reply exclusively with JSON:
   "type": "howto",
   "intent": "informational",
   "target_slug": "stunden-erfassen-freelancer",
-  "expected_entities": ["invitation", "drinks", "grill", "sides", "playlist"],
-  "content_gaps": ["vegan options", "downloadable checklist", "timeline"],
+  "expected_entities": ["Zeiterfassung", "Stundensatz", "Projektzeit", "Abrechnung", "Stundennachweis"],
+  "content_gaps": ["CSV-Export", "Rechnungsintegration", "Vorlage zum Download"],
   "reason": "High impressions at position 11, top SERP has no concrete checklist, strong cluster fit"
 }
 ```
