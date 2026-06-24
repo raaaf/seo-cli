@@ -23,8 +23,9 @@ The findings from the first pass have been worked through; status is recorded in
 
 - **[Resolved] No automated story for the full `seo run` pipeline.** New `run-pipeline` covers the
   happy path (discover→generate→pr→track + PR url recorded), the PR-failure rollback (keyword status
-  reset to `proposed`), and `--dry-run`. The `pLimit` concurrency cap and the multi-keyword 2-attempt
-  retry remain in *Needs human review*. Affected: `run-pipeline`, `run-env`.
+  reset to `proposed`), `--dry-run`, the once-on-validation-failure retry (and `validation_failed`
+  after two attempts), and the concurrency cap (max 2 concurrent generations). Affected:
+  `run-pipeline`, `run-env`.
 - **[Resolved] Weekly CSV growth had a hard stop but no rotation.** `track` now auto-rotates an
   oversized CSV to `<week>-partN.csv` (still read by the dashboard's CSV scan) and writes a fresh
   weekly file instead of silently skipping. Affected: `track-run`.
@@ -51,7 +52,6 @@ The findings from the first pass have been worked through; status is recorded in
 
 ## Remaining (Needs human review)
 
-- `seo run` `pLimit` concurrency cap and multi-keyword retry edge cases.
 - GSC OAuth desktop browser flow, token caching, and the live googleapis query calls (the
   `invalid_grant` hint is covered).
 - `seo init` interactive inquirer flow.

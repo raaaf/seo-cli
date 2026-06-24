@@ -39,6 +39,10 @@ function keywordsData() {
   return { keywords: [{ keyword: 'hochzeit planen', status: 'proposed', score: 9, target_slug: 'hochzeit-planen', type: 'guide' }] };
 }
 
+function manyKeywords(n) {
+  return { keywords: Array.from({ length: n }, (_, i) => ({ keyword: `kw ${i}`, status: 'proposed', score: 9, target_slug: `slug-${i}`, type: 'guide' })) };
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-run-'));
   cwd = process.cwd();
@@ -92,5 +96,60 @@ describe('run-pipeline', () => {
     await runCommand({ dryRun: true });
     expect(createPR).not.toHaveBeenCalled();
     expect(track).not.toHaveBeenCalled();
+  });
+
+  it('retries generation once with validator feedback after a failed validation', async () => {
+    discover.mockResolvedValue(keywordsData());
+    createPR.mockResolvedValue('https://github.com/o/demo/pull/2');
+    validate.mockReset();
+    validate
+      .mockReturnValueOnce({ ok: false, errors: ['Body too short: 10 words (min 800)'], warnings: [] })
+      .mockReturnValue({ ok: true, errors: [], warnings: [] });
+
+    await runCommand({});
+
+    expect(generatePage).toHaveBeenCalledTimes(2);
+    // second attempt receives the failed validation result as feedback (4th arg)
+    expect(generatePage.mock.calls[1][3]).toMatchObject({ ok: false });
+    expect(createPR.mock.calls[0][0].generatedPages).toHaveLength(1);
+  });
+
+  it('marks a keyword validation_failed after two failed attempts and opens no PR', async () => {
+    const data = keywordsData();
+    discover.mockResolvedValue(data);
+    validate.mockReset();
+    validate.mockReturnValue({ ok: false, errors: ['Body too short'], warnings: [] });
+
+    await runCommand({});
+
+    expect(generatePage).toHaveBeenCalledTimes(2);
+    expect(data.keywords[0].status).toBe('validation_failed');
+    expect(createPR).not.toHaveBeenCalled();
+    expect(track).toHaveBeenCalledTimes(1); // tracking still runs
+  });
+
+  it('never runs more than the concurrency cap (2) of generations at once', async () => {
+    CONFIG.weekly_cap = 4;
+    try {
+      discover.mockResolvedValue(manyKeywords(4));
+      createPR.mockResolvedValue('https://github.com/o/demo/pull/3');
+      let active = 0;
+      let maxActive = 0;
+      generatePage.mockReset();
+      generatePage.mockImplementation(async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(r => setTimeout(r, 5));
+        active--;
+        return '---\nslug: x\n---\nbody';
+      });
+
+      await runCommand({});
+
+      expect(maxActive).toBeLessThanOrEqual(2);
+      expect(createPR.mock.calls[0][0].generatedPages).toHaveLength(4);
+    } finally {
+      CONFIG.weekly_cap = 2;
+    }
   });
 });

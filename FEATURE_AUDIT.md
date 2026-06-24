@@ -54,7 +54,7 @@ test-command: npm test
 | submitsitemap-cmd | Submit sitemap command | As the user I resubmit the sitemap to GSC with clear guard errors | `submitSitemapCommand` exits 1 when `gsc_property`/`base_url` missing, builds `<base>/sitemap.xml`, special-cases 403 | passing | test/submit-sitemap.test.js › submitsitemap-cmd | new mocks gsc/exit |
 | dashboard-cmd | Dashboard command | As the user I get a cross-project overview or JSON | `dashboardCommand` exits 1 with no projects, filters by `--project`, prints aggregated JSON with `--json`, surfaces live-pull errors | passing | test/dashboard-cmd.test.js › dashboard-cmd | new mocks projects |
 | gsc-auth-error | GSC auth hint | As the user I get an actionable message when my Google token expires | `describeAuthError` maps invalid_grant/expired-token failures to a re-auth/service-account hint and returns null for unrelated errors; GSC queries + sitemap submit rethrow with the hint | passing | test/gsc.test.js › gsc-auth-error | new |
-| run-pipeline | Run pipeline orchestration | As the user `seo run` executes the full pipeline and recovers from PR failures | `runCommand` runs discover→generate→pr→track, records the PR url, rolls keyword status back to `proposed` on PR failure, skips pr/track on `--dry-run` | passing | test/run-pipeline.test.js › run-pipeline | new mocks steps |
+| run-pipeline | Run pipeline orchestration | As the user `seo run` executes the full pipeline and recovers from PR failures | `runCommand` runs discover→generate→pr→track, records the PR url, rolls keyword status back to `proposed` on PR failure, retries generation once on validation failure (marks `validation_failed` after 2), caps concurrency at 2, skips pr/track on `--dry-run` | passing | test/run-pipeline.test.js › run-pipeline | new mocks steps |
 
 ## Needs human review
 
@@ -66,4 +66,3 @@ LLM output quality). The orchestration that consumes them is covered at the step
 - Site analysis (`src/lib/analyze-site.js`): quality of the Claude-extracted topic/clusters/CTA/locale is subjective.
 - Style-doc generation (`src/lib/generate-style-doc.js`): quality of the derived writing-style guide is subjective (path-traversal guard is the only mechanical bit).
 - Dashboard ANSI rendering (`src/commands/dashboard.js` `renderProject`/`renderOverview`): cosmetic terminal output; the data layer (`dashboard-summary`) is tested.
-- `seo run` `pLimit` concurrency + 2-attempt generate/validate retry across multiple keywords (`src/commands/run.js`): the happy path, PR-failure rollback and `--dry-run` are now tested (`run-pipeline`) and the env guard via `run-env`; the concurrency cap and multi-keyword retry edge cases remain human-review.
