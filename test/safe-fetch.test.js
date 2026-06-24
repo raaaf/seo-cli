@@ -12,7 +12,7 @@ function mockResponse(status, headersMap = {}) {
   };
 }
 
-describe('assertPublicUrl', () => {
+describe('safe-fetch-assert: assertPublicUrl', () => {
   it('rejects invalid URL', async () => {
     await expect(assertPublicUrl('not-a-url')).rejects.toThrow('Invalid URL');
   });
@@ -46,7 +46,7 @@ describe('assertPublicUrl', () => {
   });
 });
 
-describe('safeFetch redirect handling', () => {
+describe('safe-fetch-redirect: safeFetch redirect handling', () => {
   it('blocks redirect to private IP and calls fetch exactly once', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       mockResponse(302, { location: 'http://127.0.0.1/secret' })

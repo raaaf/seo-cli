@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { SEO_THRESHOLDS } from '../src/lib/seo-thresholds.js';
 
-describe('SEO_THRESHOLDS', () => {
+describe('thresholds: SEO_THRESHOLDS', () => {
   it('is frozen', () => {
     expect(Object.isFrozen(SEO_THRESHOLDS)).toBe(true);
   });

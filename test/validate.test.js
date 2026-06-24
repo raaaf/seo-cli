@@ -40,7 +40,7 @@ ${FAQ_BLOCK}
 ${body}`;
 }
 
-describe('validate', () => {
+describe('validate-page: validate', () => {
   it('returns ok:false with error when no frontmatter', () => {
     const { ok, errors } = validate('just plain text without frontmatter', KW);
     expect(ok).toBe(false);

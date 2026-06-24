@@ -41,7 +41,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('serpapi quota', () => {
+describe('serpapi-quota: quota', () => {
   it('starts a fresh month at 0/240', async () => {
     const { serpapi } = await freshModule();
     const q = serpapi.checkQuota();

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { defaultLocale, localeLandingPath, loadConfig, DEFAULTS } from '../src/lib/config.js';
 
-describe('defaultLocale', () => {
+describe('config-locale: defaultLocale', () => {
   it('returns first entry from locales array', () => {
     expect(defaultLocale({ locales: ['en', 'de'] })).toBe('en');
   });
@@ -18,7 +18,7 @@ describe('defaultLocale', () => {
   });
 });
 
-describe('localeLandingPath', () => {
+describe('config-locale: localeLandingPath', () => {
   const config = { locales: ['de', 'en'], landing_path: '/de/landing/' };
 
   it('rewrites locale segment for a different locale', () => {
@@ -35,7 +35,7 @@ describe('localeLandingPath', () => {
   });
 });
 
-describe('loadConfig', () => {
+describe('config-load: loadConfig', () => {
   let tmpDir;
 
   afterEach(() => {

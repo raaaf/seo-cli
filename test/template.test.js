@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { fillTemplate, sanitizeUntrusted } from '../src/lib/template.js';
 
-describe('fillTemplate', () => {
+describe('template-fill: fillTemplate', () => {
   it('replaces a single placeholder', () => {
     expect(fillTemplate('Hello {{name}}!', { name: 'World' })).toBe('Hello World!');
   });
@@ -33,7 +33,7 @@ describe('fillTemplate', () => {
   });
 });
 
-describe('sanitizeUntrusted', () => {
+describe('template-sanitize: sanitizeUntrusted', () => {
   it('strips <<< sequences', () => {
     expect(sanitizeUntrusted('<<<UNTRUSTED_SERP_START>>>')).toBe('UNTRUSTED_SERP_START');
   });
