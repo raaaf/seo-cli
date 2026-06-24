@@ -110,6 +110,24 @@ function getCodeViaLocalServer(oAuth2Client, client_id, client_secret) {
   });
 }
 
+// Turn a Google auth failure into an actionable hint, or null if it is not one.
+// OAuth tokens from a Testing-mode app expire roughly weekly (invalid_grant);
+// surface the fix instead of a raw googleapis stack.
+export function describeAuthError(e) {
+  const msg = String(e?.message || e?.response?.data?.error || e?.response?.data?.error_description || '');
+  if (/invalid_grant|invalid_token|token has been expired|unauthorized_client|invalid_rapt/i.test(msg)) {
+    return `Google auth token rejected (${msg}). Delete ${TOKEN_PATH} and re-run to re-authorize, ` +
+      `or switch to a service account (point GOOGLE_APPLICATION_CREDENTIALS at its JSON and grant it access to the property).`;
+  }
+  return null;
+}
+
+function rethrowWithAuthHint(e) {
+  const hint = describeAuthError(e);
+  if (hint) throw new Error(hint, { cause: e });
+  throw e;
+}
+
 const gscCache = new Map();
 
 async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit = 200 } = {}) {
@@ -119,10 +137,15 @@ async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit 
   const sc = google.searchconsole({ version: 'v1', auth });
   const endDate = format(subDays(new Date(), lag));
   const startDate = format(subDays(new Date(), lag + days));
-  const res = await sc.searchanalytics.query({
-    siteUrl: gscProperty,
-    requestBody: { startDate, endDate, dimensions, rowLimit },
-  });
+  let res;
+  try {
+    res = await sc.searchanalytics.query({
+      siteUrl: gscProperty,
+      requestBody: { startDate, endDate, dimensions, rowLimit },
+    });
+  } catch (e) {
+    rethrowWithAuthHint(e);
+  }
   gscCache.set(cacheKey, res.data.rows || []);
   return gscCache.get(cacheKey);
 }
@@ -147,5 +170,9 @@ export async function queryPagePerformance(gscProperty, { days = 28, lag = 7 } =
 export async function submitSitemap(gscProperty, sitemapUrl) {
   const auth = await getAuth();
   const sc = google.searchconsole({ version: 'v1', auth });
-  await sc.sitemaps.submit({ siteUrl: gscProperty, feedpath: sitemapUrl });
+  try {
+    await sc.sitemaps.submit({ siteUrl: gscProperty, feedpath: sitemapUrl });
+  } catch (e) {
+    rethrowWithAuthHint(e);
+  }
 }

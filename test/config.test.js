@@ -29,9 +29,15 @@ describe('config-locale: localeLandingPath', () => {
     expect(localeLandingPath(config, 'de')).toBe('/de/landing/');
   });
 
-  it('returns path unchanged when locale segment not present', () => {
+  it('returns path unchanged for the default locale', () => {
     const cfg = { locales: ['de'], landing_path: '/pages/landing/' };
-    expect(localeLandingPath(cfg, 'en')).toBe('/pages/landing/');
+    expect(localeLandingPath(cfg, 'de')).toBe('/pages/landing/');
+  });
+
+  it('appends the locale segment when the path has no default-locale segment', () => {
+    // Prevents a non-default locale from colliding into the default dir.
+    const cfg = { locales: ['de'], landing_path: '/pages/landing/' };
+    expect(localeLandingPath(cfg, 'en')).toBe('/pages/landing/en/');
   });
 });
 

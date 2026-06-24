@@ -6,6 +6,7 @@ import { format } from '../lib/date.js';
 import { getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { isValidSlug } from '../lib/keywords.js';
+import { MODELS } from '../lib/models.js';
 
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
@@ -48,7 +49,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
   let markdown = await complete({
     system: 'You are an experienced SEO writer. Follow the instructions exactly.',
     prompt,
-    model: 'claude-opus-4-7',
+    model: MODELS.generate,
     maxTokens: 8000,
   });
 

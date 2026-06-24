@@ -39,6 +39,13 @@ describe('dashboard-cmd', () => {
     expect(parsed.map(s => s.project.dir)).toEqual(['alpha', 'beta']);
   });
 
+  it('renders the live-pull error in the human overview', async () => {
+    discoverProjects.mockReturnValue([{ dir: 'alpha', name: 'Alpha', config: {} }]);
+    projectSummary.mockImplementation(async (p) => ({ ...summaryFor(p), liveError: 'invalid_grant: token expired' }));
+    await dashboardCommand({});
+    expect(logs.join('\n')).toMatch(/invalid_grant: token expired/);
+  });
+
   it('filters projects by --project before summarizing', async () => {
     discoverProjects.mockReturnValue([
       { dir: 'alpha', name: 'Alpha', config: {} },

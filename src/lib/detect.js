@@ -8,7 +8,7 @@ export function detectProject(cwd) {
 
   // GitHub repo from git remote
   try {
-    const remote = execSync('git remote get-url origin', { cwd, encoding: 'utf8' }).trim();
+    const remote = execSync('git remote get-url origin', { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     const match = remote.match(/github\.com[:/](.+?)(?:\.git)?$/);
     if (match) hints.repo = match[1];
   } catch {}

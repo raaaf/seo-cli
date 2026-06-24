@@ -33,5 +33,17 @@ export function defaultLocale(config) {
 export function localeLandingPath(config, locale) {
   const base = config.landing_path;
   const def = defaultLocale(config);
-  return base.includes(`/${def}/`) ? base.replace(`/${def}/`, `/${locale}/`) : base;
+  if (locale === def) return base;
+  if (base.includes(`/${def}/`)) return base.replace(`/${def}/`, `/${locale}/`);
+  // No default-locale segment in the path: append the locale so a non-default
+  // locale never collides into the default locale's directory.
+  return base.replace(/\/*$/, `/${locale}/`);
+}
+
+// Public URL path for a slug in a given locale. The default locale carries no
+// locale prefix; others are prefixed with `{locale}/`. Single source of truth
+// for the default-locale rule, shared by pr.js (sitemap slugs + hreflang).
+export function localeUrlPath(config, slug, locale) {
+  const def = defaultLocale(config);
+  return `/${locale === def ? '' : `${locale}/`}${slug}`;
 }

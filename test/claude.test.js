@@ -20,6 +20,12 @@ describe('claude-complete', () => {
     expect(await complete({ system: 's', prompt: 'p' })).toBe('hello world');
   });
 
+  it('uses the shared default model when none is given', async () => {
+    create.mockResolvedValue(reply('ok'));
+    await complete({ system: 's', prompt: 'p' });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-4-6' }));
+  });
+
   it('extracts JSON from a ```json fence', async () => {
     create.mockResolvedValue(reply('```json\n{"a":1}\n```'));
     expect(await complete({ system: 's', prompt: 'p', json: true })).toEqual({ a: 1 });

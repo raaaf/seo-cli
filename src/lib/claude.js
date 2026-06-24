@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
+import { MODELS } from './models.js';
 
 const MAX_RETRIES = 4;
 const BASE_RETRY_MS = 5000;
@@ -11,7 +12,7 @@ function getClient() {
   return client;
 }
 
-export async function complete({ system, prompt, model = 'claude-sonnet-4-6', maxTokens = 4096, json = false }) {
+export async function complete({ system, prompt, model = MODELS.default, maxTokens = 4096, json = false }) {
   const messages = [{ role: 'user', content: prompt }];
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {

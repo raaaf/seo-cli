@@ -49,12 +49,14 @@ export function validate(markdown, keyword) {
     if (len > SEO_THRESHOLDS.metaDescription.errorMax) errors.push(`meta_description too long (${len} chars, max 170)`);
   }
 
-  // hero.headline exists and contains keyword
+  // hero.headline exists and contains the keyword (all significant tokens, not
+  // just the first word — a multi-word keyword must not pass on one shared token)
   const headline = parsed.hero?.headline;
   if (!headline) {
     errors.push('Missing hero.headline');
-  } else if (!String(headline).toLowerCase().includes(keyword.keyword.toLowerCase().split(' ')[0])) {
-    warnings.push(`hero.headline may not contain target keyword: "${headline}"`);
+  } else {
+    const missing = missingKeywordTokens(String(headline), keyword.keyword);
+    if (missing.length) warnings.push(`hero.headline may not contain target keyword (missing: ${missing.join(', ')}): "${headline}"`);
   }
 
   // faq has entries
@@ -71,9 +73,10 @@ export function validate(markdown, keyword) {
     warnings.push('Body contains structured sections (FAQ/Steps/Checklist) — these should be in frontmatter');
   }
 
-  // Keyword in body
-  if (!body.toLowerCase().includes(keyword.keyword.toLowerCase().split(' ')[0])) {
-    warnings.push(`Keyword "${keyword.keyword}" not found in body`);
+  // Keyword in body (all significant tokens)
+  const missingInBody = missingKeywordTokens(body, keyword.keyword);
+  if (missingInBody.length) {
+    warnings.push(`Keyword "${keyword.keyword}" not fully present in body (missing: ${missingInBody.join(', ')})`);
   }
 
   // Stuffing check
@@ -135,4 +138,14 @@ export function validate(markdown, keyword) {
 
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Tokens of `keyword` (lowercased) not present in `text`. Considers tokens of
+// 4+ chars to skip short stop-words; falls back to all tokens when none qualify.
+function missingKeywordTokens(text, keyword) {
+  const tokens = String(keyword).toLowerCase().split(/\s+/).filter(Boolean);
+  const significant = tokens.filter(t => t.length >= 4);
+  const check = significant.length ? significant : tokens;
+  const haystack = String(text).toLowerCase();
+  return check.filter(t => !haystack.includes(t));
 }

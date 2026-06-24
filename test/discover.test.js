@@ -44,6 +44,17 @@ describe('discover-run', () => {
     expect(complete).toHaveBeenCalledTimes(1); // scoring only, cap already filled
   });
 
+  it('warns when the SerpAPI monthly quota is exhausted', async () => {
+    checkQuota.mockReturnValueOnce({ used: 240, remaining: 0, month: '2026-06' });
+    querySearchAnalytics.mockResolvedValue([]); // greenfield path
+    complete.mockResolvedValue([]); // no suggestions
+    const logs = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a) => logs.push(a.join(' ')));
+    await discover(config, dir);
+    spy.mockRestore();
+    expect(logs.join('\n')).toMatch(/quota exhausted/i);
+  });
+
   it('falls back to greenfield when GSC has no usable candidates', async () => {
     querySearchAnalytics.mockResolvedValue([]); // no candidates -> greenfield
     complete.mockResolvedValue([

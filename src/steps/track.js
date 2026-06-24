@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, renameSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { queryPagePerformance } from '../lib/gsc.js';
@@ -25,6 +25,13 @@ export function mergeRankingCsv(existing, today, newLines) {
   return [CSV_HEADER, ...kept, ...newLines].join('\n') + '\n';
 }
 
+// Next free `<week>-partN.csv` archive name when rotating an oversized CSV.
+function nextArchiveName(cwd, week) {
+  let n = 1;
+  while (existsSync(join(cwd, `seo/rankings/${week}-part${n}.csv`))) n++;
+  return `${week}-part${n}.csv`;
+}
+
 export async function track(config, cwd = process.cwd()) {
   console.log(chalk.blue('Tracking rankings...'));
 
@@ -37,8 +44,12 @@ export async function track(config, cwd = process.cwd()) {
   const MAX_CSV_BYTES = 5 * 1024 * 1024; // 5 MB soft cap
   const sizeBytes = existsSync(csvPath) ? statSync(csvPath).size : 0;
   if (sizeBytes > MAX_CSV_BYTES) {
-    console.log(chalk.yellow(`  Track skipped: ${csvPath} exceeds ${MAX_CSV_BYTES} bytes. Rotate (rename) the file to start a fresh week.`));
-    return;
+    // Auto-rotate instead of silently skipping: archive the full file to a
+    // `<week>-partN.csv` sibling (still picked up by the dashboard's CSV scan)
+    // and start a fresh `<week>.csv`.
+    const archived = nextArchiveName(cwd, week);
+    renameSync(csvPath, join(cwd, `seo/rankings/${archived}`));
+    console.log(chalk.yellow(`  Rankings CSV exceeded ${MAX_CSV_BYTES} bytes — rotated to ${archived}, starting a fresh ${week}.csv.`));
   }
 
   const today = format(new Date());

@@ -51,6 +51,7 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 | `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`, merges `DEFAULTS`. Also `defaultLocale`/`localeLandingPath` helpers. |
 | `src/lib/template.js` | `fillTemplate`: single-pass `{{placeholder}}` substitution. Substituted content is never re-scanned (guards against double-substitution injection). `sanitizeUntrusted` strips `<<<`/`>>>` fence markers from substituted values. |
 | `src/lib/seo-thresholds.js` | `SEO_THRESHOLDS`: shared meta/tldr/body limits consumed by `validate.js` and `pr.js` (prevents threshold drift). |
+| `src/lib/models.js` | `MODELS`: single source of truth for Claude model ids (`generate` = Opus, `default` = Sonnet). Consumed by `generate.js` and `claude.js`. |
 | `src/lib/frontmatter.js` | `splitFrontmatter`/`parseFrontmatter`: parse YAML frontmatter from markdown. Canonical parser, shared by all consumers. |
 | `src/lib/safe-fetch.js` | `safeFetch`: SSRF guard. Resolves DNS and blocks private/reserved IPs before fetching. |
 | `src/lib/site-fetch.js` | `fetchPages`/`stripHtml`: fetch a list of URLs (via `safeFetch`) and strip to plain text. |

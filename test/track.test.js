@@ -46,16 +46,24 @@ describe('track-run: track', () => {
     expect(content).toContain(`${format(new Date())},https://s/a,query1,5.0,120,10,0.0833`);
   });
 
-  it('skips writing when the existing CSV exceeds the size cap', async () => {
+  it('rotates an oversized CSV to a -part archive, then writes a fresh weekly CSV', async () => {
     queryPagePerformance.mockResolvedValue([
-      { keys: ['https://s/a', 'q'], position: 1, impressions: 1, clicks: 0, ctr: 0 },
+      { keys: ['https://s/a', 'q'], position: 1.0, impressions: 1, clicks: 0, ctr: 0 },
     ]);
-    const csvPath = join(dir, `seo/rankings/${isoWeek()}.csv`);
+    const week = isoWeek();
+    const csvPath = join(dir, `seo/rankings/${week}.csv`);
+    const archivePath = join(dir, `seo/rankings/${week}-part1.csv`);
     mkdirSync(join(dir, 'seo/rankings'), { recursive: true });
     writeFileSync(csvPath, 'x'.repeat(5 * 1024 * 1024 + 1), 'utf8');
 
     await track({ gsc_property: 'sc-domain:x' }, dir);
-    // unchanged: still the oversized filler, not a fresh CSV
-    expect(readFileSync(csvPath, 'utf8').startsWith('xxxx')).toBe(true);
+
+    // old oversized content archived, not lost
+    expect(existsSync(archivePath)).toBe(true);
+    expect(readFileSync(archivePath, 'utf8').startsWith('xxxx')).toBe(true);
+    // fresh weekly CSV with header + today's snapshot
+    const fresh = readFileSync(csvPath, 'utf8');
+    expect(fresh.startsWith(HEADER)).toBe(true);
+    expect(fresh).toContain(`${format(new Date())},https://s/a,q,1.0,1,0,0.0000`);
   });
 });

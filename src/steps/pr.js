@@ -6,10 +6,7 @@ import { isoWeek, format } from '../lib/date.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { KEYWORDS_FILE, SITEMAP_PENDING_FILE } from '../lib/keywords.js';
 import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
-
-function localeSlug(slug, locale, locales) {
-  return `/${locale === locales[0] ? '' : locale + '/'}${slug}`;
-}
+import { localeUrlPath } from '../lib/config.js';
 
 export async function createPR({ generatedPages, keywordsJsonContent, config, cwd = process.cwd() }) {
   const week = isoWeek();
@@ -19,13 +16,13 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
   const sitemapPending = loadSitemapPending(cwd);
   const locales = config.locales || [config.locale || 'de'];
   for (const page of generatedPages) {
-    const slug = localeSlug(page.slug, page.locale, locales);
+    const slug = localeUrlPath(config, page.slug, page.locale);
     if (!sitemapPending.slugs.includes(slug)) sitemapPending.slugs.push(slug);
   }
 
   // Add hreflang frontmatter for multi-locale pages
   const enrichedPages = locales.length > 1
-    ? injectHreflang(generatedPages, locales)
+    ? injectHreflang(generatedPages, config)
     : generatedPages;
 
   const files = [
@@ -53,7 +50,7 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
   return prUrl;
 }
 
-function injectHreflang(pages, locales) {
+function injectHreflang(pages, config) {
   // Group by slug, add hreflang block to each locale's frontmatter
   const bySlug = {};
   for (const p of pages) {
@@ -64,7 +61,7 @@ function injectHreflang(pages, locales) {
   return pages.map(p => {
     const siblings = bySlug[p.slug];
     const hreflangLines = Object.entries(siblings)
-      .map(([loc, sibling]) => `  ${loc}: ${localeSlug(sibling.slug, loc, locales)}`)
+      .map(([loc, sibling]) => `  ${loc}: ${localeUrlPath(config, sibling.slug, loc)}`)
       .join('\n');
 
     const hreflangBlock = `hreflang:\n${hreflangLines}`;
