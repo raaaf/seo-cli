@@ -72,4 +72,29 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     const { errors } = validate(makeValid({ body: makeBody('Das habe ich aus meiner Praxis gelernt.') }), KW);
     expect(errors.some(e => e.includes('Fabricated claim'))).toBe(true);
   });
+
+  it('warns on anglicisms with German equivalents (Edge Case, Case Study)', () => {
+    const edge = validate(makeValid({ body: makeBody('Jede Funktion produziert Edge-Cases.') }), KW);
+    expect(edge.ok).toBe(true);
+    expect(edge.warnings.some(w => /Edge Case/.test(w))).toBe(true);
+
+    const cs = validate(makeValid({ body: makeBody('Statt erfundener Case Studies gibt es Beispiele.') }), KW);
+    expect(cs.warnings.some(w => /Case Study/.test(w))).toBe(true);
+  });
+
+  it('warns on stale brand name lexoffice', () => {
+    const { ok, warnings } = validate(makeValid({ body: makeBody('Export direkt nach lexoffice und sevDesk.') }), KW);
+    expect(ok).toBe(true);
+    expect(warnings.some(w => /Lexware Office/.test(w))).toBe(true);
+  });
+
+  it('warns on stale 2025 tax threshold 68.430', () => {
+    const { warnings } = validate(makeValid({ body: makeBody('42 Prozent Grenzsteuersatz oberhalb 68.430 EUR greifen.') }), KW);
+    expect(warnings.some(w => /Grenzsteuersatz/.test(w))).toBe(true);
+  });
+
+  it('warns on wrong brand casing (Wordpress)', () => {
+    const { warnings } = validate(makeValid({ body: makeBody('Ich baue Seiten mit Wordpress und eigenem Theme.') }), KW);
+    expect(warnings.some(w => /write "WordPress"/.test(w))).toBe(true);
+  });
 });

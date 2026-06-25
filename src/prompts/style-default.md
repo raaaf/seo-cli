@@ -79,15 +79,19 @@ Direct and specific:
 - Only a closed set of single-word established loanwords is allowed (common German usage,
   capitalized as nouns): Catering, Tool, App, SaaS, MVP, Stack, Hosting, Plugin, Template, Workshop.
   Anything outside this set that has a German equivalent must use the German word. Multi-word
-  English phrases are never acceptable in DE prose.
+  English phrases are never acceptable in DE prose. Frequent offenders to avoid: "Case Study/Studies"
+  (use Fallstudie/Fallstudien), "Edge Case(s)" (use Sonderfall/Randfall).
 - No anglicism "in 2026" — write "2026" or "im Jahr 2026".
 
 ## Facts must be current
 
 - Use German tax/legal thresholds as currently in force, not values from older years
-  stamped with a past year label as if still authoritative.
+  stamped with a past year label as if still authoritative. 2026 reference values:
+  Kleinunternehmer 25.000/100.000 EUR (§19 UStG), Grundfreibetrag ca. 12.348 EUR,
+  42% Grenzsteuersatz ab 69.879 EUR zvE (not 68.430, that was 2025).
 - For statistics from studies, name the source year explicitly only when the source
   itself is dated and you have verified the citation. Otherwise phrase neutrally.
+- Use current brand names: "Lexware Office" (not "lexoffice", renamed 2024).
 
 ## Real names only
 

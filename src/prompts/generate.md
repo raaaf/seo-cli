@@ -111,7 +111,9 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   Jahreskalender, Mitgliederbeteiligung, Helfer/Ehrenamtliche, Mitarbeiterwürdigung.
   Capitalizing an English noun does NOT make it acceptable. Only a closed set of single-word
   established loanwords is allowed: Catering, Tool, App, SaaS, Hosting, Plugin, Template,
-  Workshop, Stack, MVP.
+  Workshop, Stack, MVP. Also forbidden, even though they look technical: "Case Study/Studies"
+  (use Fallstudie/Fallstudien), "Edge Case(s)" (use Sonderfall/Randfall), "Senior Backend"
+  as a bare noun (use Senior-Backend-Entwickler).
 - NO anglicism "in 2026" — write "2026" or "im Jahr 2026".
 - Brand casing must be correct: WordPress, GitHub, GitLab, JavaScript, TypeScript,
   PostgreSQL, MySQL, macOS, iOS — never lowercase or wrong-case variants.
@@ -119,10 +121,14 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   If unsure, omit the name and describe the category instead ("eine Rechnungssoftware
   mit Zeiterfassungs-Schnittstelle"). Common safe examples: Lexware Office, sevDesk,
   FastBill, Billomat, Bonsai, Toggl, Clockify, Harvest, Stripe, Vercel, Railway.
+  Use current brand names: "Lexware Office" (NOT "lexoffice", renamed 2024). Toggl is an
+  Estonian (EU) company; do not claim it processes data outside the EU.
 - Tax/legal facts must reflect law currently in force. German thresholds as of 2026:
   Kleinunternehmer 25.000 EUR Vorjahr / 100.000 EUR laufendes Jahr (§19 UStG, seit 2025);
-  Grundfreibetrag ca. 12.348 EUR (2026); Betriebsveranstaltungs-Freibetrag 110 EUR (§19
+  Grundfreibetrag ca. 12.348 EUR (2026); 42% Grenzsteuersatz (Spitzensteuersatz) ab 69.879
+  EUR zvE (2026, NOT 68.430 which was 2025); Betriebsveranstaltungs-Freibetrag 110 EUR (§19
   Abs. 1 Nr. 1a EStG). Never cite outdated thresholds with old year labels as if current.
+  If unsure of the exact current figure, describe it without a hard number.
 - Cite source years only when sourcing a specific study; do not write "im Jahr 2024" for
   a fact stated as currently true.
 

@@ -16,6 +16,25 @@ const FABRICATED_PATTERNS = Object.freeze([
   /\bin (einem|meinem) (kunden|projekt)?projekt\b/i,
 ]);
 
+// Recurring content slips the model reintroduces despite explicit prompt rules:
+// anglicisms with established German equivalents, stale brand names, and outdated
+// German tax thresholds. Surfaced as warnings (not gates) so they get caught in
+// PR review. Extend as new slips recur (see seo-cli-content-review-patterns memory).
+const CONTENT_DENYLIST = Object.freeze([
+  { re: /\bedge[\s-]?cases?\b/i, msg: 'Anglicism "Edge Case(s)": use "Sonderfall/Randfall"' },
+  { re: /\bcase stud(y|ies)\b/i, msg: 'Anglicism "Case Study/Studies": use "Fallstudie(n)"' },
+  { re: /\blexoffice\b/i, msg: 'Stale brand "lexoffice": renamed to "Lexware Office" in 2024' },
+  { re: /\b68\.?430\b/, msg: 'Stale 2025 tax value: 42% Grenzsteuersatz starts at 69.879 EUR in 2026, not 68.430' },
+  { re: /\b11\.?604\b/, msg: 'Stale 2024 Grundfreibetrag 11.604: 2026 is ca. 12.348 EUR' },
+  { re: /\b22\.?000\b.{0,20}\b50\.?000\b/, msg: 'Stale Kleinunternehmer thresholds 22.000/50.000: now 25.000/100.000' },
+]);
+
+// Brands whose canonical casing the model often mangles. Warn on any occurrence
+// that differs from the canonical form.
+const BRAND_CASING = Object.freeze([
+  'WordPress', 'JavaScript', 'TypeScript', 'GitHub', 'GitLab', 'PostgreSQL', 'macOS',
+]);
+
 export function validate(markdown, keyword) {
   const errors = [];
   const warnings = [];
@@ -116,6 +135,21 @@ export function validate(markdown, keyword) {
     if (pattern.test(body)) {
       errors.push(`Fabricated claim detected: "${body.match(pattern)?.[0]}"`);
     }
+  }
+
+  // Recurring content slips (anglicisms, stale brands/facts). Scan frontmatter +
+  // body so issues inside FAQ/meta fields are caught too.
+  const fullScan = JSON.stringify(parsed) + '\n' + body;
+  for (const { re, msg } of CONTENT_DENYLIST) {
+    const m = fullScan.match(re);
+    if (m) warnings.push(`${msg} (found "${m[0].trim()}")`);
+  }
+
+  // Brand casing: flag any non-canonical spelling of a known brand
+  for (const canonical of BRAND_CASING) {
+    const found = fullScan.match(new RegExp(`\\b${escapeRegex(canonical)}\\b`, 'gi')) || [];
+    const wrong = found.find(f => f !== canonical);
+    if (wrong) warnings.push(`Brand casing: write "${canonical}", not "${wrong}"`);
   }
 
   // Weak citations: markdown links to bare homepages used as evidence
