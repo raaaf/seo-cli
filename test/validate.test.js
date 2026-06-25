@@ -97,4 +97,10 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     const { warnings } = validate(makeValid({ body: makeBody('Ich baue Seiten mit Wordpress und eigenem Theme.') }), KW);
     expect(warnings.some(w => /write "WordPress"/.test(w))).toBe(true);
   });
+
+  it('does not flag brand casing for a lowercase brand inside a URL', () => {
+    const body = makeBody('WordPress laeuft laut [W3Techs](https://w3techs.com/technologies/details/cm-wordpress) ueberall.');
+    const { warnings } = validate(makeValid({ body }), KW);
+    expect(warnings.some(w => /Brand casing/.test(w))).toBe(false);
+  });
 });
