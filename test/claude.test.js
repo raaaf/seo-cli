@@ -23,7 +23,7 @@ describe('claude-complete', () => {
   it('uses the shared default model when none is given', async () => {
     create.mockResolvedValue(reply('ok'));
     await complete({ system: 's', prompt: 'p' });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-4-6' }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-5' }));
   });
 
   it('extracts JSON from a ```json fence', async () => {
