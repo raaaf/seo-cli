@@ -27,6 +27,14 @@ const CONTENT_DENYLIST = Object.freeze([
   { re: /\b68\.?430\b/, msg: 'Stale 2025 tax value: 42% Grenzsteuersatz starts at 69.879 EUR in 2026, not 68.430' },
   { re: /\b11\.?604\b/, msg: 'Stale 2024 Grundfreibetrag 11.604: 2026 is ca. 12.348 EUR' },
   { re: /\b22\.?000\b.{0,20}\b50\.?000\b/, msg: 'Stale Kleinunternehmer thresholds 22.000/50.000: now 25.000/100.000' },
+  {
+    re: /(?:10[\s-]?jahren?|zehn jahren?)[\s\S]{0,120}?(?:auf\S{0,3}bewahr|archivier)|(?:auf\S{0,3}bewahr|archivier)[\s\S]{0,120}?(?:10[\s-]?jahren?|zehn jahren?)/i,
+    msg: 'Stale Aufbewahrungsfrist "10 Jahre": Rechnungen/Buchungsbelege are 8 Jahre since 2025 (BEG IV)',
+  },
+  {
+    re: /bruttoumsatz[\s\S]{0,400}?(?:kleinunternehmer|25\.000|100\.000)|(?:kleinunternehmer|25\.000|100\.000)[\s\S]{0,400}?bruttoumsatz/i,
+    msg: 'Kleinunternehmer limits 25.000/100.000 EUR are net since 2025: write "Nettoumsatz", not "Bruttoumsatz"',
+  },
 ]);
 
 // Brands whose canonical casing the model often mangles. Warn on any occurrence
