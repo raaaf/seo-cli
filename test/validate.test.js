@@ -93,6 +93,32 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     expect(warnings.some(w => /Grenzsteuersatz/.test(w))).toBe(true);
   });
 
+  it('warns on stale "10 Jahre" retention period near aufbewahren/archivieren', () => {
+    const a = validate(makeValid({ body: makeBody('Rechnungen musst du nach Paragraf 147 AO zehn Jahre aufbewahren.') }), KW);
+    expect(a.warnings.some(w => /Aufbewahrungsfrist/.test(w))).toBe(true);
+
+    const b = validate(makeValid({ tldr: 'Aufbewahrungsfristen von bis zu 10 Jahren gelten fuer Rechnungsbelege in jedem Unternehmen unabhaengig von Groesse oder Branche und Umsatz Kunden Projekte Struktur Planung Ablage Jahr Frist Beleg Buchhaltung heute jetzt bald jederzeit ueberall wirklich klar deutlich einfach schnell direkt sofort stets normal typisch ueblich gaengig verbreitet bekannt wichtig zentral relevant.' }), KW);
+    expect(b.warnings.some(w => /Aufbewahrungsfrist/.test(w))).toBe(true);
+  });
+
+  it('does not warn on "10 Jahre" phrasing unrelated to retention', () => {
+    const experience = validate(makeValid({ body: makeBody('Sie arbeitet seit zehn Jahren als Freelancer im Bereich Webdesign.') }), KW);
+    expect(experience.warnings.some(w => /Aufbewahrungsfrist/.test(w))).toBe(false);
+
+    const wrongPeriod = validate(makeValid({ body: makeBody('Buchungsbelege muss man acht Jahre aufbewahren.') }), KW);
+    expect(wrongPeriod.warnings.some(w => /Aufbewahrungsfrist/.test(w))).toBe(false);
+  });
+
+  it('warns on Bruttoumsatz near Kleinunternehmer thresholds', () => {
+    const { warnings } = validate(makeValid({ body: makeBody('Die Grenzen liegen bei 25.000 EUR. Beide Werte beziehen sich auf den Bruttoumsatz.') }), KW);
+    expect(warnings.some(w => /Nettoumsatz/.test(w))).toBe(true);
+  });
+
+  it('does not warn on Bruttoumsatz without a Kleinunternehmer/threshold anchor nearby', () => {
+    const { warnings } = validate(makeValid({ body: makeBody('Der Onlineshop verzeichnet einen soliden Bruttoumsatz in diesem Quartal.') }), KW);
+    expect(warnings.some(w => /Nettoumsatz/.test(w))).toBe(false);
+  });
+
   it('warns on wrong brand casing (Wordpress)', () => {
     const { warnings } = validate(makeValid({ body: makeBody('Ich baue Seiten mit Wordpress und eigenem Theme.') }), KW);
     expect(warnings.some(w => /write "WordPress"/.test(w))).toBe(true);
