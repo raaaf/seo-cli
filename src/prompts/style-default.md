@@ -88,7 +88,13 @@ Direct and specific:
 - Use German tax/legal thresholds as currently in force, not values from older years
   stamped with a past year label as if still authoritative. 2026 reference values:
   Kleinunternehmer 25.000/100.000 EUR (§19 UStG), Grundfreibetrag ca. 12.348 EUR,
-  42% Grenzsteuersatz ab 69.879 EUR zvE (not 68.430, that was 2025).
+  42% Grenzsteuersatz ab 69.879 EUR zvE (not 68.430, that was 2025). Aufbewahrungsfrist
+  for invoices/accounting records is 8 years since 1 Jan 2025 (not 10). Kleinunternehmer
+  limits are net values, and B2B services to other EU countries fall under reverse charge
+  (not the §19 note), even for Kleinunternehmer.
+- E-Rechnung: German B2B businesses must be able to receive e-invoices since 1 Jan 2025;
+  the obligation to issue them phases in 2027/2028. The time-tracking mandate binds
+  employers regarding employees, not solo self-employed/freelancers.
 - For statistics from studies, name the source year explicitly only when the source
   itself is dated and you have verified the citation. Otherwise phrase neutrally.
 - Use current brand names: "Lexware Office" (not "lexoffice", renamed 2024).

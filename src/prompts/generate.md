@@ -127,8 +127,20 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   Kleinunternehmer 25.000 EUR Vorjahr / 100.000 EUR laufendes Jahr (§19 UStG, seit 2025);
   Grundfreibetrag ca. 12.348 EUR (2026); 42% Grenzsteuersatz (Spitzensteuersatz) ab 69.879
   EUR zvE (2026, NOT 68.430 which was 2025); Betriebsveranstaltungs-Freibetrag 110 EUR (§19
-  Abs. 1 Nr. 1a EStG). Never cite outdated thresholds with old year labels as if current.
-  If unsure of the exact current figure, describe it without a hard number.
+  Abs. 1 Nr. 1a EStG). The retention period (Aufbewahrungsfrist) for invoices and accounting
+  records is 8 years since 1 Jan 2025 (BEG IV, §147 AO / §14b UStG), other business documents
+  6 years; NEVER cite 10 years. The Kleinunternehmer limits (25.000/100.000 EUR) are NET
+  values, and the transaction that crosses the 100.000 EUR in-year limit is itself already
+  subject to regular VAT. A Kleinunternehmer providing B2B services to businesses in other
+  EU countries DOES fall under reverse charge (§3a Abs. 2 UStG): the invoice states
+  "Steuerschuldnerschaft des Leistungsempfängers" plus both USt-IdNrs., not the §19 note.
+  For E-Rechnung: all German B2B businesses must be able to RECEIVE e-invoices since
+  1 Jan 2025; the obligation to ISSUE them phases in 2027/2028. The German time-tracking
+  mandate (BAG 1 ABR 22/21, EuGH C-55/18) obliges employers regarding employees; solo
+  self-employed/freelancers are not covered. The 5/6-of-revenue criterion for pension
+  insurance obligation stems from §2 S. 1 Nr. 9 SGB VI, not §7 SGB IV. Never cite outdated
+  thresholds with old year labels as if current. If unsure of the exact current figure,
+  describe it without a hard number.
 - Cite source years only when sourcing a specific study; do not write "im Jahr 2024" for
   a fact stated as currently true.
 
