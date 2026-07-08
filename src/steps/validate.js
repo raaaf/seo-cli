@@ -146,10 +146,14 @@ export function validate(markdown, keyword) {
   }
 
   // Recurring content slips (anglicisms, stale brands/facts). Scan frontmatter +
-  // body so issues inside FAQ/meta fields are caught too. Strip URLs first so
-  // lowercase brand names inside links (e.g. .../cm-wordpress, github.com) don't
-  // trip the casing/denylist checks.
-  const fullScan = (JSON.stringify(parsed) + '\n' + body).replace(/https?:\/\/\S+/g, '');
+  // body so issues inside FAQ/meta fields are caught too. Strip URLs, relative
+  // link targets, and slug tokens first so lowercase brand names inside links
+  // or internal-link slugs (e.g. .../cm-wordpress, /wordpress-website-erstellen-lassen,
+  // a related_pages slug entry) don't trip the casing/denylist checks.
+  const fullScan = (JSON.stringify(parsed) + '\n' + body)
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\]\(\/[^)]*\)/g, '')
+    .replace(/\b[a-z0-9]+(?:-[a-z0-9]+){2,}\b/g, '');
   for (const { re, msg } of CONTENT_DENYLIST) {
     const m = fullScan.match(re);
     if (m) warnings.push(`${msg} (found "${m[0].trim()}")`);

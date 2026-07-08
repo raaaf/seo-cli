@@ -129,4 +129,34 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     const { warnings } = validate(makeValid({ body }), KW);
     expect(warnings.some(w => /Brand casing/.test(w))).toBe(false);
   });
+
+  it('does not flag brand casing for a lowercase brand inside a relative link target', () => {
+    const body = makeBody('WordPress passt zu jedem Projekt, siehe [gepflegte Website](/wordpress-website-erstellen-lassen).');
+    const { warnings } = validate(makeValid({ body }), KW);
+    expect(warnings.some(w => /Brand casing/.test(w))).toBe(false);
+  });
+
+  it('does not flag brand casing for a lowercase brand inside a frontmatter related_pages slug', () => {
+    const md = `---
+slug: webdesign-berlin
+meta_title: Webdesign Berlin fuer professionelle Webseiten Projekte
+meta_description: Professionelles Webdesign Berlin fuer kleine und mittlere Unternehmen. Moderne Gestaltung, schnelle Umsetzung und klare Struktur fuer mehr Conversions und Sichtbarkeit.
+hero:
+  headline: Webdesign Berlin fuer moderne Unternehmen
+tldr: "${TLDR_50}"
+related_pages:
+  - wordpress-website-erstellen-lassen
+${FAQ_BLOCK}
+---
+${makeBody()}`;
+    const { warnings } = validate(md, KW);
+    expect(warnings.some(w => /Brand casing/.test(w))).toBe(false);
+  });
+
+  it('still warns on prose "Edge-Cases" (single hyphen, not a slug) alongside brand casing', () => {
+    const { ok, warnings } = validate(makeValid({ body: makeBody('Jede Funktion produziert Edge-Cases mit Wordpress-Themes.') }), KW);
+    expect(ok).toBe(true);
+    expect(warnings.some(w => /Edge Case/.test(w))).toBe(true);
+    expect(warnings.some(w => /write "WordPress"/.test(w))).toBe(true);
+  });
 });
