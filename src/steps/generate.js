@@ -71,8 +71,8 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
 
 // Remove a surrounding ```/```markdown code fence the model may have added
 // around the entire document. Only strips when an opening fence is present, so
-// genuine content is never touched.
-function stripCodeFence(text) {
+// genuine content is never touched. Exported for reuse by steps/counterpart.js.
+export function stripCodeFence(text) {
   let t = String(text ?? '').trim();
   const open = t.match(/^```[a-zA-Z]*\n/);
   if (open) {

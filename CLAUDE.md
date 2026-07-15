@@ -70,6 +70,7 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 - `score.md` — keyword scoring, returns JSON
 - `greenfield.md` — keyword discovery without GSC data
 - `generate.md` — full page generation (used with Opus)
+- `counterpart.md` — counterpart-locale page adaptation (used with Opus, see Counterpart-locale support below)
 - `style-default.md` — built-in writing style guide, used when `config.style_doc` is null
 
 ### State files (in target project, not this repo)
@@ -84,6 +85,10 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 ### Multi-locale support
 
 When `config.locales` has more than one entry, `generateForLocale` runs for each locale. The `landing_path` is rewritten by substituting the locale segment (e.g. `/de/` to `/en/`). `pr.js` injects `hreflang` blocks into frontmatter for multi-locale pages.
+
+### Counterpart-locale support
+
+A separate, orthogonal model from multi-locale: when `config.counterpart_locale` is set (e.g. `en`) and differs from the default locale, every successfully generated+validated default-locale page also gets a counterpart page (`src/steps/counterpart.js`, prompt `src/prompts/counterpart.md`). Unlike multi-locale hreflang pages, the counterpart gets its **own** slug (chosen by the model, checked for collisions across both locale directories) and both pages share the bare `/{slug}` URL space (no locale prefix), reciprocally linked via an `alternate:` frontmatter field (`linkAlternates` in `counterpart.js`). `validate()` accepts a `{ counterpart: true }` option that skips the German-specific denylist and source-keyword/entity checks for the adapted page while keeping structural and brand-casing checks. A counterpart failure after 2 attempts is logged and skipped; the default-locale page is still produced.
 
 ### .env loading order
 

@@ -12,11 +12,14 @@ export async function createPR({ generatedPages, keywordsJsonContent, config, cw
   const week = isoWeek();
   const branch = `seo/${week}`;
 
-  // Build sitemap pending list
+  // Build sitemap pending list. Counterpart pages (config.counterpart_locale)
+  // share the bare /{slug} URL space with the default locale — no locale
+  // prefix — unlike the hreflang multi-locale mode's /{locale}/{slug} paths.
   const sitemapPending = loadSitemapPending(cwd);
   const locales = config.locales || [config.locale || 'de'];
   for (const page of generatedPages) {
-    const slug = localeUrlPath(config, page.slug, page.locale);
+    const isCounterpart = config.counterpart_locale && page.locale === config.counterpart_locale;
+    const slug = isCounterpart ? `/${page.slug}` : localeUrlPath(config, page.slug, page.locale);
     if (!sitemapPending.slugs.includes(slug)) sitemapPending.slugs.push(slug);
   }
 

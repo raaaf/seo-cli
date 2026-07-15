@@ -174,3 +174,49 @@ ${makeBody()}`;
     expect(warnings.some(w => /write "WordPress"/.test(w))).toBe(true);
   });
 });
+
+describe('validate-page: counterpart mode ({ counterpart: true })', () => {
+  // The source keyword is German; a counterpart page is an English adaptation
+  // and never contains it, so keyword/entity checks must not fire on it.
+  const KW_DE = { keyword: 'Firmenfeier planen', expected_entities: ['Cateringservice'] };
+
+  it('skips German-specific denylist/stale-fact warnings on a counterpart page', () => {
+    const { ok, warnings } = validate(makeValid({ body: makeBody('Export direkt nach lexoffice und sevDesk.') }), KW_DE, { counterpart: true });
+    expect(ok).toBe(true);
+    expect(warnings.some(w => /Lexware Office/.test(w))).toBe(false);
+  });
+
+  it('skips keyword-presence and entity-coverage warnings on a counterpart page', () => {
+    const { ok, warnings } = validate(makeValid(), KW_DE, { counterpart: true });
+    expect(ok).toBe(true);
+    expect(warnings.some(w => /target keyword/.test(w))).toBe(false);
+    expect(warnings.some(w => /not fully present in body/.test(w))).toBe(false);
+    expect(warnings.some(w => /Entity coverage/.test(w))).toBe(false);
+  });
+
+  it('still applies keyword/entity checks when counterpart is not set (default)', () => {
+    const { warnings } = validate(makeValid(), KW_DE);
+    expect(warnings.some(w => /Entity coverage/.test(w))).toBe(true);
+  });
+
+  it('still warns on brand casing on a counterpart page', () => {
+    const { warnings } = validate(makeValid({ body: makeBody('Built with Wordpress and a custom theme.') }), KW_DE, { counterpart: true });
+    expect(warnings.some(w => /write "WordPress"/.test(w))).toBe(true);
+  });
+
+  it('still enforces structural checks (body word count, meta lengths) on a counterpart page', () => {
+    const md = `---
+slug: test
+meta_title: Company Event Planning for Modern Teams and Groups
+meta_description: A short guide to planning company events, covering venue booking, catering and budget considerations for teams of any size and budget.
+hero:
+  headline: Plan your next company event
+tldr: "${TLDR_50}"
+${FAQ_BLOCK}
+---
+Too short body.`;
+    const { ok, errors } = validate(md, KW_DE, { counterpart: true });
+    expect(ok).toBe(false);
+    expect(errors.some(e => e.includes('Body too short'))).toBe(true);
+  });
+});

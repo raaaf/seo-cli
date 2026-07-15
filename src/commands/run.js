@@ -5,6 +5,7 @@ import { loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as get
 import { saveKeywords, getPending, KEYWORD_STATUS, saveLastPR } from '../lib/keywords.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
+import { generateCounterpart, linkAlternates } from '../steps/counterpart.js';
 import { validate } from '../steps/validate.js';
 import { createPR } from '../steps/pr.js';
 import { track } from '../steps/track.js';
@@ -31,6 +32,50 @@ const REQUIRED_ENV = [
   'GITHUB_TOKEN',
 ];
 
+// Generate the counterpart page for an already-validated default-locale page.
+// Returns { markdown, slug } on success, or null on any failure (invalid/
+// colliding slug after retry, or validation failing after 2 attempts) — a
+// counterpart failure never loses the default-locale page, it's just skipped.
+async function generateCounterpartPage(kw, sourceMarkdown, config, cwd, dryRun, extraExistingSlugs) {
+  const counterpartLocale = config.counterpart_locale;
+  const label = ` [${counterpartLocale}]`;
+
+  let markdown;
+  let slug;
+  let valid = false;
+  let lastResult;
+  let validatorFeedback = null;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      ({ markdown, slug } = await generateCounterpart(sourceMarkdown, kw, config, cwd, { validatorFeedback, extraExistingSlugs }));
+    } catch (e) {
+      console.log(chalk.yellow(`  Counterpart skipped: ${kw.keyword}${label} (${e.message})`));
+      return null;
+    }
+    lastResult = validate(markdown, kw, { counterpart: true });
+    if (lastResult.ok) { valid = true; break; }
+    validatorFeedback = lastResult.errors.join('\n');
+  }
+
+  if (!valid) {
+    console.log(chalk.yellow(`  Counterpart skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
+    (lastResult?.errors ?? []).forEach(e => console.log(chalk.yellow(`    ⚠ ${e}`)));
+    return null;
+  }
+
+  if (dryRun) {
+    console.log(chalk.cyan(`\n--- ${kw.keyword}${label} (slug: ${slug}) ---\n`));
+    console.log(markdown.slice(0, 600) + '\n...');
+    return null;
+  }
+
+  return { markdown, slug };
+}
+
+// Generates the default-locale page for `kw`, then (when config.counterpart_locale
+// is set) its reciprocal counterpart page. Returns an array of 0-2 page objects
+// ({ keyword, slug, score, type, locale, filePath, markdown }).
 async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys) {
   const localeLandingPathStr = getLocaleLandingPath(config, locale);
   const localeConfig = { ...config, locale, landing_path: localeLandingPathStr };
@@ -40,11 +85,11 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   if (existsSync(targetFile)) {
     console.log(chalk.gray(`  Skipping ${kw.target_slug}${label} — file already exists`));
     kw.status = KEYWORD_STATUS.DONE;
-    return null;
+    return [];
   }
   if (generatedKeys.has(`${kw.target_slug}::${locale}`)) {
     console.log(chalk.yellow(`  Skipping ${kw.target_slug}${label} — slug collision with another keyword`));
-    return null;
+    return [];
   }
 
   let markdown;
@@ -61,17 +106,43 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
     console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
     (lastResult?.errors ?? []).forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
     kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
-    return null;
+    return [];
   }
 
   if (dryRun) {
     console.log(chalk.cyan(`\n--- ${kw.keyword}${label} ---\n`));
     console.log(markdown.slice(0, 600) + '\n...');
-    return null;
+  }
+
+  const hasCounterpart = locale === defaultLocaleVal
+    && config.counterpart_locale
+    && config.counterpart_locale !== defaultLocaleVal;
+
+  const counterpart = hasCounterpart
+    ? await generateCounterpartPage(kw, markdown, config, cwd, dryRun, [...generatedKeys].map(k => k.split('::')[0]))
+    : null;
+
+  if (dryRun) {
+    return [];
   }
 
   const filePath = join(localeLandingPathStr, `${kw.target_slug}.md`).replace(/\\/g, '/');
-  return { keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown };
+  const pages = [];
+
+  if (counterpart) {
+    const linked = linkAlternates(markdown, counterpart.markdown, kw.target_slug, counterpart.slug);
+    const counterpartLandingPathStr = getLocaleLandingPath(config, config.counterpart_locale);
+    const counterpartFilePath = join(counterpartLandingPathStr, `${counterpart.slug}.md`).replace(/\\/g, '/');
+    pages.push({ keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown: linked.sourceMarkdown });
+    pages.push({
+      keyword: kw.keyword, slug: counterpart.slug, score: kw.score, type: kw.type,
+      locale: config.counterpart_locale, filePath: counterpartFilePath, markdown: linked.counterpartMarkdown,
+    });
+  } else {
+    pages.push({ keyword: kw.keyword, slug: kw.target_slug, score: kw.score, type: kw.type, locale, filePath, markdown });
+  }
+
+  return pages;
 }
 
 export async function runCommand(opts) {
@@ -111,13 +182,13 @@ export async function runCommand(opts) {
     for (const kw of toGenerate) {
       for (const locale of locales) {
         tasks.push(limit(async () => {
-          const page = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic);
-          if (page) {
+          const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic);
+          for (const page of pages) {
             generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
             generatedPages.push(page);
             if (kw.status !== KEYWORD_STATUS.PR_OPENED) kw.status = KEYWORD_STATUS.PR_OPENED;
           }
-          return page;
+          return pages;
         }));
       }
     }

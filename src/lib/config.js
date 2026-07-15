@@ -24,6 +24,7 @@ export const DEFAULTS = {
   score_cutoff: 7,
   weekly_cap: 2,
   min_impressions: 5,
+  counterpart_locale: null,
 };
 
 export function defaultLocale(config) {
