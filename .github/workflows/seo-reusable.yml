@@ -32,6 +32,10 @@ jobs:
       # be dispatched explicitly, which needs actions:write. The caller job must
       # grant it too (caller permissions cap the reusable workflow's token).
       actions: write
+      # Required so the gate can `gh pr view --json statusCheckRollup` to wait
+      # for the target repo's PR checks (e.g. Pest CI) before merging.
+      checks: read
+      statuses: read
     env:
       HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
 
@@ -143,8 +147,76 @@ jobs:
           REPORT=$(grep -o 'SEO_CHECK_JSON=.*' /tmp/seo-check.out | sed 's/^SEO_CHECK_JSON=//' | tail -1)
           [ -z "$REPORT" ] && REPORT='{}'
 
+          # Wait for the target repo's PR checks (e.g. Pest CI) before merging.
+          # No branch protection is available on private/free-plan repos, so the
+          # gate itself must not merge ahead of a slow test run.
+          CHECKS_STATUS=""
           if [ "$CHECK_EXIT" -eq 0 ]; then
-            if gh pr merge "$PR_NUM" --squash --delete-branch; then
+            GRACE_PERIOD=90
+            POLL_INTERVAL=30
+            MAX_WAIT=1500
+            ELAPSED=0
+
+            while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+              # Normalize both statusCheckRollup shapes (CheckRun: status/conclusion,
+              # StatusContext: state) into a flat list of terminal/pending states.
+              STATES_JSON=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '
+                [.statusCheckRollup[] |
+                  if .__typename == "StatusContext" then .state
+                  else (if .status == "COMPLETED" then (.conclusion // "PENDING") else "PENDING" end)
+                  end
+                ]
+              ' 2>/dev/null || echo "[]")
+              [ -z "$STATES_JSON" ] && STATES_JSON="[]"
+
+              NUM_CHECKS=$(echo "$STATES_JSON" | jq 'length')
+
+              if [ "$NUM_CHECKS" -eq 0 ]; then
+                if [ "$ELAPSED" -lt "$GRACE_PERIOD" ]; then
+                  echo "No PR checks registered yet (${ELAPSED}s elapsed) — waiting out grace period..."
+                  sleep "$POLL_INTERVAL"
+                  ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                  continue
+                fi
+                echo "No PR checks registered after ${GRACE_PERIOD}s grace period — proceeding without CI gating."
+                CHECKS_STATUS=none
+                break
+              fi
+
+              FAILED=$(echo "$STATES_JSON" | jq '[.[] | select(. as $s | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"] | index($s))] | length')
+              if [ "$FAILED" -gt 0 ]; then
+                echo "One or more PR checks failed."
+                CHECKS_STATUS=failed
+                break
+              fi
+
+              PENDING=$(echo "$STATES_JSON" | jq '[.[] | select(. == "PENDING")] | length')
+              if [ "$PENDING" -eq 0 ]; then
+                echo "All PR checks completed successfully."
+                CHECKS_STATUS=success
+                break
+              fi
+
+              echo "PR checks still pending (${ELAPSED}s elapsed) — waiting ${POLL_INTERVAL}s..."
+              sleep "$POLL_INTERVAL"
+              ELAPSED=$((ELAPSED + POLL_INTERVAL))
+            done
+
+            if [ -z "$CHECKS_STATUS" ]; then
+              echo "Timed out after ${MAX_WAIT}s waiting for PR checks."
+              CHECKS_STATUS=timeout
+            fi
+          fi
+
+          if [ "$CHECK_EXIT" -eq 0 ]; then
+            if [ "$CHECKS_STATUS" = "failed" ] || [ "$CHECKS_STATUS" = "timeout" ]; then
+              if [ "$CHECKS_STATUS" = "failed" ]; then
+                STATUS=checks_failed
+              else
+                STATUS=checks_timeout
+              fi
+              echo "Not merging PR #$PR_NUM: PR checks did not pass ($STATUS)."
+            elif gh pr merge "$PR_NUM" --squash --delete-branch; then
               STATUS=merged
               # A merge by GITHUB_TOKEN does not trigger other workflows (incl. deploy).
               # Dispatch the deploy explicitly so the merged pages go live.
