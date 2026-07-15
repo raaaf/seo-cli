@@ -9,6 +9,7 @@ import { tmpdir } from 'os';
 
 const discover = vi.fn();
 const generatePage = vi.fn();
+const generateCounterpart = vi.fn();
 const validate = vi.fn();
 const createPR = vi.fn();
 const track = vi.fn();
@@ -22,6 +23,11 @@ const CONFIG = {
 
 vi.mock('../src/steps/discover.js', () => ({ discover: (...a) => discover(...a) }));
 vi.mock('../src/steps/generate.js', () => ({ generatePage: (...a) => generatePage(...a) }));
+// linkAlternates is pure and already unit-tested in counterpart.test.js — keep the
+// real implementation here, only the network-calling generateCounterpart is mocked.
+vi.mock('../src/steps/counterpart.js', async (orig) => ({
+  ...(await orig()), generateCounterpart: (...a) => generateCounterpart(...a),
+}));
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 vi.mock('../src/steps/pr.js', () => ({ createPR: (...a) => createPR(...a) }));
 vi.mock('../src/steps/track.js', () => ({ track: (...a) => track(...a) }));
@@ -49,7 +55,7 @@ beforeEach(() => {
   process.chdir(dir);
   saved = {};
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
-  for (const fn of [discover, generatePage, validate, createPR, track, saveKeywords, saveLastPR]) fn.mockReset();
+  for (const fn of [discover, generatePage, generateCounterpart, validate, createPR, track, saveKeywords, saveLastPR]) fn.mockReset();
   generatePage.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
   validate.mockReturnValue({ ok: true, errors: [], warnings: [] });
   logs = [];
@@ -150,6 +156,48 @@ describe('run-pipeline', () => {
       expect(createPR.mock.calls[0][0].generatedPages).toHaveLength(4);
     } finally {
       CONFIG.weekly_cap = 2;
+    }
+  });
+
+  it('generates a reciprocal counterpart page and links alternates on both pages', async () => {
+    CONFIG.counterpart_locale = 'en';
+    try {
+      discover.mockResolvedValue(keywordsData());
+      createPR.mockResolvedValue('https://github.com/o/demo/pull/4');
+      generateCounterpart.mockResolvedValue({ markdown: '---\nslug: wedding-planning\n---\nbody', slug: 'wedding-planning' });
+
+      await runCommand({});
+
+      const pages = createPR.mock.calls[0][0].generatedPages;
+      expect(pages).toHaveLength(2);
+
+      const dePage = pages.find(p => p.locale === 'de');
+      const enPage = pages.find(p => p.locale === 'en');
+      expect(dePage.markdown).toContain('alternate: wedding-planning');
+      expect(enPage.slug).toBe('wedding-planning');
+      expect(enPage.markdown).toContain('alternate: hochzeit-planen');
+      expect(enPage.filePath).toBe('resources/landing/en/wedding-planning.md');
+    } finally {
+      delete CONFIG.counterpart_locale;
+    }
+  });
+
+  it('keeps the default-locale page when counterpart generation fails, and logs a warning', async () => {
+    CONFIG.counterpart_locale = 'en';
+    try {
+      discover.mockResolvedValue(keywordsData());
+      createPR.mockResolvedValue('https://github.com/o/demo/pull/5');
+      generateCounterpart.mockRejectedValue(new Error('Counterpart generation failed: slug collides'));
+
+      await runCommand({});
+
+      const pages = createPR.mock.calls[0][0].generatedPages;
+      expect(pages).toHaveLength(1);
+      expect(pages[0].locale).toBe('de');
+      expect(pages[0].markdown).not.toContain('alternate:');
+      expect(logs.join('\n')).toMatch(/Counterpart skipped/);
+    } finally {
+      delete CONFIG.counterpart_locale;
     }
   });
 });

@@ -45,9 +45,10 @@ const BRAND_CASING = Object.freeze([
   'WordPress', 'JavaScript', 'TypeScript', 'GitHub', 'GitLab', 'PostgreSQL', 'macOS',
 ]);
 
-export function validate(markdown, keyword) {
+export function validate(markdown, keyword, opts = {}) {
   const errors = [];
   const warnings = [];
+  const { counterpart = false } = opts;
 
   const { parsed, body, matched, error } = parseFrontmatter(markdown);
   if (!matched) {
@@ -79,11 +80,13 @@ export function validate(markdown, keyword) {
   }
 
   // hero.headline exists and contains the keyword (all significant tokens, not
-  // just the first word — a multi-word keyword must not pass on one shared token)
+  // just the first word — a multi-word keyword must not pass on one shared token).
+  // Keyword-presence is skipped for counterpart pages: they are a localized
+  // adaptation and will not contain the source-locale keyword at all.
   const headline = parsed.hero?.headline;
   if (!headline) {
     errors.push('Missing hero.headline');
-  } else {
+  } else if (!counterpart) {
     const missing = missingKeywordTokens(String(headline), keyword.keyword);
     if (missing.length) warnings.push(`hero.headline may not contain target keyword (missing: ${missing.join(', ')}): "${headline}"`);
   }
@@ -102,25 +105,30 @@ export function validate(markdown, keyword) {
     warnings.push('Body contains structured sections (FAQ/Steps/Checklist) — these should be in frontmatter');
   }
 
-  // Keyword in body (all significant tokens)
-  const missingInBody = missingKeywordTokens(body, keyword.keyword);
-  if (missingInBody.length) {
-    warnings.push(`Keyword "${keyword.keyword}" not fully present in body (missing: ${missingInBody.join(', ')})`);
-  }
+  // Keyword presence, stuffing, and entity coverage all check for the source
+  // keyword/entities in the body — meaningless for a counterpart page, which
+  // deliberately does not contain the source-locale keyword.
+  if (!counterpart) {
+    // Keyword in body (all significant tokens)
+    const missingInBody = missingKeywordTokens(body, keyword.keyword);
+    if (missingInBody.length) {
+      warnings.push(`Keyword "${keyword.keyword}" not fully present in body (missing: ${missingInBody.join(', ')})`);
+    }
 
-  // Stuffing check
-  const keywordCount = (body.toLowerCase().match(new RegExp(escapeRegex(keyword.keyword.toLowerCase()), 'g')) || []).length;
-  const density = wordCount > 0 ? keywordCount / wordCount : 0;
-  if (density > 0.04) errors.push(`Keyword stuffing: ${(density * 100).toFixed(1)}% density (max 4%)`);
+    // Stuffing check
+    const keywordCount = (body.toLowerCase().match(new RegExp(escapeRegex(keyword.keyword.toLowerCase()), 'g')) || []).length;
+    const density = wordCount > 0 ? keywordCount / wordCount : 0;
+    if (density > 0.04) errors.push(`Keyword stuffing: ${(density * 100).toFixed(1)}% density (max 4%)`);
 
-  // Entity coverage
-  const entities = keyword.expected_entities || [];
-  if (entities.length > 0) {
-    const fullText = (JSON.stringify(parsed) + '\n' + body).toLowerCase();
-    const missing = entities.filter(e => !fullText.includes(e.toLowerCase()));
-    const coverage = (entities.length - missing.length) / entities.length;
-    if (coverage < 0.6) {
-      warnings.push(`Entity coverage ${(coverage * 100).toFixed(0)}% (aim 70%+). Missing: ${missing.join(', ')}`);
+    // Entity coverage
+    const entities = keyword.expected_entities || [];
+    if (entities.length > 0) {
+      const fullText = (JSON.stringify(parsed) + '\n' + body).toLowerCase();
+      const missing = entities.filter(e => !fullText.includes(e.toLowerCase()));
+      const coverage = (entities.length - missing.length) / entities.length;
+      if (coverage < 0.6) {
+        warnings.push(`Entity coverage ${(coverage * 100).toFixed(0)}% (aim 70%+). Missing: ${missing.join(', ')}`);
+      }
     }
   }
 
@@ -156,9 +164,14 @@ export function validate(markdown, keyword) {
     .replace(/https?:\/\/\S+/g, '')
     .replace(/\]\(\/[^)]*\)/g, '')
     .replace(/\b[a-z0-9]+(?:-[a-z0-9]+){2,}\b/g, '');
-  for (const { re, msg } of CONTENT_DENYLIST) {
-    const m = fullScan.match(re);
-    if (m) warnings.push(`${msg} (found "${m[0].trim()}")`);
+
+  // CONTENT_DENYLIST is German-specific (anglicisms, German tax/legal facts) and
+  // would false-positive on an entire English counterpart page — skip it there.
+  if (!counterpart) {
+    for (const { re, msg } of CONTENT_DENYLIST) {
+      const m = fullScan.match(re);
+      if (m) warnings.push(`${msg} (found "${m[0].trim()}")`);
+    }
   }
 
   // Brand casing: flag any non-canonical spelling of a known brand

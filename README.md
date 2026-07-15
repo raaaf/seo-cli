@@ -138,6 +138,9 @@ style_doc: null         # null = built-in default style
 score_cutoff: 7         # 0–10, keywords below this are skipped
 weekly_cap: 2           # max pages generated per run
 min_impressions: 5      # min GSC impressions to consider a keyword
+counterpart_locale: null  # e.g. 'en' — also generate a reciprocal counterpart
+                           # page per default-locale page, own slug, sharing the
+                           # bare /{slug} URL space, linked via `alternate:`
 clusters:
   - event-planning
   - party-organization

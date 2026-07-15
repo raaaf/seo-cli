@@ -46,6 +46,24 @@ describe('pr-create', () => {
     expect(prBody).toContain('SEO check');
   });
 
+  it('queues the bare /{slug} sitemap path for a counterpart page (shared URL space, no locale prefix)', async () => {
+    const config = { repo: 'o/r', locale: 'de', locales: ['de'], counterpart_locale: 'en' };
+    const pages = [
+      page(),
+      page({ locale: 'en', slug: 'wedding-planning', filePath: 'resources/landing/en/wedding-planning.md' }),
+    ];
+    await createPR({ generatedPages: pages, keywordsJsonContent: { keywords: [] }, config, cwd: dir });
+
+    const { files } = createBranchAndCommit.mock.calls[0][0];
+    const sitemap = JSON.parse(files.find(f => f.path === 'seo/sitemap-pending.json').content);
+    expect(sitemap.slugs).toContain('/hochzeit-planen');
+    expect(sitemap.slugs).toContain('/wedding-planning');
+
+    // Not hreflang mode: config.locales still has only one entry.
+    const enPage = files.find(f => f.path === 'resources/landing/en/wedding-planning.md');
+    expect(enPage.content).not.toContain('hreflang:');
+  });
+
   it('injects hreflang frontmatter for multi-locale pages', async () => {
     const config = { repo: 'o/r', locale: 'de', locales: ['de', 'en'] };
     const pages = [

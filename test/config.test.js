@@ -55,6 +55,7 @@ describe('config-load: loadConfig', () => {
     expect(cfg.score_cutoff).toBe(DEFAULTS.score_cutoff);
     expect(cfg.weekly_cap).toBe(DEFAULTS.weekly_cap);
     expect(cfg.min_impressions).toBe(DEFAULTS.min_impressions);
+    expect(cfg.counterpart_locale).toBeNull();
   });
 
   it('explicit value overrides default', () => {
