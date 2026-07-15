@@ -10,7 +10,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
 process.env.ANTHROPIC_API_KEY = 'test-key';
 const { complete } = await import('../src/lib/claude.js');
 
-const reply = (text) => ({ content: [{ text }] });
+const reply = (text) => ({ content: [{ type: 'text', text }] });
 
 beforeEach(() => create.mockReset());
 
@@ -55,5 +55,20 @@ describe('claude-complete', () => {
     try { await complete({ system: 's', prompt: 'p' }); } catch (e) { caught = e; }
     expect(caught?.message).toBe('bad request');
     expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a leading thinking block to find the text block', async () => {
+    create.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: '...' },
+        { type: 'text', text: '{"a":1}' },
+      ],
+    });
+    expect(await complete({ system: 's', prompt: 'p', json: true })).toEqual({ a: 1 });
+  });
+
+  it('throws a descriptive error instead of crashing when there is no text block', async () => {
+    create.mockResolvedValue({ content: [], stop_reason: 'max_tokens' });
+    await expect(complete({ system: 's', prompt: 'p' })).rejects.toThrow(/max_tokens/);
   });
 });
