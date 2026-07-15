@@ -80,7 +80,9 @@ Direct and specific:
   capitalized as nouns): Catering, Tool, App, SaaS, MVP, Stack, Hosting, Plugin, Template, Workshop.
   Anything outside this set that has a German equivalent must use the German word. Multi-word
   English phrases are never acceptable in DE prose. Frequent offenders to avoid: "Case Study/Studies"
-  (use Fallstudie/Fallstudien), "Edge Case(s)" (use Sonderfall/Randfall).
+  (use Fallstudie/Fallstudien), "Edge Case(s)" (use Sonderfall/Randfall), "Reports" (use Berichte),
+  "Insights" (use Auswertungen), "Consent" (use Einwilligung), "Sales-Team" (use Vertriebsteam).
+  Unavoidable English compounds stay hyphenated German-style: "Escape-Room", never "Escape Rooms".
 - No anglicism "in 2026" — write "2026" or "im Jahr 2026".
 
 ## Facts must be current
@@ -98,6 +100,16 @@ Direct and specific:
 - For statistics from studies, name the source year explicitly only when the source
   itself is dated and you have verified the citation. Otherwise phrase neutrally.
 - Use current brand names: "Lexware Office" (not "lexoffice", renamed 2024).
+- Numeric consistency: state every price, range, or statistic identically wherever it
+  recurs (tldr, body, FAQ) — never a different range in the FAQ than in the body.
+- No absolute calendar dates in examples or sample texts; use relative anchors
+  ("zum kommenden Jahreswechsel") instead, since absolute dates go stale.
+- Third-party prices (competitor tools, external services) need a hedge: a date
+  ("Stand 2026") or an approximation ("ab ca."), never a bare timeless fact.
+- Legal or tariff citations (GEMA tariffs, paragraph numbers) only when certain; when
+  unsure, name the institution generically rather than inventing a tariff or paragraph.
+  Known trap: GEMA tariff U-V is for live-music events, M-V for recorded music; VR
+  tariffs concern reproduction, not events.
 
 ## Real names only
 

@@ -35,6 +35,8 @@ const CONTENT_DENYLIST = Object.freeze([
     re: /bruttoumsatz[\s\S]{0,400}?(?:kleinunternehmer|25\.000|100\.000)|(?:kleinunternehmer|25\.000|100\.000)[\s\S]{0,400}?bruttoumsatz/i,
     msg: 'Kleinunternehmer limits 25.000/100.000 EUR are net since 2025: write "Nettoumsatz", not "Bruttoumsatz"',
   },
+  { re: /\breports?\b/i, msg: 'Anglicism "Report(s)": use "Berichte"' },
+  { re: /\binsights?\b/i, msg: 'Anglicism "Insight(s)": use "Auswertungen"' },
 ]);
 
 // Brands whose canonical casing the model often mangles. Warn on any occurrence

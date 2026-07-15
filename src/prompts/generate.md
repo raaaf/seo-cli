@@ -93,6 +93,13 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   generically ("ein internes Tool dieser Art liegt bei rund X Euro"), never as
   "aus meiner Praxis".
 - Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)
+- Numeric consistency: state every price, range, or statistic identically wherever it
+  recurs (tldr, body, FAQ). Never give one range in the body and a different one in the FAQ.
+- No absolute calendar dates in examples or sample texts (e.g. a sample email announcing
+  a rate increase). Use relative anchors instead, such as "zum kommenden Jahreswechsel"
+  or "ab dem nächsten Quartal" — absolute dates go stale.
+- Third-party prices (competitor tools, external services) must be hedged with a date
+  ("Stand 2026") or an approximation ("ab ca. X Euro"), never stated as a bare timeless fact.
 - Cite external sources only when you can name a specific, real document and link
   DEEP to it (a concrete article/report page, not a homepage). Never invent a study
   ("eine BVDW-Studie zeigt...") and never link only to a root domain like
@@ -113,7 +120,10 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   established loanwords is allowed: Catering, Tool, App, SaaS, Hosting, Plugin, Template,
   Workshop, Stack, MVP. Also forbidden, even though they look technical: "Case Study/Studies"
   (use Fallstudie/Fallstudien), "Edge Case(s)" (use Sonderfall/Randfall), "Senior Backend"
-  as a bare noun (use Senior-Backend-Entwickler).
+  as a bare noun (use Senior-Backend-Entwickler), "Reports" (use Berichte), "Insights"
+  (use Auswertungen), "Consent" (use Einwilligung), "Sales-Team" (use Vertriebsteam).
+  English compounds that must stay must be hyphenated German-style: "Escape-Room", never
+  "Escape Rooms".
 - NO anglicism "in 2026" — write "2026" or "im Jahr 2026".
 - Brand casing must be correct: WordPress, GitHub, GitLab, JavaScript, TypeScript,
   PostgreSQL, MySQL, macOS, iOS — never lowercase or wrong-case variants.
@@ -141,6 +151,10 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   insurance obligation stems from §2 S. 1 Nr. 9 SGB VI, not §7 SGB IV. Never cite outdated
   thresholds with old year labels as if current. If unsure of the exact current figure,
   describe it without a hard number.
+- Legal or tariff citations (GEMA tariffs, paragraph numbers) only when certain. When unsure,
+  name the institution generically instead of inventing a specific tariff or paragraph.
+  Known trap: the GEMA tariff for live-music events is U-V, for recorded music it is M-V;
+  VR tariffs concern reproduction rights, not events.
 - Cite source years only when sourcing a specific study; do not write "im Jahr 2024" for
   a fact stated as currently true.
 
