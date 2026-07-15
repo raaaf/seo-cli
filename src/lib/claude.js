@@ -24,7 +24,9 @@ export async function complete({ system, prompt, model = MODELS.default, maxToke
         messages,
       });
 
-      const text = res.content[0].text.trim();
+      const textBlock = res.content.find((b) => b.type === 'text');
+      if (!textBlock) throw new Error(`Claude returned no text block (stop_reason: ${res.stop_reason})`);
+      const text = textBlock.text.trim();
 
       if (json) {
         const match = text.match(/```json\s*([\s\S]+?)\s*```/) || text.match(/(\{[\s\S]+\})/);
