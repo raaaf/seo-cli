@@ -82,6 +82,20 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     expect(cs.warnings.some(w => /Case Study/.test(w))).toBe(true);
   });
 
+  it('warns on anglicisms Reports and Insights', () => {
+    const reports = validate(makeValid({ body: makeBody('Das Dashboard liefert woechentliche Team-Reports fuer alle.') }), KW);
+    expect(reports.warnings.some(w => /Berichte/.test(w))).toBe(true);
+
+    const insights = validate(makeValid({ body: makeBody('Das Tool liefert detaillierte Insights zu jeder Kampagne.') }), KW);
+    expect(insights.warnings.some(w => /Auswertungen/.test(w))).toBe(true);
+  });
+
+  it('does not warn on Berichte und Auswertungen', () => {
+    const { warnings } = validate(makeValid({ body: makeBody('Das Dashboard liefert woechentliche Berichte und Auswertungen fuer alle.') }), KW);
+    expect(warnings.some(w => /Berichte/.test(w))).toBe(false);
+    expect(warnings.some(w => /Auswertungen/.test(w))).toBe(false);
+  });
+
   it('warns on stale brand name lexoffice', () => {
     const { ok, warnings } = validate(makeValid({ body: makeBody('Export direkt nach lexoffice und sevDesk.') }), KW);
     expect(ok).toBe(true);
