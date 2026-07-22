@@ -61,8 +61,10 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   }
 
   if (dryRun) {
+    // Print the whole file: a dry run exists to be read, and the interesting
+    // part of a rewrite (new sections, adjusted FAQ) is below the frontmatter.
     console.log(chalk.cyan(`\n--- ${page.slug} ---\n`));
-    console.log(finalMarkdown.slice(0, 800) + '\n...');
+    console.log(finalMarkdown);
     return null;
   }
 
