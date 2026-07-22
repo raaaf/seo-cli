@@ -25,16 +25,22 @@ This is a personal CLI that automates SEO landing page creation. It runs in the 
 ### Pipeline (`seo run`)
 
 ```
-discover → generate → validate (up to 2 attempts) → pr → track
+discover → generate → validate (up to 2 attempts) → fact-check → pr → track
 ```
 
 All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 
-**discover** (`src/steps/discover.js`): Pulls the last 28 days of Search Console data (positions 8-25, filtered by `min_impressions`). Scores each candidate keyword via Claude + SerpAPI. Falls back to greenfield Claude suggestions when GSC has no candidates, **or when GSC scoring yields fewer keywords above `score_cutoff` than `weekly_cap`** (tops up the backlog so GSC-poor sites, whose candidate pool is dominated by off-topic queries, still produce pages). Saves results to `seo/keywords.json` in the target project.
+**discover** (`src/steps/discover.js`): Pulls the last 28 days of Search Console data (positions 8-25, filtered by `min_impressions`). Scores each candidate keyword via Claude + SerpAPI. Saves results to `seo/keywords.json` in the target project.
+
+Two guards keep the backlog free of duplicates. `lib/similarity.js` rejects a candidate whose significant tokens match an existing keyword or slug (a word-order variant such as "webdesign freelancer preise" next to "freelancer webdesign preise") before it is scored. For everything fuzzier, the scoring prompt receives the existing slugs and titles and returns `covered_by` when a published page already answers the question; that keyword is skipped with a note.
+
+Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield: true` and off by default. An empty backlog is a valid result: it means the topic space is covered. It used to top up whenever GSC yielded fewer keywords than `weekly_cap`, which guaranteed pages every week whether or not topics existed, and is how the target projects accumulated 70 pages for about 50 topics.
 
 **generate** (`src/steps/generate.js`): Calls Claude Opus (`claude-opus-4-7`, 8000 tokens) with a prompt assembled from `src/prompts/generate.md` and a style doc. Outputs markdown with YAML frontmatter. Placeholders `CANONICAL_URL`, `BASE_URL`, `SITE_NAME` are replaced post-generation.
 
 **validate** (`src/steps/validate.js`): Pure function, no I/O. Checks frontmatter fields, meta title/description lengths, FAQ count, body word count (800-1400), keyword density, entity coverage, em-dash/emoji, and fabricated-claim patterns. Returns `{ ok, errors, warnings }`. Up to 2 generation attempts per keyword.
+
+**fact-check** (`src/steps/review.js`): Extracts checkable claims (laws, thresholds, deadlines, customs, brand and product names, third-party prices, cited studies) and verifies them with the server-side `web_search` tool, plus the tldr of every published page in the locale for cross-page number consistency. Corrections apply only when the quoted text matches exactly once. A high-severity finding it could not patch drops the page; everything else is patched, revalidated and logged. Off via `fact_check: false`, skipped in dry runs.
 
 **pr** (`src/steps/pr.js`): Commits all generated files plus `seo/keywords.json` and `seo/sitemap-pending.json` to a branch named `seo/YYYY-WW`, then opens a GitHub PR with an SEO check table in the body. Writes `seo/last-pr.json` for CI auto-merge workflows.
 
@@ -55,7 +61,8 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 | `src/lib/frontmatter.js` | `splitFrontmatter`/`parseFrontmatter`: parse YAML frontmatter from markdown. Canonical parser, shared by all consumers. |
 | `src/lib/safe-fetch.js` | `safeFetch`: SSRF guard. Resolves DNS and blocks private/reserved IPs before fetching. |
 | `src/lib/site-fetch.js` | `fetchPages`/`stripHtml`: fetch a list of URLs (via `safeFetch`) and strip to plain text. |
-| `src/lib/landings.js` | `getExistingSlugs`/`getExistingTitles`: enumerate on-disk landing pages. Module-scope memo cache. |
+| `src/lib/landings.js` | `getExistingSlugs`/`getExistingTitles`/`getExistingPages`: enumerate on-disk landing pages. Module-scope memo cache. |
+| `src/lib/similarity.js` | `findTokenSetDuplicate`: rejects word-order variants of keywords/slugs we already cover. |
 | `src/lib/detect.js` | `detectProject`: heuristics for `seo init` (git remote, landing path, style doc, locale, clusters, domain). |
 | `src/lib/github.js` | Octokit wrapper: branch/commit creation and PR opening. |
 | `src/lib/projects.js` | `discoverProjects`: walk `SEO_PROJECT_ROOTS` for projects with a `seo.config.yaml` (used by `dashboard`). |
@@ -68,7 +75,8 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 `src/prompts/` contains markdown templates with `{{placeholder}}` substitution via `lib/template.js#fillTemplate` (single-pass, no templating engine). Untrusted external data (SerpAPI titles/snippets, GSC queries, fetched site copy) is wrapped in `<<<UNTRUSTED_*_START>>>` / `<<<UNTRUSTED_*_END>>>` markers inside the templates so the model treats it as data, not instructions:
 
 - `score.md` — keyword scoring, returns JSON
-- `greenfield.md` — keyword discovery without GSC data
+- `greenfield.md` — keyword discovery without GSC data (only used when `greenfield: true`)
+- `review.md` — fact check with web search, returns findings as JSON
 - `generate.md` — full page generation (used with Opus)
 - `counterpart.md` — counterpart-locale page adaptation (used with Opus, see Counterpart-locale support below)
 - `style-default.md` — built-in writing style guide, used when `config.style_doc` is null
