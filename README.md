@@ -6,11 +6,19 @@ Automated SEO landing page pipeline. Discovers keyword opportunities via Google 
 
 ```
 seo run
-  ├── discover   GSC + SerpAPI + Claude scoring (greenfield fallback when GSC is thin)
-  ├── generate   Claude writes markdown (prose + YAML frontmatter)
-  ├── validate   structure, word count, entities, tone checks
-  └── pr         commits to branch, opens PR
+  ├── discover     GSC + SerpAPI + Claude scoring, duplicates rejected
+  │                 └── backlog empty? → improve an existing page instead
+  ├── generate     Claude writes markdown (prose + YAML frontmatter)
+  ├── validate     structure, word count, entities, tone checks
+  ├── fact-check   claims verified against the live web, corrections applied
+  └── pr           commits to branch, opens PR
 ```
+
+A new page is only written when Search Console shows demand for a topic no
+published page answers. When there is none, the run rewrites the existing page
+with the strongest case instead: a page ranking well without clicks has a title
+problem, a page just off page one has a content gap. An empty backlog is a
+normal result, not a failure.
 
 You review and merge the PR. That's the only manual step.
 
@@ -57,7 +65,8 @@ seo run --dry-run  # preview without committing
 | Command | Description |
 |---|---|
 | `seo init` | Interactive setup, writes `seo.config.yaml` in the current project |
-| `seo run [--dry-run]` | Full pipeline: discover, generate, validate, open PR |
+| `seo run [--dry-run]` | Full pipeline: discover, generate, validate, fact-check, open PR. Improves an existing page when the backlog is empty |
+| `seo improve [--dry-run]` | Rewrite the existing page with the strongest case, from live GSC data |
 | `seo check <files...>` | Validate already-generated landing-page markdown (CI gate) |
 | `seo dashboard [--live] [--project <name>] [--json]` | Cross-project overview: funnel, rankings, movers, suggestions |
 | `seo submit-sitemap` | (Re)submit `<base_url>/sitemap.xml` to Google Search Console |
@@ -138,6 +147,9 @@ style_doc: null         # null = built-in default style
 score_cutoff: 7         # 0–10, keywords below this are skipped
 weekly_cap: 2           # max pages generated per run
 min_impressions: 5      # min GSC impressions to consider a keyword
+greenfield: false       # invent keywords when GSC yields none. Off by default:
+                        # an empty backlog means the topic space is covered
+fact_check: true        # verify claims against the live web before committing
 counterpart_locale: null  # e.g. 'en' — also generate a reciprocal counterpart
                            # page per default-locale page, own slug, sharing the
                            # bare /{slug} URL space, linked via `alternate:`
@@ -153,6 +165,7 @@ clusters:
 | `seo/keywords.json` | Keyword backlog and status | commit |
 | `seo/sitemap-pending.json` | Slugs queued for sitemap submission | commit |
 | `seo/last-pr.json` | Last PR URL (used by CI auto-merge) | commit |
+| `seo/improvements.json` | Which page was rewritten when, and the queries behind it | commit |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo.config.yaml` | Project config | commit |
 
