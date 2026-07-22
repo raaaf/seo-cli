@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -60,5 +60,26 @@ describe('dashboard-summary', () => {
     expect(summary.backlog).toEqual([]);
     expect(summary.suggestions.map(s => s.kind)).toContain('empty_backlog');
     expect(summary.rank).toBe(null);
+  });
+});
+
+describe('live snapshot filtering', () => {
+  it('drops rows from other subdomains of a domain property', async () => {
+    seedKeywords([]);
+    vi.doMock('../src/lib/gsc.js', () => ({
+      queryPagePerformance: async () => [
+        { keys: ['https://rafaelalex.de/preise', 'webdesign preise'], position: 11, impressions: 100, clicks: 0, ctr: 0 },
+        { keys: ['https://events.rafaelalex.de/sommerfest', 'sommerfest'], position: 12, impressions: 900, clicks: 0, ctr: 0 },
+      ],
+    }));
+    const { projectSummary: summary } = await import('../src/lib/dashboard.js?live-filter');
+
+    const result = await summary(
+      { path, config: { gsc_property: 'sc-domain:rafaelalex.de', base_url: 'https://rafaelalex.de' } },
+      { live: true },
+    );
+
+    expect(result.rank.rows).toHaveLength(1);
+    expect(result.rank.impressions).toBe(100);
   });
 });

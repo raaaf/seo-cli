@@ -25,6 +25,9 @@ export const DEFAULTS = {
   weekly_cap: 2,
   min_impressions: 5,
   counterpart_locale: null,
+  // Invent keywords when Search Console yields none. Off by default: an empty
+  // backlog means the topic space is covered, not that the week needs filling.
+  greenfield: false,
 };
 
 export function defaultLocale(config) {
