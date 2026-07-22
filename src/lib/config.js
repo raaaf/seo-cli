@@ -28,6 +28,8 @@ export const DEFAULTS = {
   // Invent keywords when Search Console yields none. Off by default: an empty
   // backlog means the topic space is covered, not that the week needs filling.
   greenfield: false,
+  // Verify checkable claims against the live web before a page is committed.
+  fact_check: true,
 };
 
 export function defaultLocale(config) {

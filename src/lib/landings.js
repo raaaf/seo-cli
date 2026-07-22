@@ -30,6 +30,27 @@ export function getExistingSlugs(config, cwd, locale) {
   return result;
 }
 
+/**
+ * Slug, title and tldr of every landing page in a locale. The tldr is where the
+ * cross-page numbers live (price corridors, percentages), so the fact checker
+ * uses it to spot a new page contradicting its own cluster.
+ */
+export function getExistingPages(config, cwd = process.cwd(), locale) {
+  const dir = join(cwd, localeLandingPath(config, locale ?? defaultLocale(config)));
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter(f => f.endsWith('.md'))
+    .map(f => {
+      const slug = f.replace('.md', '');
+      try {
+        const { parsed } = parseFrontmatter(readFileSync(join(dir, f), 'utf8'));
+        return { slug, title: parsed.meta_title ?? parsed.hero?.headline ?? slug, tldr: parsed.tldr ?? null };
+      } catch {
+        return { slug, title: slug, tldr: null };
+      }
+    });
+}
+
 export function getExistingTitles(landingPath, cwd = process.cwd()) {
   const cacheKey = `${cwd}::${landingPath}`;
   if (titlesCache.has(cacheKey)) return titlesCache.get(cacheKey);

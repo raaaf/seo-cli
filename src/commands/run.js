@@ -7,6 +7,7 @@ import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
 import { generateCounterpart, linkAlternates } from '../steps/counterpart.js';
 import { validate } from '../steps/validate.js';
+import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { createPR } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 
@@ -107,6 +108,27 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
     (lastResult?.errors ?? []).forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
     kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
     return [];
+  }
+
+  // Fact check against the live web and against the cluster's published pages.
+  // A high-severity finding the reviewer could not patch means the page states
+  // something false that we cannot correct automatically — drop it rather than
+  // publish it. Everything else is patched and reported.
+  if (config.fact_check !== false && !dryRun) {
+    const { markdown: reviewed, findings } = await reviewPage(markdown, kw, localeConfig, cwd, { locale });
+    if (unresolvedSeverity(findings) === 'high') {
+      console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (unresolved factual error, see finding above)`));
+      kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
+      return [];
+    }
+    if (reviewed !== markdown) {
+      const afterFix = validate(reviewed, kw);
+      if (afterFix.ok) {
+        markdown = reviewed;
+      } else {
+        console.log(chalk.yellow('  Fact-check patches broke validation, keeping the unpatched page'));
+      }
+    }
   }
 
   if (dryRun) {
