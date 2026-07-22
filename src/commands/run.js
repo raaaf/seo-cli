@@ -8,6 +8,7 @@ import { generatePage } from '../steps/generate.js';
 import { generateCounterpart, linkAlternates } from '../steps/counterpart.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
+import { improveCommand } from './improve.js';
 import { createPR } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 
@@ -192,7 +193,11 @@ export async function runCommand(opts) {
   const toGenerate = pending.slice(0, config.weekly_cap);
 
   if (toGenerate.length === 0) {
-    console.log(chalk.gray('\nNo keywords to generate. Next run will surface new suggestions.'));
+    // An empty backlog is the normal state once a topic space is covered. The
+    // week is better spent on the pages that already rank and get no clicks
+    // than on a keyword invented to fill the slot.
+    console.log(chalk.gray('\nNo keywords to generate — switching to improving an existing page.'));
+    if (!dryRun) await improveCommand({ config, dryRun }, cwd);
   } else {
     console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
 

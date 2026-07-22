@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 node bin/seo.js init          # interactive setup, writes seo.config.yaml in cwd
 node bin/seo.js run           # full pipeline: discover + generate + PR
 node bin/seo.js run --dry-run # preview generated markdown, no commit/PR
+node bin/seo.js improve       # rewrite the existing page with the strongest case, from live GSC data
+node bin/seo.js improve --dry-run  # print the rewrite, no commit/PR
 node bin/seo.js dashboard     # cross-project overview (funnel, rankings, movers, suggestions)
 node bin/seo.js dashboard --live  # same, but pull current positions/clicks from GSC
 node bin/seo.js check <files...>  # validate already-generated landing markdown (CI gate)
@@ -44,6 +46,8 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 
 **pr** (`src/steps/pr.js`): Commits all generated files plus `seo/keywords.json` and `seo/sitemap-pending.json` to a branch named `seo/YYYY-WW`, then opens a GitHub PR with an SEO check table in the body. Writes `seo/last-pr.json` for CI auto-merge workflows.
 
+**improve** (`src/steps/improve.js`, `src/commands/improve.js`): Runs when the backlog is empty, and standalone via `seo improve`. Aggregates live GSC page/query data per landing page of the default locale and picks the one with the strongest case: a clickless page in the top five is a snippet problem (title and description), a page at position 6-20 with impressions is a relevance problem. The rewrite gets the page's actual queries as context and may not claim services the page does not already claim. Rewritten slugs go into `seo/improvements.json` and are off the list for 56 days. Own branch `seo/improve-YYYY-WW`.
+
 **track** (`src/steps/track.js`): Appends GSC page/query performance to `seo/rankings/YYYY-WW.csv`. Gitignored in target projects.
 
 ### Key lib files
@@ -62,6 +66,7 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 | `src/lib/safe-fetch.js` | `safeFetch`: SSRF guard. Resolves DNS and blocks private/reserved IPs before fetching. |
 | `src/lib/site-fetch.js` | `fetchPages`/`stripHtml`: fetch a list of URLs (via `safeFetch`) and strip to plain text. |
 | `src/lib/landings.js` | `getExistingSlugs`/`getExistingTitles`/`getExistingPages`: enumerate on-disk landing pages. Module-scope memo cache. |
+| `src/lib/improvements.js` | Load/save `seo/improvements.json`, plus the 56-day cooldown per slug. |
 | `src/lib/similarity.js` | `findTokenSetDuplicate`: rejects word-order variants of keywords/slugs we already cover. |
 | `src/lib/detect.js` | `detectProject`: heuristics for `seo init` (git remote, landing path, style doc, locale, clusters, domain). |
 | `src/lib/github.js` | Octokit wrapper: branch/commit creation and PR opening. |
@@ -77,6 +82,7 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 - `score.md` — keyword scoring, returns JSON
 - `greenfield.md` — keyword discovery without GSC data (only used when `greenfield: true`)
 - `review.md` — fact check with web search, returns findings as JSON
+- `improve.md` — rewrite of an existing page against its real GSC queries
 - `generate.md` — full page generation (used with Opus)
 - `counterpart.md` — counterpart-locale page adaptation (used with Opus, see Counterpart-locale support below)
 - `style-default.md` — built-in writing style guide, used when `config.style_doc` is null
@@ -89,6 +95,7 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 | `seo/sitemap-pending.json` | Slugs queued for sitemap | commit |
 | `seo/last-pr.json` | Last PR URL for CI | commit |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
+| `seo/improvements.json` | Which pages were rewritten when, with the queries that drove it | commit |
 
 ### Multi-locale support
 

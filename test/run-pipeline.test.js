@@ -12,6 +12,7 @@ const generatePage = vi.fn();
 const generateCounterpart = vi.fn();
 const validate = vi.fn();
 const createPR = vi.fn();
+const improveCommand = vi.fn();
 const track = vi.fn();
 const saveKeywords = vi.fn();
 const saveLastPR = vi.fn();
@@ -31,6 +32,7 @@ vi.mock('../src/steps/counterpart.js', async (orig) => ({
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 // The fact checker calls the API with web search; the pipeline test only cares
 // that the page survives it untouched.
+vi.mock('../src/commands/improve.js', () => ({ improveCommand: (...a) => improveCommand(...a) }));
 vi.mock('../src/steps/review.js', () => ({
   reviewPage: async (markdown) => ({ markdown, findings: [] }),
   unresolvedSeverity: () => null,
@@ -205,5 +207,16 @@ describe('run-pipeline', () => {
     } finally {
       delete CONFIG.counterpart_locale;
     }
+  });
+});
+
+describe('empty backlog', () => {
+  it('improves an existing page instead of generating a new one', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+
+    await runCommand({});
+
+    expect(createPR).not.toHaveBeenCalled();
+    expect(improveCommand).toHaveBeenCalledTimes(1);
   });
 });
