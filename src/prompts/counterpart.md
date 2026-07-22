@@ -21,6 +21,12 @@ becomes "your local performing rights organization"; a German legal or tax detai
 becomes a generic equivalent statement rather than a fabricated foreign-law claim.
 Do not invent country-specific facts, prices, or laws for the target locale.
 
+Money is the exception to that localization: keep every amount in the source
+currency, with the same figures and the currency spelled out ("25 to 60 Euro").
+Never convert an amount, never relabel it as another currency, and never drop the
+unit or replace it with a placeholder such as "units of your local currency".
+Relabelling a euro figure as dollars invents a price for the target locale.
+
 Slugs already used in {{source_locale}} (do not reuse, do not reference as
 related_pages here): {{existing_slugs_source}}
 
