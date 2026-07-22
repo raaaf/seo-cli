@@ -29,6 +29,12 @@ vi.mock('../src/steps/counterpart.js', async (orig) => ({
   ...(await orig()), generateCounterpart: (...a) => generateCounterpart(...a),
 }));
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
+// The fact checker calls the API with web search; the pipeline test only cares
+// that the page survives it untouched.
+vi.mock('../src/steps/review.js', () => ({
+  reviewPage: async (markdown) => ({ markdown, findings: [] }),
+  unresolvedSeverity: () => null,
+}));
 vi.mock('../src/steps/pr.js', () => ({ createPR: (...a) => createPR(...a) }));
 vi.mock('../src/steps/track.js', () => ({ track: (...a) => track(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
