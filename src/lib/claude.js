@@ -12,19 +12,44 @@ function getClient() {
   return client;
 }
 
-export async function complete({ system, prompt, model = MODELS.default, maxTokens = 4096, json = false }) {
+// Server-side web search. Runs on Anthropic's side, so a single request returns
+// the searched-and-answered result: no client tool loop, only pause_turn resumes.
+const WEB_SEARCH_TOOL = Object.freeze({ type: 'web_search_20260209', name: 'web_search' });
+const MAX_PAUSE_RESUMES = 3;
+
+export async function complete({
+  system, prompt, model = MODELS.default, maxTokens = 4096, json = false,
+  webSearch = false, maxSearches = 6,
+}) {
   const messages = [{ role: 'user', content: prompt }];
+  const tools = webSearch ? [{ ...WEB_SEARCH_TOOL, max_uses: maxSearches }] : undefined;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const res = await getClient().messages.create({
+      let res = await getClient().messages.create({
         model,
         max_tokens: maxTokens,
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         messages,
+        ...(tools ? { tools } : {}),
       });
 
-      const textBlock = res.content.find((b) => b.type === 'text');
+      // The server-side search loop caps out at 10 iterations and returns
+      // stop_reason "pause_turn"; resending the assistant turn resumes it.
+      for (let resume = 0; res.stop_reason === 'pause_turn' && resume < MAX_PAUSE_RESUMES; resume++) {
+        res = await getClient().messages.create({
+          model,
+          max_tokens: maxTokens,
+          system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+          messages: [...messages, { role: 'assistant', content: res.content }],
+          ...(tools ? { tools } : {}),
+        });
+      }
+
+      // With web search the answer is the LAST text block: earlier ones narrate
+      // the searches. Without tools there is only one.
+      const textBlocks = res.content.filter((b) => b.type === 'text');
+      const textBlock = textBlocks[textBlocks.length - 1];
       if (!textBlock) throw new Error(`Claude returned no text block (stop_reason: ${res.stop_reason})`);
       const text = textBlock.text.trim();
 
