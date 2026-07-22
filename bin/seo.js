@@ -17,6 +17,7 @@ import { runCommand } from '../src/commands/run.js';
 import { checkCommand } from '../src/commands/check.js';
 import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
+import { improveCommand } from '../src/commands/improve.js';
 
 program
   .name('seo')
@@ -33,6 +34,12 @@ program
   .description('Discover keywords, generate pages, open PR')
   .option('--dry-run', 'print generated markdown, do not commit or open PR')
   .action(runCommand);
+
+program
+  .command('improve')
+  .description('Rewrite the existing page with the strongest case for it, based on live Search Console data')
+  .option('--dry-run', 'print the rewritten markdown, do not commit or open PR')
+  .action((opts) => improveCommand(opts));
 
 program
   .command('check')
