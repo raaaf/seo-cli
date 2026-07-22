@@ -7,6 +7,7 @@ import { loadKeywords, saveKeywords, upsertKeyword, getPending, KEYWORD_STATUS, 
 import { format } from '../lib/date.js';
 import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
+import { findTokenSetDuplicate } from '../lib/similarity.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -53,20 +54,24 @@ export async function discover(config, cwd = process.cwd()) {
   }
   console.log(chalk.gray(`  ${candidates.length} GSC candidates (pos 8–25, impr >= ${minImpressions})`));
 
-  // Greenfield fallback: when GSC has no usable data, OR when GSC scoring did
-  // not yield enough keywords above the cutoff to fill the weekly cap. The
-  // latter covers GSC-poor sites whose candidate pool is dominated by
-  // off-topic queries that never clear the score cutoff — without it, discover
-  // returns 0 proposed week after week and no pages get generated.
-  if (candidates.length === 0) {
-    console.log(chalk.yellow('  GSC data too sparse — switching to greenfield mode.'));
-    await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd });
-  } else {
-    await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles });
-    const ready = getPending(data, config.score_cutoff).length;
-    if (ready < (config.weekly_cap ?? 2)) {
-      console.log(chalk.yellow(`  Only ${ready} keyword(s) cleared the cutoff (cap ${config.weekly_cap ?? 2}) — topping up via greenfield.`));
+  // Greenfield invents keywords instead of reading demand, so it is opt-in
+  // (`greenfield: true` in seo.config.yaml). It used to top up whenever GSC
+  // yielded fewer keywords than the weekly cap, which guaranteed two pages a
+  // week whether or not two topics existed — that is how a site ends up with
+  // six pages answering one question. An empty backlog is now a valid result:
+  // it means the topic space is covered and the week belongs to improving what
+  // already ranks.
+  if (candidates.length > 0) {
+    await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, cwd });
+  }
+
+  const ready = getPending(data, config.score_cutoff).length;
+  if (ready < (config.weekly_cap ?? 2)) {
+    if (config.greenfield) {
+      console.log(chalk.yellow(`  Only ${ready} keyword(s) from GSC (cap ${config.weekly_cap ?? 2}) — topping up via greenfield.`));
       await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd });
+    } else {
+      console.log(chalk.gray(`  Only ${ready} keyword(s) from GSC (cap ${config.weekly_cap ?? 2}). Greenfield is off, so no keywords are invented to fill the gap.`));
     }
   }
 
@@ -108,11 +113,27 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
   return entry;
 }
 
-async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [] }) {
+async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], cwd }) {
+  const existingTitles = getExistingTitles(config.landing_path, cwd);
+  const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
   let scored = 0;
   for (const row of candidates.slice(0, MAX_GSC_CANDIDATES)) {
     const existing = data.keywords.find(k => k.keyword === row.keyword);
     if (existing?.score != null) continue;
+
+    // Word-order variants of something we already have or already proposed.
+    const duplicate = findTokenSetDuplicate(row.keyword, [...knownKeywords, ...existingSlugs, ...existingFiles]);
+    if (duplicate) {
+      console.log(chalk.gray(`  Duplicate intent: "${row.keyword}" is a word-order variant of "${duplicate}", skipping`));
+      upsertKeyword(data, {
+        keyword: row.keyword,
+        status: KEYWORD_STATUS.SKIP,
+        score: 0,
+        note: `Word-order variant of "${duplicate}"`,
+        discovered_at: format(new Date()),
+      });
+      continue;
+    }
 
     let serpData = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
     try {
@@ -121,12 +142,26 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       console.log(chalk.yellow(`  SerpAPI skip (${row.keyword}): ${e.message}`));
     }
 
-    const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData);
+    const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData, existingTitles);
     let result;
     try {
       result = await complete({ system: 'You are an SEO expert. Reply exclusively with JSON.', prompt, json: true });
     } catch (e) {
       console.log(chalk.yellow(`  Score skip (${row.keyword}): ${e.message}`));
+      continue;
+    }
+
+    // The model's own coverage verdict, for the cases token comparison cannot
+    // decide (different words, same question).
+    if (result.covered_by) {
+      console.log(chalk.gray(`  Already covered by ${result.covered_by}: skipping "${row.keyword}"`));
+      upsertKeyword(data, {
+        keyword: row.keyword,
+        status: KEYWORD_STATUS.SKIP,
+        score: 0,
+        note: `Intent already covered by ${result.covered_by}`,
+        discovered_at: format(new Date()),
+      });
       continue;
     }
 
@@ -209,6 +244,16 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
       continue;
     }
 
+    const duplicate = findTokenSetDuplicate(kw.keyword, [
+      ...data.keywords.map(k => k.keyword).filter(Boolean),
+      ...existingSlugs,
+      ...existingFiles,
+    ]);
+    if (duplicate) {
+      console.log(chalk.gray(`  Duplicate intent: "${kw.keyword}" is a word-order variant of "${duplicate}", skipping`));
+      continue;
+    }
+
     const serpData = serpResults[i] || { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
     console.log(chalk.gray(`    SerpAPI: ${serpData.people_also_ask.length} PAA, ${serpData.related_searches.length} related for "${kw.keyword}"`));
 
@@ -227,7 +272,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   }
 }
 
-function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
+function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = []) {
   const vars = {
     keyword: String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200),
     impressions: row.impressions,
@@ -235,6 +280,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData) {
     clicks: row.clicks,
     clusters: (config.clusters || []).join(', '),
     existing_slugs: existingSlugs.join(', ') || 'none',
+    existing_landings: existingTitles.join('\n') || 'none',
     serp_titles: serpData.top_titles.join('\n') || 'n/a',
     serp_snippets: serpData.top_snippets.join('\n') || 'n/a',
     people_also_ask: serpData.people_also_ask.join('\n') || 'n/a',

@@ -55,14 +55,55 @@ describe('discover-run', () => {
     expect(logs.join('\n')).toMatch(/quota exhausted/i);
   });
 
-  it('falls back to greenfield when GSC has no usable candidates', async () => {
+  it('falls back to greenfield when GSC has no usable candidates and greenfield is enabled', async () => {
     querySearchAnalytics.mockResolvedValue([]); // no candidates -> greenfield
     complete.mockResolvedValue([
       { keyword: 'standesamt deko', target_slug: 'standesamt-deko', score: 8, type: 'guide', intent: 'informational' },
     ]);
 
-    const data = await discover(config, dir);
+    const data = await discover({ ...config, greenfield: true }, dir);
     const kw = data.keywords.find(k => k.keyword === 'standesamt deko');
     expect(kw).toMatchObject({ status: 'proposed', score: 8, source: 'greenfield' });
+  });
+
+  it('proposes nothing when GSC is empty and greenfield is off', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    const data = await discover(config, dir);
+    expect(complete).not.toHaveBeenCalled();
+    expect(data.keywords).toHaveLength(0);
+  });
+
+  it('skips a keyword that is only a word-order variant of an existing one', async () => {
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 },
+    ]);
+    complete.mockResolvedValue({
+      score: 9, type: 'guide', intent: 'informational',
+      target_slug: 'hochzeit-planen', expected_entities: [], content_gaps: [],
+    });
+    await discover(config, dir);
+
+    complete.mockClear();
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'planen hochzeit', impressions: 40, clicks: 0, ctr: 0, position: 14 },
+    ]);
+    const data = await discover(config, dir);
+
+    expect(complete).not.toHaveBeenCalled();
+    const variant = data.keywords.find(k => k.keyword === 'planen hochzeit');
+    expect(variant).toMatchObject({ status: 'skip', score: 0 });
+    expect(variant.note).toMatch(/word-order variant/i);
+  });
+
+  it('skips a keyword the model reports as already covered', async () => {
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'trauung im freien', impressions: 30, clicks: 0, ctr: 0, position: 11 },
+    ]);
+    complete.mockResolvedValue({ score: 0, covered_by: 'hochzeit-planen' });
+
+    const data = await discover(config, dir);
+    const kw = data.keywords.find(k => k.keyword === 'trauung im freien');
+    expect(kw).toMatchObject({ status: 'skip', score: 0 });
+    expect(kw.note).toMatch(/hochzeit-planen/);
   });
 });

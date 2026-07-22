@@ -151,16 +151,24 @@ function buildSuggestions({ counts, backlog, rank, cutoff }) {
 }
 
 // Live GSC pull replaces the stored snapshot with current positions/clicks.
-async function liveSnapshot(gscProperty) {
+//
+// A Domain property (`sc-domain:example.com`) returns every subdomain, so a
+// project whose siblings live on subdomains would otherwise report their traffic
+// as its own — and get improvement suggestions pointing at their pages. Rows are
+// therefore filtered to the project's own base_url.
+async function liveSnapshot(gscProperty, baseUrl) {
   const { queryPagePerformance } = await import('./gsc.js');
-  const rows = (await queryPagePerformance(gscProperty)).map(r => ({
-    url: r.keys[0],
-    query: r.keys[1],
-    position: r.position,
-    impressions: r.impressions,
-    clicks: r.clicks,
-    ctr: r.ctr,
-  }));
+  const prefix = baseUrl ? baseUrl.replace(/\/+$/, '') + '/' : null;
+  const rows = (await queryPagePerformance(gscProperty))
+    .map(r => ({
+      url: r.keys[0],
+      query: r.keys[1],
+      position: r.position,
+      impressions: r.impressions,
+      clicks: r.clicks,
+      ctr: r.ctr,
+    }))
+    .filter(r => !prefix || String(r.url).replace(/\/+$/, '/').startsWith(prefix));
   return { ...snapshotMetrics(rows), live: true };
 }
 
@@ -177,7 +185,7 @@ export async function projectSummary(project, { live = false } = {}) {
   let liveError = null;
   if (live) {
     try {
-      const snap = await liveSnapshot(project.config.gsc_property);
+      const snap = await liveSnapshot(project.config.gsc_property, project.config.base_url);
       rank = { ...(rank || { movers: [] }), ...snap };
     } catch (e) {
       liveError = e.message;
