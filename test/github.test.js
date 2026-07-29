@@ -36,6 +36,13 @@ describe('github-commit', () => {
     expect(git.updateRef).not.toHaveBeenCalled();
   });
 
+  it('uses an explicit branch name when one is given', async () => {
+    const branch = await createBranchAndCommit({ files: [{ path: 'a.md', content: 'A' }], message: 'm', repo: 'o/r', branch: 'seo/improve-2026-W31' });
+
+    expect(branch).toBe('seo/improve-2026-W31');
+    expect(git.createRef).toHaveBeenCalledWith(expect.objectContaining({ ref: 'refs/heads/seo/improve-2026-W31' }));
+  });
+
   it('falls back to updateRef when the branch already exists (422)', async () => {
     git.createRef.mockRejectedValue(Object.assign(new Error('exists'), { status: 422 }));
     await createBranchAndCommit({ files: [{ path: 'a.md', content: 'A' }], message: 'm', repo: 'o/r' });
