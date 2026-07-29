@@ -55,6 +55,10 @@ In both cases:
 - Keep the body between 800 and 1400 words.
 - `updated:` becomes {{today}}.
 
+## Validator feedback (if this is a retry)
+
+{{validator_feedback}}
+
 ## Output
 
 Return the complete file: YAML frontmatter, then the markdown body. No code

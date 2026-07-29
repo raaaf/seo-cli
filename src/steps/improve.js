@@ -77,7 +77,7 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
 }
 
 /** Rewrite one page against the queries it actually ranks for. */
-export async function improvePage(page, config, cwd = process.cwd()) {
+export async function improvePage(page, config, cwd = process.cwd(), validatorFeedback = null) {
   const locale = defaultLocale(config);
   const filePath = join(localeLandingPath(config, locale), `${page.slug}.md`);
   const full = join(cwd, filePath);
@@ -99,9 +99,12 @@ export async function improvePage(page, config, cwd = process.cwd()) {
     impressions: page.impressions,
     clicks: page.clicks,
     best_position: page.bestPosition.toFixed(1),
+    validator_feedback: validatorFeedback
+      ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
+      : '(first attempt — no prior feedback)',
   });
 
-  console.log(chalk.blue(`  Improving ${page.slug}: ${page.reason}`));
+  console.log(chalk.blue(`  Improving ${page.slug}: ${page.reason}${validatorFeedback ? ' (retry)' : ''}`));
 
   const markdown = stripCodeFence(await complete({
     system: 'You are an experienced SEO editor improving an existing page. You keep what works and change only what the data says is wrong.',

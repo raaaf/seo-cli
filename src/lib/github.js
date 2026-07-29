@@ -24,10 +24,9 @@ export async function openPR({ repo, branch, title, body, baseBranch = 'main' })
   return res.data.html_url;
 }
 
-export async function createBranchAndCommit({ files, message, cwd: _cwd, repo, baseBranch = 'main' }) {
+export async function createBranchAndCommit({ files, message, cwd: _cwd, repo, baseBranch = 'main', branch = `seo/${isoWeek()}` }) {
   const octokit = getOctokit();
   const [owner, name] = repo.split('/');
-  const branch = `seo/${isoWeek()}`;
 
   // Get base branch SHA
   const { data: ref } = await octokit.git.getRef({ owner, repo: name, ref: `heads/${baseBranch}` });

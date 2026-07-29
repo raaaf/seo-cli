@@ -40,12 +40,19 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   }
 
   const before = readMeta(page.slug, config, cwd);
-  const { filePath, markdown } = await improvePage(page, config, cwd);
-
   const keywordLike = { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
-  const result = validate(markdown, keywordLike);
+
+  // Two attempts, same as generate. A rewrite costs a full Opus call, and a
+  // single hard error (one word over the tldr limit) is not worth losing it.
+  let filePath, markdown, result;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    ({ filePath, markdown } = await improvePage(page, config, cwd, attempt > 1 ? result : null));
+    result = validate(markdown, keywordLike);
+    if (result.ok) break;
+  }
+
   if (!result.ok) {
-    console.log(chalk.red(`  Improvement discarded: the rewrite of ${page.slug} does not validate`));
+    console.log(chalk.red(`  Improvement discarded: the rewrite of ${page.slug} does not validate after 2 attempts`));
     result.errors.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
     return null;
   }
@@ -83,6 +90,7 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     message: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
     cwd,
     repo: config.repo,
+    branch,
   });
 
   const prUrl = await openPR({
