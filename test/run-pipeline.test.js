@@ -190,20 +190,19 @@ describe('run-pipeline', () => {
     }
   });
 
-  it('keeps the default-locale page when counterpart generation fails, and logs a warning', async () => {
+  it('drops the default-locale page too when its counterpart fails, and leaves the keyword for next run', async () => {
     CONFIG.counterpart_locale = 'en';
     try {
-      discover.mockResolvedValue(keywordsData());
-      createPR.mockResolvedValue('https://github.com/o/demo/pull/5');
+      const data = keywordsData();
+      discover.mockResolvedValue(data);
       generateCounterpart.mockRejectedValue(new Error('Counterpart generation failed: slug collides'));
 
       await runCommand({});
 
-      const pages = createPR.mock.calls[0][0].generatedPages;
-      expect(pages).toHaveLength(1);
-      expect(pages[0].locale).toBe('de');
-      expect(pages[0].markdown).not.toContain('alternate:');
+      expect(createPR).not.toHaveBeenCalled();
+      expect(data.keywords[0].status).toBe('proposed');
       expect(logs.join('\n')).toMatch(/Counterpart skipped/);
+      expect(logs.join('\n')).toMatch(/the pair ships together or not at all/);
     } finally {
       delete CONFIG.counterpart_locale;
     }

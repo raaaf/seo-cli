@@ -152,10 +152,37 @@ jobs:
           # gate itself must not merge ahead of a slow test run.
           CHECKS_STATUS=""
           if [ "$CHECK_EXIT" -eq 0 ]; then
-            GRACE_PERIOD=90
             POLL_INTERVAL=30
             MAX_WAIT=1500
             ELAPSED=0
+
+            # An empty check rollup is ambiguous: the repo may have no PR CI at
+            # all, or its checks may simply not have registered yet. Waiting a
+            # fixed grace period guessed at the answer and guessed wrong — a
+            # page merged ungated in 2026-W31 and broke the target repo's test
+            # suite. Ask the repo instead: does any active workflow trigger on
+            # pull_request? If one does, an empty rollup means "not yet" and we
+            # keep waiting; if none does, there is nothing to wait for.
+            EXPECTS_CHECKS=unknown
+            if WF_PATHS=$(gh api "repos/${{ github.repository }}/actions/workflows" \
+                            --jq '.workflows[] | select(.state == "active") | .path' 2>/dev/null); then
+              EXPECTS_CHECKS=no
+              while read -r wf; do
+                [ -z "$wf" ] && continue
+                if gh api "repos/${{ github.repository }}/contents/${wf}?ref=${{ github.ref_name }}" \
+                     --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
+                     | grep -qE '^[[:space:]]*(on:.*pull_request|pull_request:|-[[:space:]]*pull_request)'; then
+                  EXPECTS_CHECKS=yes
+                  break
+                fi
+              done <<< "$WF_PATHS"
+            fi
+            echo "Repo runs workflows on pull_request: $EXPECTS_CHECKS"
+
+            # The listing call failing is not a licence to merge blind: fall
+            # back to the old behaviour of waiting a short grace period.
+            GRACE_PERIOD=90
+            [ "$EXPECTS_CHECKS" = "yes" ] && GRACE_PERIOD="$MAX_WAIT"
 
             while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
               # Normalize both statusCheckRollup shapes (CheckRun: status/conclusion,
@@ -178,7 +205,7 @@ jobs:
                   ELAPSED=$((ELAPSED + POLL_INTERVAL))
                   continue
                 fi
-                echo "No PR checks registered after ${GRACE_PERIOD}s grace period — proceeding without CI gating."
+                echo "No PR checks after ${GRACE_PERIOD}s and no pull_request workflow to wait for — proceeding without CI gating."
                 CHECKS_STATUS=none
                 break
               fi

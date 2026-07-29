@@ -149,6 +149,15 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
     return [];
   }
 
+  // Once a project declares a counterpart locale, the pair is the unit of
+  // publication: events' LandingPageTest requires an `alternate` slug on every
+  // page, so shipping the source page alone turns main red. Keep the keyword
+  // at `proposed` — it comes back next run, when the API is reachable again.
+  if (hasCounterpart && !counterpart) {
+    console.log(chalk.yellow(`  Skipped: ${kw.keyword} — its ${config.counterpart_locale} counterpart failed, and the pair ships together or not at all`));
+    return [];
+  }
+
   const filePath = join(localeLandingPathStr, `${kw.target_slug}.md`).replace(/\\/g, '/');
   const pages = [];
 
