@@ -2,6 +2,16 @@ name: SEO (reusable)
 
 on:
   workflow_call:
+    inputs:
+      # Human review gate: when true the gate never auto-merges — every PR
+      # stays open and is reported as needs_review. For repos where the
+      # generated prose itself is the risk (invented product claims shipped
+      # three times before guard tests caught them downstream), CI cannot
+      # judge content, only a human can.
+      require_review:
+        type: boolean
+        required: false
+        default: false
     secrets:
       # Option A: 1Password (ANTHROPIC_API_KEY + SERPAPI_KEY werden aus 1Password geladen)
       OP_SERVICE_ACCOUNT_TOKEN:
@@ -100,6 +110,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
+          REQUIRE_REVIEW: ${{ inputs.require_review }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
         run: |
           set -uo pipefail
@@ -147,11 +158,17 @@ jobs:
           REPORT=$(grep -o 'SEO_CHECK_JSON=.*' /tmp/seo-check.out | sed 's/^SEO_CHECK_JSON=//' | tail -1)
           [ -z "$REPORT" ] && REPORT='{}'
 
+          # Human review gate: skip the CI wait and the merge entirely. The
+          # notify path still runs so the needs_review mail goes out.
+          if [ "${REQUIRE_REVIEW}" = "true" ]; then
+            echo "require_review is set — leaving PR #$PR_NUM open for human review."
+          fi
+
           # Wait for the target repo's PR checks (e.g. Pest CI) before merging.
           # No branch protection is available on private/free-plan repos, so the
           # gate itself must not merge ahead of a slow test run.
           CHECKS_STATUS=""
-          if [ "$CHECK_EXIT" -eq 0 ]; then
+          if [ "$CHECK_EXIT" -eq 0 ] && [ "${REQUIRE_REVIEW}" != "true" ]; then
             POLL_INTERVAL=30
             MAX_WAIT=1500
             ELAPSED=0
@@ -235,7 +252,9 @@ jobs:
             fi
           fi
 
-          if [ "$CHECK_EXIT" -eq 0 ]; then
+          if [ "${REQUIRE_REVIEW}" = "true" ]; then
+            STATUS=needs_review
+          elif [ "$CHECK_EXIT" -eq 0 ]; then
             if [ "$CHECKS_STATUS" = "failed" ] || [ "$CHECKS_STATUS" = "timeout" ]; then
               if [ "$CHECKS_STATUS" = "failed" ]; then
                 STATUS=checks_failed
