@@ -104,6 +104,11 @@ jobs:
 | `GSC_CREDENTIALS` | Google OAuth2 credentials JSON (contents of file) |
 | `GSC_TOKEN` | GSC auth token JSON (contents of `~/.seo-cli-token.json`) |
 
+**Optional input:** `require_review: true` (under `with:`) disables auto-merge
+entirely — every generated PR stays open and is reported as `needs_review`.
+Use it for repos where the generated prose itself is the risk: CI can gate
+tests, only a human can gate content.
+
 ### Option B: direct secrets (no 1Password)
 
 ```yaml
