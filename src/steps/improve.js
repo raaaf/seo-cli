@@ -17,6 +17,30 @@ const MIN_IMPRESSIONS = 20;
 // Queries handed to the model. Beyond this the tail is noise.
 const MAX_QUERIES = 15;
 
+// Below this share of impressions on page one, a page is not a snippet problem,
+// however good its single best position looks.
+const PAGE1_SHARE_FOR_SNIPPET = 0.3;
+
+/**
+ * Where the page actually stands, weighted by impressions.
+ *
+ * The best position across all queries is a trap: one long-tail query at
+ * position 1 with two impressions made pages look like page-one performers
+ * while their money queries sat on page four. The improve prompt then got told
+ * to fix the snippet and rewrote the title of a page that needed content.
+ *
+ * Without per-query rows (older callers, tests) it falls back to bestPosition.
+ */
+function diagnose({ queries, bestPosition }) {
+  if (!queries?.length) {
+    return { position: bestPosition, page1Share: bestPosition <= 10 ? 1 : 0 };
+  }
+  const total = queries.reduce((sum, q) => sum + q.impressions, 0) || 1;
+  const position = queries.reduce((sum, q) => sum + q.position * q.impressions, 0) / total;
+  const onPage1 = queries.filter(q => q.position <= 10).reduce((sum, q) => sum + q.impressions, 0);
+  return { position, page1Share: onPage1 / total };
+}
+
 /**
  * Why a page is worth rewriting, and how much. Two different problems:
  *
@@ -25,15 +49,23 @@ const MAX_QUERIES = 15;
  * - It sits just off page one with real impressions. That is a content and
  *   relevance problem, and it is where the volume is.
  */
-export function scorePage({ impressions, clicks, bestPosition }) {
+export function scorePage({ impressions, clicks, bestPosition, queries }) {
   if (impressions < MIN_IMPRESSIONS) return null;
-  if (clicks === 0 && bestPosition <= 5) {
-    return { score: impressions * 3, kind: 'snippet', reason: `Position ${bestPosition.toFixed(0)} without a single click: the snippet is the problem, not the ranking` };
+
+  const { position, page1Share } = diagnose({ queries, bestPosition });
+  const where = `weighted position ${position.toFixed(0)} across ${impressions} impressions`;
+
+  if (clicks === 0 && page1Share >= PAGE1_SHARE_FOR_SNIPPET) {
+    return {
+      score: impressions * 3,
+      kind: 'snippet',
+      reason: `${Math.round(page1Share * 100)}% of impressions on page one and not a single click (${where}): the snippet is the problem, not the ranking`,
+    };
   }
-  if (bestPosition <= 20) {
-    return { score: impressions * 2, kind: 'near_page1', reason: `Position ${bestPosition.toFixed(0)} with ${impressions} impressions: within reach of page one` };
+  if (position <= 20) {
+    return { score: impressions * 2, kind: 'near_page1', reason: `${where}: within reach of page one` };
   }
-  return { score: impressions, kind: 'far', reason: `Position ${bestPosition.toFixed(0)} with ${impressions} impressions: relevance gap` };
+  return { score: impressions, kind: 'far', reason: `${where}: relevance gap` };
 }
 
 /**
