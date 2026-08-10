@@ -130,8 +130,26 @@ function rethrowWithAuthHint(e) {
 
 const gscCache = new Map();
 
-async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit = 200 } = {}) {
-  const cacheKey = JSON.stringify({ gscProperty, dimensions, days, lag, rowLimit });
+/**
+ * `pageFilter` narrows the query to URLs containing that string, server-side.
+ *
+ * This matters for a domain property that covers several sites: without it the
+ * row limit is spent on whichever host has the most traffic, and the project's
+ * own pages never make the list. Harmless for a URL-prefix property, where
+ * every row already belongs to the site.
+ */
+export function buildRequestBody({ startDate, endDate, dimensions, rowLimit, pageFilter }) {
+  const body = { startDate, endDate, dimensions, rowLimit };
+  if (pageFilter) {
+    body.dimensionFilterGroups = [{
+      filters: [{ dimension: 'page', operator: 'contains', expression: pageFilter }],
+    }];
+  }
+  return body;
+}
+
+async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit = 200, pageFilter = null } = {}) {
+  const cacheKey = JSON.stringify({ gscProperty, dimensions, days, lag, rowLimit, pageFilter });
   if (gscCache.has(cacheKey)) return gscCache.get(cacheKey);
   const auth = await getAuth();
   const sc = google.searchconsole({ version: 'v1', auth });
@@ -141,7 +159,7 @@ async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit 
   try {
     res = await sc.searchanalytics.query({
       siteUrl: gscProperty,
-      requestBody: { startDate, endDate, dimensions, rowLimit },
+      requestBody: buildRequestBody({ startDate, endDate, dimensions, rowLimit, pageFilter }),
     });
   } catch (e) {
     rethrowWithAuthHint(e);
@@ -161,8 +179,8 @@ export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, ro
   }));
 }
 
-export async function queryPagePerformance(gscProperty, { days = 28, lag = 7 } = {}) {
-  return gscQuery(gscProperty, ['page', 'query'], { days, lag, rowLimit: 500 });
+export async function queryPagePerformance(gscProperty, { days = 28, lag = 7, pageFilter = null } = {}) {
+  return gscQuery(gscProperty, ['page', 'query'], { days, lag, rowLimit: 500, pageFilter });
 }
 
 // (Re)submit a sitemap to Google Search Console. Needs the full webmasters scope
