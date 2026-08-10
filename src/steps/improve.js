@@ -150,7 +150,9 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
 
 /** GSC rows for the project, in the shape selectPage expects. */
 export async function fetchPagePerformance(config) {
-  const rows = await queryPagePerformance(config.gsc_property);
+  // Filter on the project's own base_url: a domain property also carries the
+  // sibling subdomains, and they would eat the row limit.
+  const rows = await queryPagePerformance(config.gsc_property, { pageFilter: config.base_url || null });
   return rows.map(r => ({
     url: r.keys[0],
     query: r.keys[1],
