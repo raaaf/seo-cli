@@ -43,6 +43,54 @@ describe('scorePage', () => {
   it('scores pages beyond position 20 lowest', () => {
     expect(scorePage({ impressions: 100, clicks: 0, bestPosition: 40 }).kind).toBe('far');
   });
+
+  it('does not call it a snippet problem when one tail query carries the best position', () => {
+    // Real shape from events.rafaelalex.de: a single query at position 1 with
+    // two impressions, while the queries that bring the traffic sit on page four.
+    const page = scorePage({
+      impressions: 1244,
+      clicks: 0,
+      bestPosition: 1,
+      queries: [
+        { query: 'jubiläumsfeier', position: 35.6, impressions: 1000 },
+        { query: 'firmenjubiläum planen', position: 72.8, impressions: 242 },
+        { query: 'tail', position: 1, impressions: 2 },
+      ],
+    });
+
+    expect(page.kind).toBe('far');
+    expect(page.reason).toContain('relevance gap');
+  });
+
+  it('still calls it a snippet problem when the traffic really is on page one', () => {
+    const page = scorePage({
+      impressions: 200,
+      clicks: 0,
+      bestPosition: 2,
+      queries: [
+        { query: 'money', position: 3, impressions: 150 },
+        { query: 'tail', position: 40, impressions: 50 },
+      ],
+    });
+
+    expect(page.kind).toBe('snippet');
+    expect(page.score).toBe(600);
+  });
+
+  it('uses the impression-weighted position for the near-page-one case', () => {
+    const page = scorePage({
+      impressions: 100,
+      clicks: 0,
+      bestPosition: 30,
+      queries: [
+        { query: 'a', position: 13, impressions: 80 },
+        { query: 'b', position: 30, impressions: 20 },
+      ],
+    });
+
+    expect(page.kind).toBe('near_page1');
+    expect(page.reason).toContain('weighted position 16');
+  });
 });
 
 describe('selectPage', () => {
