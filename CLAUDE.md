@@ -34,7 +34,7 @@ All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`.
 
 **discover** (`src/steps/discover.js`): Pulls the last 28 days of Search Console data (positions 8-25, filtered by `min_impressions`). Scores each candidate keyword via Claude + SerpAPI. Saves results to `seo/keywords.json` in the target project.
 
-Two guards keep the backlog free of duplicates. `lib/similarity.js` rejects a candidate whose significant tokens match an existing keyword or slug (a word-order variant such as "webdesign freelancer preise" next to "freelancer webdesign preise") before it is scored. For everything fuzzier, the scoring prompt receives the existing slugs and titles and returns `covered_by` when a published page already answers the question; that keyword is skipped with a note.
+Three guards keep the backlog free of duplicates. `lib/similarity.js` rejects a candidate whose significant tokens match an existing keyword or slug (a word-order variant such as "webdesign freelancer preise" next to "freelancer webdesign preise") before it is scored. `lib/cannibalization.js` counts how many of our own landing pages already rank for that exact query and rejects the candidate from two up: the query is contested from the inside, and a new page joins that fight instead of winning it. For everything fuzzier, the scoring prompt receives the existing slugs and titles and returns `covered_by` when a published page already answers the question; that keyword is skipped with a note.
 
 Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield: true` and off by default. An empty backlog is a valid result: it means the topic space is covered. It used to top up whenever GSC yielded fewer keywords than `weekly_cap`, which guaranteed pages every week whether or not topics existed, and is how the target projects accumulated 70 pages for about 50 topics.
 
@@ -68,6 +68,7 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 | `src/lib/landings.js` | `getExistingSlugs`/`getExistingTitles`/`getExistingPages`: enumerate on-disk landing pages. Module-scope memo cache. |
 | `src/lib/improvements.js` | Load/save `seo/improvements.json`, plus the 56-day cooldown per slug. |
 | `src/lib/similarity.js` | `findTokenSetDuplicate`: rejects word-order variants of keywords/slugs we already cover. |
+| `src/lib/cannibalization.js` | `competingPages`/`isCannibalized`: counts our own landing pages already ranking for a query, from GSC page/query rows. |
 | `src/lib/detect.js` | `detectProject`: heuristics for `seo init` (git remote, landing path, style doc, locale, clusters, domain). |
 | `src/lib/github.js` | Octokit wrapper: branch/commit creation and PR opening. |
 | `src/lib/projects.js` | `discoverProjects`: walk `SEO_PROJECT_ROOTS` for projects with a `seo.config.yaml` (used by `dashboard`). |
