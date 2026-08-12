@@ -23,6 +23,20 @@ Over the last 28 days the page collected {{impressions}} impressions and
 This table is the whole point of the exercise. It is what people typed, not what
 we assumed they would type when the page was written.
 
+## The other pages on this site
+
+{{sibling_pages}}
+
+Some of the queries above belong to one of those pages, not to this one. A page
+that answers a neighbour's question competes with it: both end up on page four
+for the same search, which is how a site holds itself down.
+
+So before you optimise for a query, ask whose question it is. If it belongs to a
+sibling, do not build the page out towards it. Where the current text already
+reaches into a sibling's topic, trim that part to a sentence and link to the
+sibling instead. Only queries that are genuinely this page's subject drive the
+rewrite.
+
 ## What to change
 
 **When the diagnosis is a snippet problem** (ranking well, no clicks): the
