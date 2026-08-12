@@ -40,7 +40,10 @@ export async function discover(config, cwd = process.cwd()) {
   }
   if (markedDone > 0) console.log(chalk.gray(`  Marked ${markedDone} keyword(s) as done (files found locally)`));
 
-  const rows = await querySearchAnalytics(config.gsc_property);
+  // Same reason as in improve.js: on a domain property the sibling subdomains
+  // are in the same result set. Unfiltered, they take the row limit and the
+  // candidates are queries for a different site — scored, then discarded.
+  const rows = await querySearchAnalytics(config.gsc_property, { pageFilter: config.base_url || null });
   const minImpressions = config.min_impressions ?? 5;
   const candidates = rows.filter(
     r => r.position >= 8 && r.position <= 25 && r.impressions >= minImpressions && !doneKeywords.has(r.keyword)

@@ -44,6 +44,15 @@ describe('discover-run', () => {
     expect(complete).toHaveBeenCalledTimes(1); // scoring only, cap already filled
   });
 
+  it('narrows the GSC query to the project base_url so sibling subdomains do not fill the row limit', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    complete.mockResolvedValue([]);
+
+    await discover({ ...config, base_url: 'https://acme.io' }, dir);
+
+    expect(querySearchAnalytics).toHaveBeenCalledWith('sc-domain:acme.io', { pageFilter: 'https://acme.io' });
+  });
+
   it('warns when the SerpAPI monthly quota is exhausted', async () => {
     checkQuota.mockReturnValueOnce({ used: 240, remaining: 0, month: '2026-06' });
     querySearchAnalytics.mockResolvedValue([]); // greenfield path
