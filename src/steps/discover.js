@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import chalk from 'chalk';
-import { querySearchAnalytics } from '../lib/gsc.js';
+import { querySearchAnalytics, queryPagePerformance } from '../lib/gsc.js';
 import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
 import { loadKeywords, saveKeywords, upsertKeyword, getPending, KEYWORD_STATUS, isValidSlug } from '../lib/keywords.js';
@@ -8,6 +8,7 @@ import { format } from '../lib/date.js';
 import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { findTokenSetDuplicate } from '../lib/similarity.js';
+import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -65,7 +66,8 @@ export async function discover(config, cwd = process.cwd()) {
   // it means the topic space is covered and the week belongs to improving what
   // already ranks.
   if (candidates.length > 0) {
-    await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, cwd });
+    const pageRows = await fetchPageRows(config);
+    await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, pageRows, cwd });
   }
 
   const ready = getPending(data, config.score_cutoff).length;
@@ -116,7 +118,19 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
   return entry;
 }
 
-async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], cwd }) {
+// Page/query rows for the cannibalization guard. A failure here must not stop
+// discovery: without the rows the guard finds no competitors and the run
+// continues on the two older guards.
+async function fetchPageRows(config) {
+  try {
+    return await queryPagePerformance(config.gsc_property, { pageFilter: config.base_url || null });
+  } catch (e) {
+    console.log(chalk.yellow(`  Cannibalization check skipped: ${e.message}`));
+    return [];
+  }
+}
+
+async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], pageRows = [], cwd }) {
   const existingTitles = getExistingTitles(config.landing_path, cwd);
   const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
   let scored = 0;
@@ -133,6 +147,23 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
         status: KEYWORD_STATUS.SKIP,
         score: 0,
         note: `Word-order variant of "${duplicate}"`,
+        discovered_at: format(new Date()),
+      });
+      continue;
+    }
+
+    // Pages we already have on this exact query. Two or more of them means the
+    // query is contested from the inside, and a new page joins that instead of
+    // winning it. Checked before scoring so it costs no SerpAPI call and no
+    // model call.
+    const competitors = competingPages(row.keyword, pageRows, existingFiles);
+    if (competitors.length >= 2) {
+      console.log(chalk.gray(`  Cannibalized: "${row.keyword}" already has ${competitors.length} own pages ranking (${describeCompetitors(competitors)}), skipping`));
+      upsertKeyword(data, {
+        keyword: row.keyword,
+        status: KEYWORD_STATUS.SKIP,
+        score: 0,
+        note: `Already contested by own pages: ${describeCompetitors(competitors)}`,
         discovered_at: format(new Date()),
       });
       continue;
