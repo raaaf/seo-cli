@@ -95,6 +95,27 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
     bySlug.set(slug, entry);
   }
 
+  // A query another landing page ranks better for is not this page's query.
+  // Left in, it drives the rewrite towards a neighbour's topic, and both pages
+  // end up competing on the same search. Dropped before scoring, so a page does
+  // not get picked for impressions it should never have had.
+  const bestByQuery = new Map();
+  for (const page of bySlug.values()) {
+    for (const q of page.queries) {
+      const held = bestByQuery.get(q.query);
+      if (!held || q.position < held.position) bestByQuery.set(q.query, { slug: page.slug, position: q.position });
+    }
+  }
+  for (const page of bySlug.values()) {
+    const own = page.queries.filter(q => bestByQuery.get(q.query)?.slug === page.slug);
+    if (own.length === page.queries.length) continue;
+    page.foreignQueries = page.queries.filter(q => bestByQuery.get(q.query)?.slug !== page.slug);
+    page.queries = own;
+    page.impressions = own.reduce((sum, q) => sum + q.impressions, 0);
+    page.clicks = own.reduce((sum, q) => sum + q.clicks, 0);
+    page.bestPosition = own.length ? Math.min(...own.map(q => q.position)) : Infinity;
+  }
+
   const ranked = [...bySlug.values()]
     .map(page => ({ ...page, ...(scorePage(page) ?? {}) }))
     .filter(page => page.score)
@@ -119,6 +140,13 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     .map(q => `| ${q.query} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`)
     .join('\n');
 
+  // Which topics are taken. Without this the model optimises the page towards
+  // whatever the query table shows, including questions a sibling answers.
+  const siblings = getExistingSlugs(config, cwd, locale).filter(slug => slug !== page.slug);
+  const siblingList = siblings.length
+    ? siblings.map(slug => `- /${slug}`).join('\n')
+    : '(no other landing pages yet)';
+
   const prompt = fillTemplate(IMPROVE_PROMPT, {
     markdown: readFileSync(full, 'utf8'),
     slug: page.slug,
@@ -128,6 +156,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     problem: page.reason,
     kind: page.kind,
     query_table: queryTable,
+    sibling_pages: siblingList,
     impressions: page.impressions,
     clicks: page.clicks,
     best_position: page.bestPosition.toFixed(1),
@@ -137,6 +166,10 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
   });
 
   console.log(chalk.blue(`  Improving ${page.slug}: ${page.reason}${validatorFeedback ? ' (retry)' : ''}`));
+  if (page.foreignQueries?.length) {
+    const names = page.foreignQueries.slice(0, 5).map(q => `"${q.query}"`).join(', ');
+    console.log(chalk.gray(`    ${page.foreignQueries.length} query/queries left out, another page ranks better for them: ${names}`));
+  }
 
   const markdown = stripCodeFence(await complete({
     system: 'You are an experienced SEO editor improving an existing page. You keep what works and change only what the data says is wrong.',

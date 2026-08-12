@@ -48,6 +48,8 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 
 **improve** (`src/steps/improve.js`, `src/commands/improve.js`): Runs when the backlog is empty, and standalone via `seo improve`. Aggregates live GSC page/query data per landing page of the default locale and picks the one with the strongest case: a clickless page in the top five is a snippet problem (title and description), a page at position 6-20 with impressions is a relevance problem. The rewrite gets the page's actual queries as context and may not claim services the page does not already claim. Rewritten slugs go into `seo/improvements.json` and are off the list for 56 days. Own branch `seo/improve-YYYY-WW`.
 
+Two cluster guards, added after an improve run pushed a page further into its neighbour's topic: `selectPage` drops every query another landing page ranks better for, before scoring, so a page is neither picked for nor rewritten towards impressions that belong elsewhere (the dropped ones are logged and kept on `page.foreignQueries`). For the fuzzier half, the prompt receives the slugs of all sibling pages and the instruction to trim, not extend, whatever reaches into their topics.
+
 **track** (`src/steps/track.js`): Appends GSC page/query performance to `seo/rankings/YYYY-WW.csv`. Gitignored in target projects.
 
 ### Key lib files

@@ -110,6 +110,35 @@ describe('selectPage', () => {
     expect(page.queries[0].query).toBe('preise');
   });
 
+  it('drops a query another page ranks better for, so the rewrite stays on topic', () => {
+    seedPages('betriebsausflug-planen', 'firmenfeier-planen');
+    const rows = [
+      { url: 'https://acme.io/betriebsausflug-planen', query: 'betriebsausflug planen', position: 22, impressions: 167, clicks: 0 },
+      { url: 'https://acme.io/betriebsausflug-planen', query: 'firmenfeier planen', position: 81, impressions: 120, clicks: 0 },
+      { url: 'https://acme.io/firmenfeier-planen', query: 'firmenfeier planen', position: 39, impressions: 83, clicks: 0 },
+    ];
+
+    const page = selectPage({ rows, config, cwd });
+
+    expect(page.slug).toBe('betriebsausflug-planen');
+    expect(page.queries.map(q => q.query)).toEqual(['betriebsausflug planen']);
+    expect(page.foreignQueries.map(q => q.query)).toEqual(['firmenfeier planen']);
+    expect(page.impressions).toBe(167); // not 287: the neighbour's impressions do not count
+  });
+
+  it('keeps a query on the page that ranks best for it', () => {
+    seedPages('a', 'b');
+    const rows = [
+      { url: 'https://acme.io/a', query: 'shared', position: 40, impressions: 50, clicks: 0 },
+      { url: 'https://acme.io/b', query: 'shared', position: 12, impressions: 30, clicks: 0 },
+    ];
+
+    const page = selectPage({ rows, config, cwd });
+
+    expect(page.slug).toBe('b');
+    expect(page.queries.map(q => q.query)).toEqual(['shared']);
+  });
+
   it('ignores urls from other hosts of a domain property', () => {
     seedPages('preise');
     const rows = [
