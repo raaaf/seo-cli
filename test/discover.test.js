@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 const querySearchAnalytics = vi.fn();
+const queryPagePerformance = vi.fn(() => Promise.resolve([]));
 const getSerp = vi.fn();
 const checkQuota = vi.fn(() => ({ used: 0, remaining: 240, month: '2026-06' }));
 const complete = vi.fn();
 
-vi.mock('../src/lib/gsc.js', () => ({ querySearchAnalytics: (...a) => querySearchAnalytics(...a) }));
+vi.mock('../src/lib/gsc.js', () => ({
+  querySearchAnalytics: (...a) => querySearchAnalytics(...a),
+  queryPagePerformance: (...a) => queryPagePerformance(...a),
+}));
 vi.mock('../src/lib/serpapi.js', () => ({ getSerp: (...a) => getSerp(...a), checkQuota: (...a) => checkQuota(...a) }));
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
@@ -24,6 +28,8 @@ let dir;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-disc-'));
   for (const fn of [querySearchAnalytics, getSerp, complete]) fn.mockReset();
+  queryPagePerformance.mockReset();
+  queryPagePerformance.mockResolvedValue([]);
   getSerp.mockResolvedValue({ ...EMPTY_SERP });
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
@@ -102,6 +108,47 @@ describe('discover-run', () => {
     const variant = data.keywords.find(k => k.keyword === 'planen hochzeit');
     expect(variant).toMatchObject({ status: 'skip', score: 0 });
     expect(variant.note).toMatch(/word-order variant/i);
+  });
+
+  it('skips a keyword whose query two of our own pages already contest', async () => {
+    mkdirSync(join(dir, config.landing_path), { recursive: true });
+    for (const slug of ['firmenfeier-planen', 'betriebsausflug-planen']) {
+      writeFileSync(join(dir, config.landing_path, `${slug}.md`), '---\nslug: x\n---\n');
+    }
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'betriebsfeier organisieren', impressions: 31, clicks: 0, ctr: 0, position: 20 },
+    ]);
+    queryPagePerformance.mockResolvedValue([
+      { keys: ['https://acme.io/firmenfeier-planen', 'betriebsfeier organisieren'], impressions: 15, position: 66.7 },
+      { keys: ['https://acme.io/betriebsausflug-planen', 'betriebsfeier organisieren'], impressions: 5, position: 89.6 },
+    ]);
+
+    const data = await discover({ ...config, base_url: 'https://acme.io' }, dir);
+
+    expect(getSerp).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    const kw = data.keywords.find(k => k.keyword === 'betriebsfeier organisieren');
+    expect(kw).toMatchObject({ status: 'skip', score: 0 });
+    expect(kw.note).toMatch(/contested by own pages/i);
+  });
+
+  it('still proposes a keyword when only one page ranks for it', async () => {
+    mkdirSync(join(dir, config.landing_path), { recursive: true });
+    writeFileSync(join(dir, config.landing_path, 'firmenfeier-planen.md'), '---\nslug: x\n---\n');
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'sommerfest organisieren', impressions: 31, clicks: 0, ctr: 0, position: 20 },
+    ]);
+    queryPagePerformance.mockResolvedValue([
+      { keys: ['https://acme.io/firmenfeier-planen', 'sommerfest organisieren'], impressions: 15, position: 40 },
+    ]);
+    complete.mockResolvedValue({
+      score: 8, type: 'guide', intent: 'informational',
+      target_slug: 'sommerfest-organisieren', expected_entities: [], content_gaps: [],
+    });
+
+    const data = await discover({ ...config, base_url: 'https://acme.io' }, dir);
+
+    expect(data.keywords.find(k => k.keyword === 'sommerfest organisieren')).toMatchObject({ status: 'proposed', score: 8 });
   });
 
   it('skips a keyword the model reports as already covered', async () => {
