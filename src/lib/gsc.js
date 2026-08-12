@@ -168,8 +168,8 @@ async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit 
   return gscCache.get(cacheKey);
 }
 
-export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, rowLimit = 200 } = {}) {
-  const rows = await gscQuery(gscProperty, ['query'], { days, lag, rowLimit });
+export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, rowLimit = 200, pageFilter = null } = {}) {
+  const rows = await gscQuery(gscProperty, ['query'], { days, lag, rowLimit, pageFilter });
   return rows.map(r => ({
     keyword: r.keys[0],
     impressions: r.impressions,
