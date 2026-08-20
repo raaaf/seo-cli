@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validate } from '../src/steps/validate.js';
+import { validate, findTransliteratedUmlauts } from '../src/steps/validate.js';
 import { TLDR_50, FAQ_BLOCK, makeBody, makeValidPage as makeValid } from './helpers/valid-page.js';
 
 const KW = { keyword: 'Webdesign Berlin', expected_entities: [] };
@@ -218,5 +218,29 @@ Too short body.`;
     const { ok, errors } = validate(md, KW_DE, { counterpart: true });
     expect(ok).toBe(false);
     expect(errors.some(e => e.includes('Body too short'))).toBe(true);
+  });
+});
+
+describe('transliterated umlauts', () => {
+  it('flags a word the page itself also spells with the umlaut', () => {
+    // The W34 case: heading "Nachtraege", paragraph below "Nachträge".
+    expect(findTransliteratedUmlauts('## Nachtraege regeln\n\nNachträge sind der Konfliktpunkt.'))
+      .toEqual(['Nachtraege']);
+  });
+
+  it('flags known forms even when the umlaut spelling is absent', () => {
+    expect(findTransliteratedUmlauts('Das ist fuer alle moeglich.').sort()).toEqual(['fuer', 'moeglich']);
+  });
+
+  it('leaves German words that legitimately contain ae, oe or ue alone', () => {
+    expect(findTransliteratedUmlauts('Aktuelle Quelle, neue Steuer, Museum, Abenteuer, Bauer, Poesie.')).toEqual([]);
+  });
+
+  it('ignores words that come from a slug, which has to stay ASCII', () => {
+    expect(findTransliteratedUmlauts('freelancer-webdesign-fuerth', new Set(['fuerth']))).toEqual([]);
+  });
+
+  it('reports each offender once', () => {
+    expect(findTransliteratedUmlauts('fuer und fuer und FUER')).toEqual(['fuer']);
   });
 });
