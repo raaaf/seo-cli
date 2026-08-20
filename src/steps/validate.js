@@ -45,6 +45,56 @@ const BRAND_CASING = Object.freeze([
   'WordPress', 'JavaScript', 'TypeScript', 'GitHub', 'GitLab', 'PostgreSQL', 'macOS',
 ]);
 
+// German words written with ae/oe/ue where the umlaut belongs. The model does
+// this in headings more often than in prose, and it survived every prompt rule
+// so far ("Nachtraege sauber regeln" shipped in W34).
+//
+// Two detectors, both deliberately narrow because a blanket ae/oe/ue rule would
+// fire on Quelle, Steuer, aktuelle, Museum, Aerosol and hundreds more:
+//
+// 1. A closed list of forms that are unambiguous in German.
+// 2. The page contradicting itself: the same word appears once transliterated
+//    and once with the umlaut. That was exactly the W34 case, where the heading
+//    read "Nachtraege" and the paragraph under it "Nachträge".
+const TRANSLITERATED = Object.freeze([
+  'fuer', 'ueber', 'koennen', 'koennte', 'muessen', 'muesste', 'waehrend', 'waehlen',
+  'moeglich', 'moeglichkeit', 'groesse', 'groesser', 'natuerlich', 'zusaetzlich',
+  'zusaetzliche', 'nachtraege', 'nachtraeglich', 'geschaeft', 'geschaeftlich',
+  'hoehe', 'hoeher', 'loesung', 'loeschen', 'erhoehen', 'erhoehung', 'zaehlen',
+  'regelmaessig', 'gemaess', 'massnahme', 'massnahmen', 'grundsaetzlich',
+  'saemtliche', 'aehnlich', 'jaehrlich', 'taeglich', 'aendern',
+  'unabhaengig', 'beruecksichtigen', 'verfuegbar', 'schliesslich', 'gaeste',
+]);
+
+const UMLAUT_BY_DIGRAPH = Object.freeze({ ae: 'ä', oe: 'ö', ue: 'ü' });
+
+/** Restores umlauts in a transliterated word: "nachtraege" -> "nachträge". */
+function restoreUmlauts(word) {
+  return word.replace(/ae|oe|ue/g, m => UMLAUT_BY_DIGRAPH[m]);
+}
+
+/**
+ * Transliterated umlauts in `text`. Returns the offending words, deduplicated.
+ *
+ * `skip` holds words that are legitimately spelled this way on this page, which
+ * in practice means slugs: freelancer-webdesign-fuerth has to stay ASCII.
+ */
+export function findTransliteratedUmlauts(text, skip = new Set()) {
+  const words = text.match(/\b[A-Za-zÄÖÜäöüß]+\b/g) || [];
+  const present = new Set(words.map(w => w.toLowerCase()));
+  // Keyed by lowercase so "fuer" and "FUER" count as one offender, valued with
+  // the first spelling seen so the warning quotes what actually stands there.
+  const hits = new Map();
+
+  for (const word of words) {
+    const lower = word.toLowerCase();
+    if (skip.has(lower) || hits.has(lower) || !/ae|oe|ue/.test(lower)) continue;
+    // Known form, or the page itself proves the umlaut spelling is meant.
+    if (TRANSLITERATED.includes(lower) || present.has(restoreUmlauts(lower))) hits.set(lower, word);
+  }
+  return [...hits.values()];
+}
+
 export function validate(markdown, keyword, opts = {}) {
   const errors = [];
   const warnings = [];
@@ -171,6 +221,18 @@ export function validate(markdown, keyword, opts = {}) {
     for (const { re, msg } of CONTENT_DENYLIST) {
       const m = fullScan.match(re);
       if (m) warnings.push(`${msg} (found "${m[0].trim()}")`);
+    }
+  }
+
+  // Umlauts written as ae/oe/ue. German-only, so not on a counterpart page.
+  if (!counterpart) {
+    const slugWords = new Set(
+      (JSON.stringify(parsed).match(/[a-z0-9]+(?:-[a-z0-9]+)+/g) || [])
+        .flatMap(slug => slug.split('-'))
+    );
+    const transliterated = findTransliteratedUmlauts(fullScan, slugWords);
+    if (transliterated.length) {
+      warnings.push(`Umlauts written as ae/oe/ue: ${transliterated.map(w => `"${w}"`).join(', ')}`);
     }
   }
 
