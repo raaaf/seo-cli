@@ -15,7 +15,8 @@ with web search. Search in the language of the claim.
 
 A claim is checkable when a reader could be materially misled by it being wrong.
 Ignore opinion, framing, advice, and round-number cost ranges presented as
-orientation ("typically 30 to 80 euros per person").
+orientation ("typically 30 to 80 euros per person"), unless the page contradicts
+itself about them, which the self-consistency section below covers.
 
 ## What counts as a finding
 
@@ -45,6 +46,35 @@ should move the new page toward the published range.
 <<<UNTRUSTED_CLUSTER_START>>>
 {{cluster_context}}
 <<<UNTRUSTED_CLUSTER_END>>>
+
+## Self-consistency
+
+Before you search anything, read the page against itself. The tldr, the FAQ, the
+steps and the body routinely state the same number twice, and when the two
+disagree the page argues against itself in front of the reader. Search cannot
+catch this: both numbers are plausible on their own.
+
+Check every number that appears more than once for the same subject: price
+corridors for the same scope, lead times for the same group size, hourly rates,
+percentages, thresholds, durations, counts. Check as well that any calculation
+the page performs actually adds up.
+
+This is the one case where the rule about ignoring round-number ranges does not
+apply. A range becomes a finding the moment the page states a different range for
+the same thing elsewhere. No search is needed and no `source` is required, the
+page itself is the evidence. Report it as **medium**, and correct the occurrence
+that carries less context toward the one that carries more, which is usually the
+body, because that is where the scope is spelled out.
+
+Four real examples of what this catches:
+
+- The tldr prices five to seven pages at 3.500 to 7.000 euro, the body prices the
+  same scope at 4.500 to 7.500.
+- The FAQ gives teams under 15 people two to three weeks of lead time, the body
+  gives teams under twelve people three to four weeks.
+- One FAQ answer promises invitations six weeks ahead while setting the total
+  lead time at two to three weeks.
+- A worked example divides 90.000 by 1.400 and prints 90 as the result.
 
 ## Output
 
