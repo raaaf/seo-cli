@@ -74,10 +74,15 @@ export function scorePage({ impressions, clicks, bestPosition, queries }) {
  *
  * `cooldown` is a Set of slugs rewritten recently enough that we have no signal
  * on the last attempt yet.
+ *
+ * `config.exclude_slugs` is the permanent version of that: pages the rewrite must
+ * never touch. Service and pricing pages are written by hand and carry claims the
+ * model has no way to verify, so a well-meant rewrite is pure downside there.
  */
 export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set() }) {
   const locale = defaultLocale(config);
   const known = new Set(getExistingSlugs(config, cwd, locale));
+  const excluded = new Set(config.exclude_slugs || []);
   const base = String(config.base_url || '').replace(/\/+$/, '');
 
   const bySlug = new Map();
@@ -85,7 +90,7 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
     const url = String(row.url || '');
     if (base && !url.startsWith(base + '/')) continue;
     const slug = url.slice(base.length + 1).replace(/[?#].*$/, '').replace(/\/+$/, '');
-    if (!slug || !known.has(slug) || cooldown.has(slug)) continue;
+    if (!slug || !known.has(slug) || cooldown.has(slug) || excluded.has(slug)) continue;
 
     const entry = bySlug.get(slug) ?? { slug, impressions: 0, clicks: 0, bestPosition: Infinity, queries: [] };
     entry.impressions += row.impressions;
