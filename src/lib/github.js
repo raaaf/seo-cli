@@ -1,16 +1,26 @@
 import { Octokit } from '@octokit/rest';
 import { isoWeek } from './date.js';
 
-let octokit;
-function getOctokit() {
-  if (!process.env.GITHUB_TOKEN) throw new Error('GITHUB_TOKEN not set');
-  if (!octokit) octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-  return octokit;
+// One client per owner. A fine-grained GitHub token is scoped to exactly one
+// owner, and this CLI writes to repos under more than one, so a single
+// GITHUB_TOKEN can no longer cover every target. Per owner we look for
+// GITHUB_TOKEN_<OWNER> first and fall back to GITHUB_TOKEN, which keeps a
+// classic token (and the test setup) working unchanged.
+const octokits = {};
+function envKeyFor(owner) {
+  return `GITHUB_TOKEN_${String(owner).toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+}
+function getOctokit(owner) {
+  const key = envKeyFor(owner);
+  const token = process.env[key] || process.env.GITHUB_TOKEN;
+  if (!token) throw new Error(`${key} not set (and no GITHUB_TOKEN fallback)`);
+  if (!octokits[token]) octokits[token] = new Octokit({ auth: token });
+  return octokits[token];
 }
 
 export async function openPR({ repo, branch, title, body, baseBranch = 'main' }) {
-  const octokit = getOctokit();
   const [owner, name] = repo.split('/');
+  const octokit = getOctokit(owner);
 
   const res = await octokit.pulls.create({
     owner,
@@ -25,8 +35,8 @@ export async function openPR({ repo, branch, title, body, baseBranch = 'main' })
 }
 
 export async function createBranchAndCommit({ files, message, cwd: _cwd, repo, baseBranch = 'main', branch = `seo/${isoWeek()}` }) {
-  const octokit = getOctokit();
   const [owner, name] = repo.split('/');
+  const octokit = getOctokit(owner);
 
   // Get base branch SHA
   const { data: ref } = await octokit.git.getRef({ owner, repo: name, ref: `heads/${baseBranch}` });
