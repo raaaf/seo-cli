@@ -167,6 +167,18 @@ describe('selectPage', () => {
     expect(page.slug).toBe('kontakt');
   });
 
+  it('never picks a slug listed in exclude_slugs', () => {
+    seedPages('webdesign', 'kontakt');
+    const rows = [
+      { url: 'https://acme.io/webdesign', query: 'webdesign', position: 2, impressions: 500, clicks: 0 },
+      { url: 'https://acme.io/kontakt', query: 'kontakt', position: 11, impressions: 60, clicks: 2 },
+    ];
+
+    const page = selectPage({ rows, config: { ...config, exclude_slugs: ['webdesign'] }, cwd });
+
+    expect(page.slug).toBe('kontakt');
+  });
+
   it('returns null when nothing clears the impression floor', () => {
     seedPages('preise');
     const rows = [{ url: 'https://acme.io/preise', query: 'x', position: 2, impressions: 5, clicks: 0 }];

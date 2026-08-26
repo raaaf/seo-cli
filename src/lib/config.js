@@ -30,6 +30,9 @@ export const DEFAULTS = {
   greenfield: false,
   // Verify checkable claims against the live web before a page is committed.
   fact_check: true,
+  // Slugs the improve step must never rewrite: hand-written service and pricing
+  // pages, whose claims the model cannot verify.
+  exclude_slugs: [],
 };
 
 export function defaultLocale(config) {
