@@ -83,8 +83,9 @@ function logFindings(findings) {
   }
 }
 
-// Slug + tldr of the already published pages, which is where the cross-page
-// numbers live (corridors, package prices, percentages).
+// Slug + tldr of the already published pages, plus every FAQ answer that
+// carries a number: package prices and corridors often live only in the FAQ,
+// which is how W36 shipped two portfolio pages with contradicting ranges.
 function clusterContext(config, cwd, locale) {
   let pages;
   try {
@@ -96,7 +97,10 @@ function clusterContext(config, cwd, locale) {
   const lines = pages
     .filter(p => p.tldr)
     .slice(0, CLUSTER_PAGES)
-    .map(p => `- ${p.slug}: ${p.tldr}`);
+    .flatMap(p => [
+      `- ${p.slug}: ${p.tldr}`,
+      ...(p.faq ?? []).filter(a => /\d/.test(a)).map(a => `  FAQ: ${a}`),
+    ]);
   return lines.length ? lines.join('\n') : 'none';
 }
 
