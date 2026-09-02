@@ -91,6 +91,21 @@ describe('reviewPage', () => {
     expect(complete.mock.calls[0][0].webSearch).toBe(true);
   });
 
+  it('passes FAQ answers with numbers from published pages, not only the tldr', async () => {
+    writeFileSync(
+      join(cwd, 'content/landing/de/preise.md'),
+      '---\nslug: preise\ntldr: "Preise haengen vom Umfang ab."\nfaq:\n  - q: "Was kostet eine Website?"\n    a: "Paket Mittel liegt bei 4.000 bis 9.000 Euro."\n  - q: "Wie lange dauert es?"\n    a: "Das kommt auf den Umfang an."\n---\n\nText.',
+      'utf8',
+    );
+    complete.mockResolvedValue({ findings: [] });
+
+    await reviewPage(PAGE, keyword, config, cwd);
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('4.000 bis 9.000 Euro');
+    expect(prompt).not.toContain('Das kommt auf den Umfang an');
+  });
+
   it('returns the page unchanged when the reviewer call fails', async () => {
     complete.mockRejectedValue(new Error('overloaded'));
 

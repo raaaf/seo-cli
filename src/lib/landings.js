@@ -44,9 +44,10 @@ export function getExistingPages(config, cwd = process.cwd(), locale) {
       const slug = f.replace('.md', '');
       try {
         const { parsed } = parseFrontmatter(readFileSync(join(dir, f), 'utf8'));
-        return { slug, title: parsed.meta_title ?? parsed.hero?.headline ?? slug, tldr: parsed.tldr ?? null };
+        const faq = Array.isArray(parsed.faq) ? parsed.faq.map(f => f?.a).filter(a => typeof a === 'string') : [];
+        return { slug, title: parsed.meta_title ?? parsed.hero?.headline ?? slug, tldr: parsed.tldr ?? null, faq };
       } catch {
-        return { slug, title: slug, tldr: null };
+        return { slug, title: slug, tldr: null, faq: [] };
       }
     });
 }
