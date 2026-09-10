@@ -38,7 +38,7 @@ Three guards keep the backlog free of duplicates. `lib/similarity.js` rejects a 
 
 Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield: true` and off by default. An empty backlog is a valid result: it means the topic space is covered. It used to top up whenever GSC yielded fewer keywords than `weekly_cap`, which guaranteed pages every week whether or not topics existed, and is how the target projects accumulated 70 pages for about 50 topics.
 
-**generate** (`src/steps/generate.js`): Calls Claude Opus (`claude-opus-4-7`, 8000 tokens) with a prompt assembled from `src/prompts/generate.md` and a style doc. Outputs markdown with YAML frontmatter. Placeholders `CANONICAL_URL`, `BASE_URL`, `SITE_NAME` are replaced post-generation.
+**generate** (`src/steps/generate.js`): Calls Claude Opus (`MODELS.generate`, 8000 tokens) with a prompt assembled from `src/prompts/generate.md` and a style doc. Outputs markdown with YAML frontmatter. Placeholders `CANONICAL_URL`, `BASE_URL`, `SITE_NAME` are replaced post-generation.
 
 **validate** (`src/steps/validate.js`): Pure function, no I/O. Checks frontmatter fields, meta title/description lengths, FAQ count, body word count (800-1400), keyword density, entity coverage, em-dash/emoji, umlauts written as ae/oe/ue, and fabricated-claim patterns. Returns `{ ok, errors, warnings }`. Up to 2 generation attempts per keyword.
 
