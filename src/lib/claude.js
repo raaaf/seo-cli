@@ -18,11 +18,18 @@ const WEB_SEARCH_TOOL = Object.freeze({ type: 'web_search_20260209', name: 'web_
 const MAX_PAUSE_RESUMES = 3;
 
 export async function complete({
-  system, prompt, model = MODELS.default, maxTokens = 4096, json = false,
+  system, prompt, model = MODELS.default, maxTokens = 4096, json = false, schema = null,
   webSearch = false, maxSearches = 6,
 }) {
   const messages = [{ role: 'user', content: prompt }];
   const tools = webSearch ? [{ ...WEB_SEARCH_TOOL, max_uses: maxSearches }] : undefined;
+  // Set explicitly rather than relying on the model default: the
+  // generation/review/improve/counterpart routes are judgment-heavy and
+  // should think, whichever model MODELS.generate points at.
+  const thinking = model === MODELS.generate ? { type: 'adaptive' } : undefined;
+  // Structured Outputs are incompatible with citations, so callers that use
+  // web search (and therefore citations) must not pass a schema.
+  const outputConfig = json && schema ? { output_config: { format: { type: 'json_schema', schema } } } : undefined;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -31,6 +38,8 @@ export async function complete({
         max_tokens: maxTokens,
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         messages,
+        ...(thinking ? { thinking } : {}),
+        ...(outputConfig ? outputConfig : {}),
         ...(tools ? { tools } : {}),
       });
 
@@ -42,6 +51,8 @@ export async function complete({
           max_tokens: maxTokens,
           system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
           messages: [...messages, { role: 'assistant', content: res.content }],
+          ...(thinking ? { thinking } : {}),
+          ...(outputConfig ? outputConfig : {}),
           ...(tools ? { tools } : {}),
         });
       }
@@ -52,6 +63,11 @@ export async function complete({
       const textBlock = textBlocks[textBlocks.length - 1];
       if (!textBlock) throw new Error(`Claude returned no text block (stop_reason: ${res.stop_reason})`);
       const text = textBlock.text.trim();
+
+      if (json && schema) {
+        // Structured Outputs guarantee schema-conformant JSON, no extraction needed.
+        return JSON.parse(text);
+      }
 
       if (json) {
         const match = text.match(/```json\s*([\s\S]+?)\s*```/) || text.match(/(\{[\s\S]+\})/);

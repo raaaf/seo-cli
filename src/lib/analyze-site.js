@@ -2,12 +2,26 @@ import { complete } from './claude.js';
 import { fetchPages } from './site-fetch.js';
 import { sanitizeUntrusted } from './template.js';
 
+const SITE_ANALYSIS_SCHEMA = {
+  type: 'object',
+  properties: {
+    topic: { type: 'string' },
+    clusters: { type: 'array', items: { type: 'string' } },
+    primary_cta: { type: 'string', enum: ['trial_signup', 'book_demo', 'contact', 'download_app', 'learn_more'] },
+    locale: { type: 'string', enum: ['de', 'en'] },
+    tone: { type: 'string' },
+  },
+  required: ['topic', 'clusters', 'primary_cta', 'locale', 'tone'],
+  additionalProperties: false,
+};
+
 export async function analyzeSite(url) {
   // Fetch homepage + a few key pages
   const pages = await buildPageContent(url);
 
   const result = await complete({
-    system: 'You analyze websites and reply exclusively with JSON.',
+    system: 'You analyze websites.',
+    schema: SITE_ANALYSIS_SCHEMA,
     prompt: `Analyze this website and extract the following information.
 
 URL: ${url}

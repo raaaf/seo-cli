@@ -55,8 +55,6 @@ terms, never their English equivalents — these strings are later fed to the
 generator as terms to cover, so English entities cause English words to bleed
 into German prose.
 
-Reply exclusively with JSON:
-
 ```json
 {
   "score": 8,
@@ -71,5 +69,3 @@ Reply exclusively with JSON:
 ```
 
 Allowed types: howto, comparison, service, guide, local_service
-
-Reply only with the JSON block, no text before or after.

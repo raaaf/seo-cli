@@ -16,6 +16,49 @@ const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', impor
 const MAX_GSC_CANDIDATES = 20;
 const MAX_SCORED_PER_RUN = 10;
 
+const KEYWORD_TYPES = ['howto', 'comparison', 'service', 'guide', 'local_service'];
+
+const SCORE_SCHEMA = {
+  type: 'object',
+  properties: {
+    score: { type: 'integer' },
+    covered_by: { type: ['string', 'null'] },
+    type: { type: 'string', enum: KEYWORD_TYPES },
+    intent: { type: 'string' },
+    target_slug: { type: 'string' },
+    expected_entities: { type: 'array', items: { type: 'string' } },
+    content_gaps: { type: 'array', items: { type: 'string' } },
+    reason: { type: 'string' },
+  },
+  required: ['score', 'covered_by', 'type', 'intent', 'target_slug', 'expected_entities', 'content_gaps', 'reason'],
+  additionalProperties: false,
+};
+
+const GREENFIELD_SCHEMA = {
+  type: 'object',
+  properties: {
+    keywords: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          keyword: { type: 'string' },
+          target_slug: { type: 'string' },
+          type: { type: 'string', enum: KEYWORD_TYPES },
+          intent: { type: 'string' },
+          score: { type: 'integer' },
+          expected_entities: { type: 'array', items: { type: 'string' } },
+          content_gaps: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['keyword', 'target_slug', 'type', 'intent', 'score', 'expected_entities', 'content_gaps'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['keywords'],
+  additionalProperties: false,
+};
+
 export async function discover(config, cwd = process.cwd()) {
   console.log(chalk.blue('Discovering keywords...'));
   const quota = checkQuota();
@@ -179,7 +222,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
     const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData, existingTitles);
     let result;
     try {
-      result = await complete({ system: 'You are an SEO expert. Reply exclusively with JSON.', prompt, json: true });
+      result = await complete({ system: 'You are an SEO expert.', prompt, json: true, schema: SCORE_SCHEMA });
     } catch (e) {
       console.log(chalk.yellow(`  Score skip (${row.keyword}): ${e.message}`));
       continue;
@@ -240,9 +283,10 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   let suggestions;
   try {
     suggestions = await complete({
-      system: 'You are an SEO expert. Reply exclusively with JSON.',
+      system: 'You are an SEO expert.',
       prompt,
       json: true,
+      schema: GREENFIELD_SCHEMA,
     });
   } catch (e) {
     console.log(chalk.red(`  Greenfield failed: ${e.message}`));

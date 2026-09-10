@@ -28,8 +28,6 @@ so English entities cause English words to bleed into German prose.
 
 ## Output
 
-Reply exclusively with a JSON array:
-
 ```json
 [
   {
@@ -45,5 +43,3 @@ Reply exclusively with a JSON array:
 ```
 
 Allowed types: howto, comparison, service, guide, local_service
-
-Reply only with the JSON array, no text before or after.
