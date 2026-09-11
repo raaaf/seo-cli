@@ -59,6 +59,8 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     const shortTldr = 'Webdesign Berlin bietet professionelle Webseiten fuer Unternehmen mit moderner Gestaltung und klarer Struktur.';
     const { errors } = validate(makeValid({ tldr: shortTldr }), KW);
     expect(errors.some(e => e.includes('tldr too short'))).toBe(true);
+    // Both bounds in the message: a retry that only sees "min 40" overshoots to 64, one that only sees "max 60" undershoots to 38.
+    expect(errors.find(e => e.includes('tldr too short'))).toMatch(/need 40-60/);
   });
 
   it('errors when tldr is too long', () => {
@@ -66,6 +68,7 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     const longTldr = TLDR_50 + ' Zusaetzlich profitieren Teams von messbaren Ergebnissen klaren Prozessen und einer Struktur die langfristig traegt.';
     const { errors } = validate(makeValid({ tldr: longTldr }), KW);
     expect(errors.some(e => e.includes('tldr too long'))).toBe(true);
+    expect(errors.find(e => e.includes('tldr too long'))).toMatch(/need 40-60/);
   });
 
   it('errors on fabricated pattern "aus meiner Praxis"', () => {
