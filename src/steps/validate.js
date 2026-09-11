@@ -185,8 +185,8 @@ export function validate(markdown, keyword, opts = {}) {
   // tldr word count (40–60 words)
   if (parsed.tldr != null) {
     const tldrWords = String(parsed.tldr).split(/\s+/).filter(Boolean).length;
-    if (tldrWords < SEO_THRESHOLDS.tldrWords.errorMin) errors.push(`tldr too short: ${tldrWords} words (min 40)`);
-    if (tldrWords > SEO_THRESHOLDS.tldrWords.errorMax) errors.push(`tldr too long: ${tldrWords} words (max 60)`);
+    if (tldrWords < SEO_THRESHOLDS.tldrWords.errorMin) errors.push(`tldr too short: ${tldrWords} words (need ${SEO_THRESHOLDS.tldrWords.errorMin}-${SEO_THRESHOLDS.tldrWords.errorMax})`);
+    if (tldrWords > SEO_THRESHOLDS.tldrWords.errorMax) errors.push(`tldr too long: ${tldrWords} words (need ${SEO_THRESHOLDS.tldrWords.errorMin}-${SEO_THRESHOLDS.tldrWords.errorMax})`);
   }
 
   // Information density: >= 5 digits in body
