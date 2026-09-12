@@ -14,6 +14,7 @@ node bin/seo.js dashboard     # cross-project overview (funnel, rankings, movers
 node bin/seo.js dashboard --live  # same, but pull current positions/clicks from GSC
 node bin/seo.js check <files...>  # validate already-generated landing markdown (CI gate)
 node bin/seo.js submit-sitemap    # (re)submit <base_url>/sitemap.xml to GSC
+node bin/seo.js indexnow          # push all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver)
 ```
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated) and reads their committed state files. It does *not* run in the context of a single target project. Flags: `--live`, `--project <match>`, `--json`.
@@ -44,7 +45,7 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 
 **fact-check** (`src/steps/review.js`): Extracts checkable claims (laws, thresholds, deadlines, customs, brand and product names, third-party prices, cited studies) and verifies them with the server-side `web_search` tool, plus the tldr of every published page in the locale for cross-page number consistency. It also reads the page against itself: a price corridor, lead time or calculation that the tldr, FAQ and body state differently is a medium finding, and needs no search because the page is its own evidence. Corrections apply only when the quoted text matches exactly once. A high-severity finding it could not patch drops the page; everything else is patched, revalidated and logged. Off via `fact_check: false`, skipped in dry runs.
 
-**pr** (`src/steps/pr.js`): Commits all generated files plus `seo/keywords.json` and `seo/sitemap-pending.json` to a branch named `seo/YYYY-WW`, then opens a GitHub PR with an SEO check table in the body. Writes `seo/last-pr.json` for CI auto-merge workflows.
+**pr** (`src/steps/pr.js`): Commits all generated files plus `seo/keywords.json` and `seo/sitemap-pending.json` to a branch named `seo/YYYY-WW`, then opens a GitHub PR with an SEO check table in the body. Writes `seo/last-pr.json` for CI auto-merge workflows. The gate that auto-merges such a PR also resubmits the sitemap to Google and, when `indexnow_key` is set, pushes all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver) via `seo indexnow`.
 
 **improve** (`src/steps/improve.js`, `src/commands/improve.js`): Runs when the backlog is empty, and standalone via `seo improve`. Aggregates live GSC page/query data per landing page of the default locale and picks the one with the strongest case: a clickless page in the top five is a snippet problem (title and description), a page at position 6-20 with impressions is a relevance problem. The rewrite gets the page's actual queries as context and may not claim services the page does not already claim. Rewritten slugs go into `seo/improvements.json` and are off the list for 56 days. Own branch `seo/improve-YYYY-WW`.
 

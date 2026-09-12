@@ -273,6 +273,8 @@ jobs:
               fi
               # (Re)submit the sitemap so Google re-crawls the new pages. Non-fatal.
               node .seo-cli/bin/seo.js submit-sitemap || echo "Sitemap submit skipped/failed (non-fatal)."
+              # Same for Bing, Yandex and friends via IndexNow. Non-fatal, and a no-op without indexnow_key.
+              node .seo-cli/bin/seo.js indexnow || echo "IndexNow submit skipped/failed (non-fatal)."
             else
               STATUS=merge_failed
             fi

@@ -16,6 +16,7 @@ import { initCommand } from '../src/commands/init.js';
 import { runCommand } from '../src/commands/run.js';
 import { checkCommand } from '../src/commands/check.js';
 import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
+import { indexnowCommand } from '../src/commands/indexnow.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
 import { improveCommand } from '../src/commands/improve.js';
 
@@ -59,5 +60,10 @@ program
   .command('submit-sitemap')
   .description('(Re)submit <base_url>/sitemap.xml to Google Search Console')
   .action(submitSitemapCommand);
+
+program
+  .command('indexnow')
+  .description('push all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver)')
+  .action(indexnowCommand);
 
 program.parse();

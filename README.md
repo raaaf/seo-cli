@@ -70,6 +70,7 @@ seo run --dry-run  # preview without committing
 | `seo check <files...>` | Validate already-generated landing-page markdown (CI gate) |
 | `seo dashboard [--live] [--project <name>] [--json]` | Cross-project overview: funnel, rankings, movers, suggestions |
 | `seo submit-sitemap` | (Re)submit `<base_url>/sitemap.xml` to Google Search Console |
+| `seo indexnow` | Push all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver), using the `indexnow_key` config key |
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated).
 
