@@ -33,6 +33,9 @@ export const DEFAULTS = {
   // Slugs the improve step must never rewrite: hand-written service and pricing
   // pages, whose claims the model cannot verify.
   exclude_slugs: [],
+  // The key is public by design: IndexNow verifies it via `<base_url>/<key>.txt`,
+  // which the target repo hosts in its public directory. Null disables the command.
+  indexnow_key: null,
 };
 
 export function defaultLocale(config) {
