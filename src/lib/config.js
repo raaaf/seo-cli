@@ -36,6 +36,9 @@ export const DEFAULTS = {
   // The key is public by design: IndexNow verifies it via `<base_url>/<key>.txt`,
   // which the target repo hosts in its public directory. Null disables the command.
   indexnow_key: null,
+  // Page generation goes through the Message Batches API at half price.
+  // Set false to force interactive calls (dry runs and debugging).
+  batch_generation: true,
 };
 
 export function defaultLocale(config) {

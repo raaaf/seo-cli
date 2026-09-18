@@ -6,6 +6,9 @@ const MAX_RETRIES = 4;
 const BASE_RETRY_MS = 5000;
 const MAX_RETRY_MS = 60000;
 
+// Exported so tests can shrink it instead of waiting on a real 30s interval.
+export const BATCH_POLL_MS = 30000;
+
 let client;
 function getClient() {
   if (!client) client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -17,10 +20,72 @@ function getClient() {
 const WEB_SEARCH_TOOL = Object.freeze({ type: 'web_search_20260209', name: 'web_search' });
 const MAX_PAUSE_RESUMES = 3;
 
+// Builds the params object shared by the interactive request, its pause_turn
+// resume, and the batch request.
+function buildParams({ model, maxTokens, system, messages, thinking, outputConfig, tools }) {
+  return {
+    model,
+    max_tokens: maxTokens,
+    system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+    messages,
+    ...(thinking ? { thinking } : {}),
+    ...(outputConfig ? outputConfig : {}),
+    ...(tools ? { tools } : {}),
+  };
+}
+
+// Submits a single-request batch and polls until it ends or the wait cap is
+// reached. Returns the batch result message on success, or null when the
+// caller should fall back to the interactive request (submission failure,
+// non-succeeded result, or wait cap reached).
+async function runBatch(params, batchWaitMs, batchPollMs) {
+  let batch;
+  try {
+    batch = await getClient().messages.batches.create({
+      requests: [{ custom_id: 'seo-1', params }],
+    });
+  } catch (e) {
+    console.log(chalk.yellow(`  Batch submission failed (${e.message}), falling back to the interactive request`));
+    return null;
+  }
+
+  console.log(chalk.blue(`  Batch ${batch.id} submitted, waiting up to ${Math.round(batchWaitMs / 60000)} min ...`));
+
+  const deadline = Date.now() + batchWaitMs;
+  let status = batch.processing_status;
+  while (status !== 'ended' && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, batchPollMs));
+    ({ processing_status: status } = await getClient().messages.batches.retrieve(batch.id));
+  }
+
+  if (status !== 'ended') {
+    try { await getClient().messages.batches.cancel(batch.id); } catch { /* ignore */ }
+    console.log(chalk.yellow(`  Batch ${batch.id} not finished after ${Math.round(batchWaitMs / 60000)} min, falling back to the interactive request`));
+    return null;
+  }
+
+  for await (const r of await getClient().messages.batches.results(batch.id)) {
+    if (r.custom_id !== 'seo-1') continue;
+    if (r.result.type === 'succeeded') {
+      const { usage } = r.result.message;
+      console.log(chalk.green(`  Batch ${batch.id} succeeded (${usage.input_tokens} in / ${usage.output_tokens} out tokens)`));
+      return r.result.message;
+    }
+    console.log(chalk.yellow(`  Batch ${batch.id} result: ${r.result.type}, falling back to the interactive request`));
+    return null;
+  }
+
+  return null;
+}
+
 export async function complete({
   system, prompt, model = MODELS.default, maxTokens = 4096, json = false, schema = null,
-  webSearch = false, maxSearches = 6,
+  webSearch = false, maxSearches = 6, batch = false, batchWaitMs = 45 * 60 * 1000, batchPollMs = BATCH_POLL_MS,
 }) {
+  if (batch && webSearch) {
+    throw new Error('complete(): batch and webSearch cannot be combined, a batch cannot resume a pause_turn.');
+  }
+
   const messages = [{ role: 'user', content: prompt }];
   const tools = webSearch ? [{ ...WEB_SEARCH_TOOL, max_uses: maxSearches }] : undefined;
   // Set explicitly rather than relying on the model default: the
@@ -33,28 +98,19 @@ export async function complete({
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      let res = await getClient().messages.create({
-        model,
-        max_tokens: maxTokens,
-        system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-        messages,
-        ...(thinking ? { thinking } : {}),
-        ...(outputConfig ? outputConfig : {}),
-        ...(tools ? { tools } : {}),
-      });
+      const params = buildParams({ model, maxTokens, system, messages, thinking, outputConfig, tools });
+
+      let res = batch ? await runBatch(params, batchWaitMs, batchPollMs) : null;
+      if (!res) {
+        res = await getClient().messages.create(params);
+      }
 
       // The server-side search loop caps out at 10 iterations and returns
       // stop_reason "pause_turn"; resending the assistant turn resumes it.
       for (let resume = 0; res.stop_reason === 'pause_turn' && resume < MAX_PAUSE_RESUMES; resume++) {
-        res = await getClient().messages.create({
-          model,
-          max_tokens: maxTokens,
-          system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-          messages: [...messages, { role: 'assistant', content: res.content }],
-          ...(thinking ? { thinking } : {}),
-          ...(outputConfig ? outputConfig : {}),
-          ...(tools ? { tools } : {}),
-        });
+        res = await getClient().messages.create(
+          buildParams({ model, maxTokens, system, messages: [...messages, { role: 'assistant', content: res.content }], thinking, outputConfig, tools })
+        );
       }
 
       // With web search the answer is the LAST text block: earlier ones narrate

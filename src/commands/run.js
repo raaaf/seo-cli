@@ -189,6 +189,8 @@ export async function runCommand(opts) {
   const cwd = process.cwd();
   const config = loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
+  // A dry run never waits on a batch that outlives the preview; force interactive.
+  if (dryRun) config.batch_generation = false;
   const locales = config.locales || [config.locale || 'de'];
   const defaultLocaleVal = getDefaultLocale(config);
 

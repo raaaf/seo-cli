@@ -51,6 +51,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     prompt,
     model: MODELS.generate,
     maxTokens: 8000,
+    batch: config.batch_generation !== false,
   });
 
   // The model sometimes wraps the whole document in a ```markdown fence, which

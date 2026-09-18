@@ -1,9 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const create = vi.fn();
+const batchCreate = vi.fn();
+const batchRetrieve = vi.fn();
+const batchResults = vi.fn();
+const batchCancel = vi.fn();
 vi.mock('@anthropic-ai/sdk', () => ({
   default: class Anthropic {
-    constructor() { this.messages = { create }; }
+    constructor() {
+      this.messages = {
+        create,
+        batches: { create: batchCreate, retrieve: batchRetrieve, results: batchResults, cancel: batchCancel },
+      };
+    }
   },
 }));
 
@@ -12,7 +21,18 @@ const { complete } = await import('../src/lib/claude.js');
 
 const reply = (text) => ({ content: [{ type: 'text', text }] });
 
-beforeEach(() => create.mockReset());
+// Async iterable helper for batches.results().
+function resultsOf(entries) {
+  return { [Symbol.asyncIterator]: async function* () { for (const e of entries) yield e; } };
+}
+
+beforeEach(() => {
+  create.mockReset();
+  batchCreate.mockReset();
+  batchRetrieve.mockReset();
+  batchResults.mockReset();
+  batchCancel.mockReset();
+});
 
 describe('claude-complete', () => {
   it('returns trimmed text', async () => {
@@ -70,5 +90,52 @@ describe('claude-complete', () => {
   it('throws a descriptive error instead of crashing when there is no text block', async () => {
     create.mockResolvedValue({ content: [], stop_reason: 'max_tokens' });
     await expect(complete({ system: 's', prompt: 'p' })).rejects.toThrow(/max_tokens/);
+  });
+
+  it('batch success returns the batch result text and never calls messages.create', async () => {
+    batchCreate.mockResolvedValue({ id: 'batch_1', processing_status: 'ended' });
+    batchRetrieve.mockResolvedValue({ processing_status: 'ended' });
+    batchResults.mockResolvedValue(resultsOf([
+      { custom_id: 'seo-1', result: { type: 'succeeded', message: { ...reply('batched text'), usage: { input_tokens: 10, output_tokens: 20 } } } },
+    ]));
+    const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
+    expect(text).toBe('batched text');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the interactive request when the batch result errors', async () => {
+    batchCreate.mockResolvedValue({ id: 'batch_2', processing_status: 'ended' });
+    batchRetrieve.mockResolvedValue({ processing_status: 'ended' });
+    batchResults.mockResolvedValue(resultsOf([
+      { custom_id: 'seo-1', result: { type: 'errored' } },
+    ]));
+    create.mockResolvedValue(reply('interactive fallback'));
+    const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
+    expect(text).toBe('interactive fallback');
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels and falls back to interactive when the wait cap is reached', async () => {
+    batchCreate.mockResolvedValue({ id: 'batch_3', processing_status: 'in_progress' });
+    batchRetrieve.mockResolvedValue({ processing_status: 'in_progress' });
+    create.mockResolvedValue(reply('interactive after timeout'));
+    const text = await complete({ system: 's', prompt: 'p', batch: true, batchWaitMs: 0, batchPollMs: 1 });
+    expect(text).toBe('interactive after timeout');
+    expect(batchCancel).toHaveBeenCalledWith('batch_3');
+    expect(batchResults).not.toHaveBeenCalled();
+  });
+
+  it('throws when batch and webSearch are combined', async () => {
+    await expect(complete({ system: 's', prompt: 'p', batch: true, webSearch: true }))
+      .rejects.toThrow(/batch and webSearch/);
+    expect(batchCreate).not.toHaveBeenCalled();
+  });
+
+  it('falls back to interactive when batch submission itself throws', async () => {
+    batchCreate.mockRejectedValue(new Error('quota exceeded'));
+    create.mockResolvedValue(reply('interactive after submit failure'));
+    const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
+    expect(text).toBe('interactive after submit failure');
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });

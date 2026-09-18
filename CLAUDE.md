@@ -39,7 +39,7 @@ Three guards keep the backlog free of duplicates. `lib/similarity.js` rejects a 
 
 Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield: true` and off by default. An empty backlog is a valid result: it means the topic space is covered. It used to top up whenever GSC yielded fewer keywords than `weekly_cap`, which guaranteed pages every week whether or not topics existed, and is how the target projects accumulated 70 pages for about 50 topics.
 
-**generate** (`src/steps/generate.js`): Calls Claude Opus (`MODELS.generate`, 8000 tokens) with a prompt assembled from `src/prompts/generate.md` and a style doc. Outputs markdown with YAML frontmatter. Placeholders `CANONICAL_URL`, `BASE_URL`, `SITE_NAME` are replaced post-generation.
+**generate** (`src/steps/generate.js`): Calls Claude Opus (`MODELS.generate`, 8000 tokens) with a prompt assembled from `src/prompts/generate.md` and a style doc. Outputs markdown with YAML frontmatter. Placeholders `CANONICAL_URL`, `BASE_URL`, `SITE_NAME` are replaced post-generation. The call goes through the Message Batches API by default (`batch_generation: true`, half the interactive price), falling back to an interactive request if the batch errors or does not finish within the wait cap; `--dry-run` forces interactive since a preview should not wait on a batch.
 
 **validate** (`src/steps/validate.js`): Pure function, no I/O. Checks frontmatter fields, meta title/description lengths, FAQ count, body word count (800-1400), keyword density, entity coverage, em-dash/emoji, umlauts written as ae/oe/ue, and fabricated-claim patterns. Returns `{ ok, errors, warnings }`. Up to 2 generation attempts per keyword.
 
@@ -57,7 +57,7 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 
 | File | Role |
 |---|---|
-| `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, up to 4 total attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. |
+| `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, up to 4 total attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. `complete({ batch: true })` submits a single-request Message Batch, polls, and falls back to an interactive call on error, non-success, or wait-cap timeout. |
 | `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. |
 | `src/lib/serpapi.js` | SerpAPI wrapper. Quota tracked in `~/.seo-cli-serpapi.json`, resets monthly. Hard stop at 240/month (free tier is 250/month). |
 | `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum, `SLUG_REGEX`/`isValidSlug`, and state-file path constants. |
