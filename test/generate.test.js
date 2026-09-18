@@ -53,4 +53,16 @@ describe('generate-page', () => {
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toContain('Body too short: 10 words (min 800)');
   });
+
+  it('requests a batch by default', async () => {
+    complete.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
+    await generatePage(keyword, config, dir);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ batch: true }));
+  });
+
+  it('requests interactive completion when batch_generation is false', async () => {
+    complete.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
+    await generatePage(keyword, { ...config, batch_generation: false }, dir);
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ batch: false }));
+  });
 });

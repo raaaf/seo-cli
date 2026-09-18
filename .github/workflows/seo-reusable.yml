@@ -33,7 +33,8 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Batched generation waits up to 45 minutes per call.
+    timeout-minutes: 120
     permissions:
       contents: write
       pull-requests: write

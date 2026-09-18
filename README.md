@@ -159,6 +159,8 @@ fact_check: true        # verify claims against the live web before committing
 counterpart_locale: null  # e.g. 'en' — also generate a reciprocal counterpart
                            # page per default-locale page, own slug, sharing the
                            # bare /{slug} URL space, linked via `alternate:`
+batch_generation: true  # generate via the Message Batches API at half price,
+                         # falling back to an interactive call if it stalls
 clusters:
   - event-planning
   - party-organization
