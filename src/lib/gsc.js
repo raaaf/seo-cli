@@ -123,7 +123,7 @@ export function describeAuthError(e) {
   return null;
 }
 
-function rethrowWithAuthHint(e) {
+export function rethrowWithAuthHint(e) {
   const hint = describeAuthError(e);
   if (hint) throw new Error(hint, { cause: e });
   throw e;

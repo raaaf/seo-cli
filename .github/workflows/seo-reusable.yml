@@ -107,6 +107,17 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
         run: node .seo-cli/bin/seo.js run
 
+      # Weekly index-status snapshot, committed straight to main. Non-fatal: the
+      # zeit incident (deindexed 2026-08-04, unnoticed for five weeks because a
+      # quiet week and a silently deindexed one both print "nothing to do") is
+      # the reason this exists, but a Search Console hiccup here must not fail
+      # the whole run.
+      - name: Check index status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
+        run: node .seo-cli/bin/seo.js index-status --commit || echo "index-status check skipped/failed (non-fatal)."
+
       - name: Gate — validate, auto-merge, notify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
