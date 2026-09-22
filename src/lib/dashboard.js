@@ -83,10 +83,27 @@ function rankingStats(projectPath) {
   const movers = [];
   if (dates.length >= 2) {
     const key = r => `${r.url}|${r.query}`;
-    const first = new Map(dedupeRows(rows.filter(r => r.date === earliest)).map(r => [key(r), r]));
+    const earliestRows = dedupeRows(rows.filter(r => r.date === earliest));
+    const first = new Map(earliestRows.map(r => [key(r), r]));
+
+    // Click totals per page, not per query, so a mover's page can be told
+    // apart from a page whose drop is really the whole site moving.
+    const clicksByUrl = (dateRows) => {
+      const m = new Map();
+      for (const r of dateRows) m.set(r.url, (m.get(r.url) || 0) + r.clicks);
+      return m;
+    };
+    const fromClicks = clicksByUrl(earliestRows);
+    const toClicks = clicksByUrl(latestRows);
+    const urls = new Set([...fromClicks.keys(), ...toClicks.keys()]);
+    const decayByUrl = new Map(
+      classifyDecay([...urls].map(url => ({ url, from: fromClicks.get(url) || 0, to: toClicks.get(url) || 0 })))
+        .map(p => [p.url, p.classification])
+    );
+
     for (const r of latestRows) {
       const f = first.get(key(r));
-      if (f) movers.push({ query: r.query, url: r.url, from: f.position, to: r.position, delta: f.position - r.position });
+      if (f) movers.push({ query: r.query, url: r.url, from: f.position, to: r.position, delta: f.position - r.position, pageDecay: decayByUrl.get(r.url) });
     }
     movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   }
@@ -101,6 +118,42 @@ function snapshotMetrics(rows) {
   const clicks = rows.reduce((s, r) => s + r.clicks, 0);
   const avgPos = rows.length ? rows.reduce((s, r) => s + r.position, 0) / rows.length : null;
   return { rows, impressions, clicks, avgPos, ctr: impressions ? clicks / impressions : 0 };
+}
+
+// How much worse a page's own proportional click loss has to be than the
+// site's before it counts as its own decay rather than the site's. A margin,
+// not equality, because pages never shrink in perfect lockstep with the site.
+const SITEWIDE_MATCH_MARGIN = 0.5;
+
+/**
+ * Classify each page's click loss against the site's own loss over the same
+ * period. `pages` is `{ url, from, to }` click totals for the two snapshots
+ * being compared.
+ *
+ * A page that lost clicks while the whole site lost clicks is not decaying
+ * on its own; it is a site-level event, and flagging it individually points
+ * at the wrong page. One target site went from ~200 impressions a day to
+ * zero over ten days, which would have made every one of its pages look
+ * individually decayed. Only a page whose own loss is well past what the
+ * sitewide trend explains is `page_specific`; a page not losing clicks at
+ * all gets no classification.
+ *
+ * Pure and filesystem-free so it is testable without seeding CSVs.
+ */
+export function classifyDecay(pages) {
+  const siteFrom = pages.reduce((s, p) => s + p.from, 0);
+  const siteTo = pages.reduce((s, p) => s + p.to, 0);
+  const siteRatio = siteFrom ? (siteTo - siteFrom) / siteFrom : 0; // negative = sitewide loss
+
+  return pages.map(p => {
+    const delta = p.to - p.from;
+    if (delta >= 0) return { ...p, delta, classification: null };
+    const pageRatio = p.from ? delta / p.from : -1;
+    const classification = siteRatio < 0 && pageRatio >= siteRatio * (1 + SITEWIDE_MATCH_MARGIN)
+      ? 'sitewide'
+      : 'page_specific';
+    return { ...p, delta, classification };
+  });
 }
 
 // Derive actionable next steps from funnel + snapshot.
