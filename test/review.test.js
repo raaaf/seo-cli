@@ -106,6 +106,28 @@ describe('reviewPage', () => {
     expect(prompt).not.toContain('Das kommt auf den Umfang an');
   });
 
+  it('prioritises the most recently updated pages over alphabetical order when a cluster exceeds the slice', async () => {
+    // 9 pages so the CLUSTER_PAGES=8 slice must drop one. "aaa" sorts first
+    // alphabetically but is the oldest; it must be the one dropped, not
+    // "iii" which is newest but sorts last.
+    const slugs = ['aaa', 'bbb', 'ccc', 'ddd', 'eee', 'fff', 'ggg', 'hhh', 'iii'];
+    slugs.forEach((slug, i) => {
+      const updated = `2026-01-${String(i + 1).padStart(2, '0')}`; // aaa oldest, iii newest
+      writeFileSync(
+        join(cwd, `content/landing/de/${slug}.md`),
+        `---\nslug: ${slug}\nupdated: "${updated}"\ntldr: "tldr-${slug}"\n---\n\nText.`,
+        'utf8',
+      );
+    });
+    complete.mockResolvedValue({ findings: [] });
+
+    await reviewPage(PAGE, keyword, config, cwd);
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('tldr-iii');
+    expect(prompt).not.toContain('tldr-aaa');
+  });
+
   it('returns the page unchanged when the reviewer call fails', async () => {
     complete.mockRejectedValue(new Error('overloaded'));
 

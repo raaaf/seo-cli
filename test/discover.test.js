@@ -151,6 +151,26 @@ describe('discover-run', () => {
     expect(data.keywords.find(k => k.keyword === 'sommerfest organisieren')).toMatchObject({ status: 'proposed', score: 8 });
   });
 
+  it('ranks candidates by impressions before the 20-candidate budget cuts the list', async () => {
+    // GSC returns rows clicks-descending. Put 20 low-impression, high-click
+    // candidates ahead of one high-impression, clickless one so the old
+    // clicks-order slice(0, 20) would drop it before it was ever scored.
+    const filler = Array.from({ length: 20 }, (_, i) => ({
+      keyword: `filler ${i}`, impressions: 6, clicks: 5, ctr: 0.8, position: 10,
+    }));
+    const buried = { keyword: 'sommerfest firma planen', impressions: 400, clicks: 0, ctr: 0, position: 20 };
+    querySearchAnalytics.mockResolvedValue([...filler, buried]);
+    let call = 0;
+    complete.mockImplementation(() => Promise.resolve({
+      score: 0, type: 'guide', intent: 'informational', target_slug: `slug-${call++}`,
+      expected_entities: [], content_gaps: [], covered_by: null, reason: 'below cutoff',
+    }));
+
+    const data = await discover({ ...config, score_cutoff: 99 }, dir);
+
+    expect(data.keywords.find(k => k.keyword === 'sommerfest firma planen')).toBeTruthy();
+  });
+
   it('skips a keyword the model reports as already covered', async () => {
     querySearchAnalytics.mockResolvedValue([
       { keyword: 'trauung im freien', impressions: 30, clicks: 0, ctr: 0, position: 11 },

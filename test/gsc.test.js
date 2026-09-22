@@ -94,4 +94,26 @@ describe('queryPagePerformance row limit', () => {
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  // Regression: querySearchAnalytics defaulted to rowLimit 200, and discover's
+  // candidate band (position 8-25, low clicks) sits in the tail of a result set
+  // GSC sorts by clicks descending — 72% of eligible queries were never seen.
+  it('asks for the whole result set by default, not the first 200 rows', async () => {
+    const { querySearchAnalytics } = await import('../src/lib/gsc.js');
+
+    await querySearchAnalytics('https://events.rafaelalex.de/');
+
+    expect(queryFn.mock.calls[0][0].requestBody.rowLimit).toBe(25000);
+  });
+
+  it('warns when the query result hits the ceiling too', async () => {
+    const { querySearchAnalytics } = await import('../src/lib/gsc.js');
+    queryFn.mockResolvedValue({ data: { rows: new Array(25000).fill({ keys: ['q'], impressions: 1, clicks: 0, position: 1 }) } });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await querySearchAnalytics('https://events.rafaelalex.de/');
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('truncated'));
+    warn.mockRestore();
+  });
 });

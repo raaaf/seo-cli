@@ -40,13 +40,25 @@ describe('scorePage', () => {
     expect(scorePage({ impressions: 100, clicks: 3, bestPosition: 3 }).kind).toBe('near_page1');
   });
 
-  it('scores pages beyond position 20 lowest', () => {
-    expect(scorePage({ impressions: 100, clicks: 0, bestPosition: 40 }).kind).toBe('far');
+  it('scores pages beyond position 20 lowest, on their reachable impressions only', () => {
+    const page = scorePage({
+      impressions: 525,
+      clicks: 0,
+      bestPosition: 15,
+      queries: [
+        { query: 'a', position: 15, impressions: 25 },
+        { query: 'b', position: 90, impressions: 500 },
+      ],
+    });
+
+    expect(page.kind).toBe('far');
+    expect(page.score).toBe(25); // only the 25 reachable impressions count, not all 525
   });
 
-  it('does not call it a snippet problem when one tail query carries the best position', () => {
+  it('no longer scores a page whose best query sits beyond reach, even with heavy total impressions', () => {
     // Real shape from events.rafaelalex.de: a single query at position 1 with
     // two impressions, while the queries that bring the traffic sit on page four.
+    // Two reachable impressions is not a reason to spend the rewrite budget here.
     const page = scorePage({
       impressions: 1244,
       clicks: 0,
@@ -58,11 +70,10 @@ describe('scorePage', () => {
       ],
     });
 
-    expect(page.kind).toBe('far');
-    expect(page.reason).toContain('relevance gap');
+    expect(page).toBeNull();
   });
 
-  it('still calls it a snippet problem when the traffic really is on page one', () => {
+  it('still calls it a snippet problem when the traffic really is on page one, scored on the reachable share', () => {
     const page = scorePage({
       impressions: 200,
       clicks: 0,
@@ -74,7 +85,7 @@ describe('scorePage', () => {
     });
 
     expect(page.kind).toBe('snippet');
-    expect(page.score).toBe(600);
+    expect(page.score).toBe(450); // 150 reachable impressions x3, not 200 total x3
   });
 
   it('uses the impression-weighted position for the near-page-one case', () => {
@@ -90,6 +101,51 @@ describe('scorePage', () => {
 
     expect(page.kind).toBe('near_page1');
     expect(page.reason).toContain('weighted position 16');
+  });
+
+  it('scores a page by reachable impressions, not everything it ranks for', () => {
+    // Real shape from rafaelalex.de: one page's traffic is almost entirely a
+    // long-tail query at position 60, the other's is mostly within reach.
+    const bigButFar = scorePage({
+      impressions: 1539,
+      clicks: 0,
+      bestPosition: 15,
+      queries: [
+        { query: 'a', position: 60, impressions: 1495 },
+        { query: 'b', position: 15, impressions: 44 },
+      ],
+    });
+    const smallButReachable = scorePage({
+      impressions: 354,
+      clicks: 0,
+      bestPosition: 14,
+      queries: [
+        { query: 'c', position: 14, impressions: 253 },
+        { query: 'd', position: 55, impressions: 101 },
+      ],
+    });
+
+    expect(smallButReachable.score).toBeGreaterThan(bigButFar.score);
+  });
+
+  it('rejects a page whose reachable impressions are under the floor, even with a high total', () => {
+    const page = scorePage({
+      impressions: 4690,
+      clicks: 0,
+      bestPosition: 71,
+      queries: [
+        { query: 'a', position: 71, impressions: 4685 },
+        { query: 'b', position: 18, impressions: 5 },
+      ],
+    });
+
+    expect(page).toBeNull();
+  });
+
+  it('falls back to the total impressions when per-query data is unavailable and best position is within reach', () => {
+    const page = scorePage({ impressions: 100, clicks: 0, bestPosition: 5 });
+
+    expect(page.score).toBe(300); // same as before: reach degrades to the full total here
   });
 });
 
@@ -113,7 +169,7 @@ describe('selectPage', () => {
   it('drops a query another page ranks better for, so the rewrite stays on topic', () => {
     seedPages('betriebsausflug-planen', 'firmenfeier-planen');
     const rows = [
-      { url: 'https://acme.io/betriebsausflug-planen', query: 'betriebsausflug planen', position: 22, impressions: 167, clicks: 0 },
+      { url: 'https://acme.io/betriebsausflug-planen', query: 'betriebsausflug planen', position: 18, impressions: 167, clicks: 0 },
       { url: 'https://acme.io/betriebsausflug-planen', query: 'firmenfeier planen', position: 81, impressions: 120, clicks: 0 },
       { url: 'https://acme.io/firmenfeier-planen', query: 'firmenfeier planen', position: 39, impressions: 83, clicks: 0 },
     ];
@@ -177,6 +233,22 @@ describe('selectPage', () => {
     const page = selectPage({ rows, config: { ...config, exclude_slugs: ['webdesign'] }, cwd });
 
     expect(page.slug).toBe('kontakt');
+  });
+
+  it('treats a query an excluded page ranks better for as foreign, not the candidate\'s own', () => {
+    seedPages('preise', 'kontakt');
+    const rows = [
+      { url: 'https://acme.io/preise', query: 'preise', position: 2, impressions: 100, clicks: 0 },
+      { url: 'https://acme.io/preise', query: 'beratung', position: 30, impressions: 200, clicks: 0 },
+      { url: 'https://acme.io/kontakt', query: 'beratung', position: 5, impressions: 50, clicks: 0 },
+    ];
+
+    const page = selectPage({ rows, config: { ...config, exclude_slugs: ['kontakt'] }, cwd });
+
+    expect(page.slug).toBe('preise');
+    expect(page.queries.map(q => q.query)).toEqual(['preise']);
+    expect(page.impressions).toBe(100); // not 300: "beratung" belongs to the excluded page
+    expect(page.foreignQueries.map(q => q.query)).toEqual(['beratung']);
   });
 
   it('returns null when nothing clears the impression floor', () => {
