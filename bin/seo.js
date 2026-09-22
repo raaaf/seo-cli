@@ -20,6 +20,7 @@ import { indexnowCommand } from '../src/commands/indexnow.js';
 import { indexStatusCommand } from '../src/commands/index-status.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
 import { improveCommand } from '../src/commands/improve.js';
+import { conversationalCommand } from '../src/commands/conversational.js';
 
 program
   .name('seo')
@@ -56,6 +57,13 @@ program
   .option('--project <name>', 'limit to projects whose dir or name matches')
   .option('--json', 'print the aggregated data as JSON')
   .action(dashboardCommand);
+
+program
+  .command('conversational')
+  .description('Group Search Console queries into AI-Mode artefacts, tracker probes, and real conversational questions')
+  .option('--days <n>', 'lookback window in days', '90')
+  .option('--json', 'print the grouped data as JSON')
+  .action(conversationalCommand);
 
 program
   .command('submit-sitemap')
