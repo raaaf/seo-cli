@@ -29,6 +29,43 @@ const PAGE1_SHARE_FOR_SNIPPET = 0.3;
 const PAGE1_POSITION = 10;
 const REACHABLE_POSITION = 20;
 
+// Expected organic CTR by position (index 0 = position 1), used only as a
+// *relative* signal: how far below its own position's normal CTR a page
+// sits. The curve comes from published English-language CTR meta-analyses
+// (the Backlinko/Advanced Web Ranking style aggregate over organic SERPs),
+// is not calibrated for German queries or these sites' SERPs, and is never
+// shown to anyone as an absolute number, only used to compare a page against
+// itself.
+const CTR_BY_POSITION = [
+  0.3142, 0.1524, 0.1044, 0.0797, 0.0623, 0.0498, 0.0421, 0.0359, 0.0325, 0.0294,
+  0.0271, 0.0251, 0.0233, 0.0217, 0.0203, 0.0191, 0.0180, 0.0170, 0.0161, 0.0153,
+];
+// Beyond position 20 clicks are rare enough that a curve is noise; flat floor instead.
+const CTR_FLOOR = 0.01;
+
+// A page below roughly half its position's expected CTR is a snippet
+// problem even when it does get some clicks, not only when it gets none. A
+// binary zero-click check missed abschiedsfeier-organisieren on events:
+// weighted position 11.5, CTR 0.86%, well under what position 11 normally
+// returns, but never flagged because it had clicks.
+const CTR_DEFICIT_FOR_SNIPPET = 0.5;
+
+/** Published-curve expected CTR for a (possibly fractional, weighted) position. */
+export function expectedCtr(position) {
+  const index = Math.round(position) - 1;
+  if (index < 0) return CTR_BY_POSITION[0];
+  if (index >= CTR_BY_POSITION.length) return CTR_FLOOR;
+  return CTR_BY_POSITION[index];
+}
+
+/**
+ * How far below the position's expected CTR a page sits, as a ratio: 0 at or
+ * above expectation, 1 at no clicks at all.
+ */
+export function ctrDeficit({ position, ctr }) {
+  return Math.max(0, 1 - ctr / expectedCtr(position));
+}
+
 /**
  * Where the page actually stands, weighted by impressions.
  *
@@ -76,11 +113,15 @@ export function scorePage({ impressions, clicks, bestPosition, queries }) {
 
   const where = `weighted position ${position.toFixed(0)}, ${reachable} of ${impressions} impressions within reach`;
 
-  if (clicks === 0 && page1Share >= PAGE1_SHARE_FOR_SNIPPET) {
+  const ctr = impressions ? clicks / impressions : 0;
+  const deficit = ctrDeficit({ position, ctr });
+  if (page1Share >= PAGE1_SHARE_FOR_SNIPPET && deficit >= CTR_DEFICIT_FOR_SNIPPET) {
     return {
       score: reachable * 3,
       kind: 'snippet',
-      reason: `${Math.round(page1Share * 100)}% of impressions on page one and not a single click (${where}): the snippet is the problem, not the ranking`,
+      reason: clicks === 0
+        ? `${Math.round(page1Share * 100)}% of impressions on page one and not a single click (${where}): the snippet is the problem, not the ranking`
+        : `${Math.round(page1Share * 100)}% of impressions on page one and CTR ${(ctr * 100).toFixed(2)}% is ${Math.round(deficit * 100)}% below what position ${position.toFixed(0)} normally returns (${where}): the snippet is the problem, not the ranking`,
     };
   }
   if (position <= REACHABLE_POSITION) {
