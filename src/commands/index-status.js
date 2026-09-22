@@ -42,7 +42,11 @@ export async function indexStatusCommand(opts = {}) {
       const week = loadIndexStatus(cwd).updated;
       await createBranchAndCommit({
         files: [{ path: INDEX_STATUS_FILE, content }],
-        message: `seo: weekly index-status snapshot (${week})`,
+        // [skip ci]: raaaf/portfolio-2025 deploys to FTP on every push to main,
+        // unfiltered. Without this, a bookkeeping snapshot would redeploy the
+        // whole site weekly on a step that already dies intermittently with a
+        // control-socket timeout. Content PRs are unaffected and still deploy.
+        message: `seo: weekly index-status snapshot (${week}) [skip ci]`,
         cwd,
         repo: config.repo,
         branch: 'main',
