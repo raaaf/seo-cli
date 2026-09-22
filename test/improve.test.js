@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { scorePage, selectPage, ctrDeficit, expectedCtr } from '../src/steps/improve.js';
-import { loadImprovements, recordImprovement, slugsInCooldown } from '../src/lib/improvements.js';
+
+const complete = vi.fn();
+vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
+
+const { scorePage, selectPage, ctrDeficit, expectedCtr, improvePage } = await import('../src/steps/improve.js');
+const { loadImprovements, recordImprovement, slugsInCooldown } = await import('../src/lib/improvements.js');
 
 const config = {
   base_url: 'https://acme.io',
@@ -294,6 +298,24 @@ describe('selectPage', () => {
     seedPages('preise');
     const rows = [{ url: 'https://acme.io/preise', query: 'x', position: 2, impressions: 5, clicks: 0 }];
     expect(selectPage({ rows, config, cwd })).toBeNull();
+  });
+});
+
+describe('improvePage prompt', () => {
+  beforeEach(() => complete.mockReset());
+
+  it('includes the GSC-numbers guardrail in the rendered prompt', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('not estimates');
   });
 });
 

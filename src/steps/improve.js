@@ -11,6 +11,7 @@ import { getExistingSlugs } from '../lib/landings.js';
 import { stripCodeFence } from './generate.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
+const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
 
 // A page needs enough impressions for the numbers to mean anything.
 const MIN_IMPRESSIONS = 20;
@@ -234,6 +235,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     impressions: page.impressions,
     clicks: page.clicks,
     best_position: page.bestPosition.toFixed(1),
+    gsc_guardrail: GSC_GUARDRAIL,
     validator_feedback: validatorFeedback
       ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
       : '(first attempt — no prior feedback)',

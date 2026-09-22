@@ -12,6 +12,7 @@ import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
+const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
 
 const MAX_GSC_CANDIDATES = 20;
 const MAX_SCORED_PER_RUN = 10;
@@ -368,6 +369,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existin
     serp_snippets: serpData.top_snippets.join('\n') || 'n/a',
     people_also_ask: serpData.people_also_ask.join('\n') || 'n/a',
     locale: config.locale || 'de',
+    gsc_guardrail: GSC_GUARDRAIL,
   };
   return fillTemplate(SCORE_PROMPT, vars);
 }

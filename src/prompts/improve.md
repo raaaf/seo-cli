@@ -14,6 +14,10 @@ Diagnosis: {{problem}}
 Over the last 28 days the page collected {{impressions}} impressions and
 {{clicks}} clicks, best position {{best_position}}.
 
+## Reading the numbers
+
+{{gsc_guardrail}}
+
 ## What people actually searched to reach this page
 
 | Query | Position | Impressions | Clicks |
