@@ -177,7 +177,12 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
   const existingTitles = getExistingTitles(config.landing_path, cwd);
   const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
   let scored = 0;
-  for (const row of candidates.slice(0, MAX_GSC_CANDIDATES)) {
+  // GSC returns rows clicks-descending, but this band (pos 8-25) is almost
+  // clickless by definition — a page at position 20 with 400 impressions is a
+  // stronger candidate than one with 3 clicks and 12 impressions. Rank by
+  // impressions before the run's candidate budget cuts the list.
+  const ranked = [...candidates].sort((a, b) => b.impressions - a.impressions);
+  for (const row of ranked.slice(0, MAX_GSC_CANDIDATES)) {
     const existing = data.keywords.find(k => k.keyword === row.keyword);
     if (existing?.score != null) continue;
 

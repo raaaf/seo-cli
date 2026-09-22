@@ -169,8 +169,27 @@ async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit 
   return gscCache.get(cacheKey);
 }
 
-export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, rowLimit = 200, pageFilter = null } = {}) {
+// The API's own ceiling per request. Page+query rows are what every ranking and
+// score in this CLI is computed from, so the query asks for all of them: at 500
+// the response was cut off mid-result set and the callers aggregated a biased
+// sample. A page whose impressions spread over many long-tail queries lost most
+// of its rows, so `improve` scored it as tiny and rewrote a weaker page instead.
+const GSC_MAX_ROWS = 25000;
+
+// Truncation is invisible in the payload, so say it out loud rather than let a
+// growing site quietly reintroduce the sampling bug.
+function warnIfTruncated(rows, label) {
+  if (rows.length >= GSC_MAX_ROWS) {
+    console.warn(chalk.yellow(`  GSC returned the maximum of ${GSC_MAX_ROWS} ${label} rows — the result set is truncated and every aggregate below is a sample.`));
+  }
+}
+
+// Query discovery's candidate band is position 8-25 with low clicks, and Google
+// sorts by clicks descending, so those candidates sit in the tail of the result
+// set. The default used to be 200, which cut discovery off before it ever saw them.
+export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, rowLimit = GSC_MAX_ROWS, pageFilter = null } = {}) {
   const rows = await gscQuery(gscProperty, ['query'], { days, lag, rowLimit, pageFilter });
+  warnIfTruncated(rows, 'query');
   return rows.map(r => ({
     keyword: r.keys[0],
     impressions: r.impressions,
@@ -180,20 +199,9 @@ export async function querySearchAnalytics(gscProperty, { days = 28, lag = 7, ro
   }));
 }
 
-// The API's own ceiling per request. Page+query rows are what every ranking and
-// score in this CLI is computed from, so the query asks for all of them: at 500
-// the response was cut off mid-result set and the callers aggregated a biased
-// sample. A page whose impressions spread over many long-tail queries lost most
-// of its rows, so `improve` scored it as tiny and rewrote a weaker page instead.
-const GSC_MAX_ROWS = 25000;
-
 export async function queryPagePerformance(gscProperty, { days = 28, lag = 7, pageFilter = null } = {}) {
   const rows = await gscQuery(gscProperty, ['page', 'query'], { days, lag, rowLimit: GSC_MAX_ROWS, pageFilter });
-  // Truncation is invisible in the payload, so say it out loud rather than let a
-  // growing site quietly reintroduce the sampling bug.
-  if (rows.length >= GSC_MAX_ROWS) {
-    console.warn(chalk.yellow(`  GSC returned the maximum of ${GSC_MAX_ROWS} page/query rows — the result set is truncated and every aggregate below is a sample.`));
-  }
+  warnIfTruncated(rows, 'page/query');
   return rows;
 }
 

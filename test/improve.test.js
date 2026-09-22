@@ -179,6 +179,22 @@ describe('selectPage', () => {
     expect(page.slug).toBe('kontakt');
   });
 
+  it('treats a query an excluded page ranks better for as foreign, not the candidate\'s own', () => {
+    seedPages('preise', 'kontakt');
+    const rows = [
+      { url: 'https://acme.io/preise', query: 'preise', position: 2, impressions: 100, clicks: 0 },
+      { url: 'https://acme.io/preise', query: 'beratung', position: 30, impressions: 200, clicks: 0 },
+      { url: 'https://acme.io/kontakt', query: 'beratung', position: 5, impressions: 50, clicks: 0 },
+    ];
+
+    const page = selectPage({ rows, config: { ...config, exclude_slugs: ['kontakt'] }, cwd });
+
+    expect(page.slug).toBe('preise');
+    expect(page.queries.map(q => q.query)).toEqual(['preise']);
+    expect(page.impressions).toBe(100); // not 300: "beratung" belongs to the excluded page
+    expect(page.foreignQueries.map(q => q.query)).toEqual(['beratung']);
+  });
+
   it('returns null when nothing clears the impression floor', () => {
     seedPages('preise');
     const rows = [{ url: 'https://acme.io/preise', query: 'x', position: 2, impressions: 5, clicks: 0 }];

@@ -35,7 +35,9 @@ function nextArchiveName(cwd, week) {
 export async function track(config, cwd = process.cwd()) {
   console.log(chalk.blue('Tracking rankings...'));
 
-  const rows = await queryPagePerformance(config.gsc_property);
+  // Costs nothing on today's URL-prefix properties, but stops the CSV filling
+  // with sibling-subdomain rows the day a project moves to a domain property.
+  const rows = await queryPagePerformance(config.gsc_property, { pageFilter: config.base_url || null });
 
   const week = isoWeek();
   const csvPath = join(cwd, `seo/rankings/${week}.csv`);

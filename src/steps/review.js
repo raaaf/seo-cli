@@ -96,6 +96,11 @@ function clusterContext(config, cwd, locale) {
   if (!Array.isArray(pages)) return 'none';
   const lines = pages
     .filter(p => p.tldr)
+    // `getExistingPages` returns readdirSync order, i.e. alphabetical — a
+    // cluster past CLUSTER_PAGES pages would otherwise leave everything past
+    // the alphabetical 8th unchecked. Newest first instead, so a slice always
+    // covers the pages most likely to still be wrong.
+    .sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')))
     .slice(0, CLUSTER_PAGES)
     .flatMap(p => [
       `- ${p.slug}: ${p.tldr}`,

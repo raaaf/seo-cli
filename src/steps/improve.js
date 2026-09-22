@@ -85,12 +85,16 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
   const excluded = new Set(config.exclude_slugs || []);
   const base = String(config.base_url || '').replace(/\/+$/, '');
 
+  // Built from every row that maps to a known slug, cooldown/excluded included.
+  // An excluded or cooldown page still ranks for its queries, and bestByQuery
+  // below needs to see that or it can't recognise them as foreign to the
+  // candidate whose impressions and weighted position get inflated by them.
   const bySlug = new Map();
   for (const row of rows) {
     const url = String(row.url || '');
     if (base && !url.startsWith(base + '/')) continue;
     const slug = url.slice(base.length + 1).replace(/[?#].*$/, '').replace(/\/+$/, '');
-    if (!slug || !known.has(slug) || cooldown.has(slug) || excluded.has(slug)) continue;
+    if (!slug || !known.has(slug)) continue;
 
     const entry = bySlug.get(slug) ?? { slug, impressions: 0, clicks: 0, bestPosition: Infinity, queries: [] };
     entry.impressions += row.impressions;
@@ -121,7 +125,10 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
     page.bestPosition = own.length ? Math.min(...own.map(q => q.position)) : Infinity;
   }
 
+  // Cooldown/excluded pages did their job above (marking foreign queries) and
+  // are dropped here, once the candidate list itself is assembled.
   const ranked = [...bySlug.values()]
+    .filter(page => !cooldown.has(page.slug) && !excluded.has(page.slug))
     .map(page => ({ ...page, ...(scorePage(page) ?? {}) }))
     .filter(page => page.score)
     .sort((a, b) => b.score - a.score);
