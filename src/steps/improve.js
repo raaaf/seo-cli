@@ -21,6 +21,14 @@ const MAX_QUERIES = 15;
 // however good its single best position looks.
 const PAGE1_SHARE_FOR_SNIPPET = 0.3;
 
+// Two different thresholds on purpose. Page one decides *which* problem a page
+// has: ranked and ignored is a snippet problem. Within reach of page one
+// decides *how big* the opportunity is: impressions from queries below this
+// rank cannot be converted by rewriting the page, so they are not part of what
+// a rewrite is worth.
+const PAGE1_POSITION = 10;
+const REACHABLE_POSITION = 20;
+
 /**
  * Where the page actually stands, weighted by impressions.
  *
@@ -31,14 +39,19 @@ const PAGE1_SHARE_FOR_SNIPPET = 0.3;
  *
  * Without per-query rows (older callers, tests) it falls back to bestPosition.
  */
-function diagnose({ queries, bestPosition }) {
+function diagnose({ impressions, queries, bestPosition }) {
   if (!queries?.length) {
-    return { position: bestPosition, page1Share: bestPosition <= 10 ? 1 : 0 };
+    return {
+      position: bestPosition,
+      page1Share: bestPosition <= PAGE1_POSITION ? 1 : 0,
+      reachable: bestPosition <= REACHABLE_POSITION ? impressions : 0,
+    };
   }
   const total = queries.reduce((sum, q) => sum + q.impressions, 0) || 1;
   const position = queries.reduce((sum, q) => sum + q.position * q.impressions, 0) / total;
-  const onPage1 = queries.filter(q => q.position <= 10).reduce((sum, q) => sum + q.impressions, 0);
-  return { position, page1Share: onPage1 / total };
+  const onPage1 = queries.filter(q => q.position <= PAGE1_POSITION).reduce((sum, q) => sum + q.impressions, 0);
+  const reachable = queries.filter(q => q.position <= REACHABLE_POSITION).reduce((sum, q) => sum + q.impressions, 0);
+  return { position, page1Share: onPage1 / total, reachable };
 }
 
 /**
@@ -50,22 +63,30 @@ function diagnose({ queries, bestPosition }) {
  *   relevance problem, and it is where the volume is.
  */
 export function scorePage({ impressions, clicks, bestPosition, queries }) {
-  if (impressions < MIN_IMPRESSIONS) return null;
+  const { position, page1Share, reachable } = diagnose({ impressions, queries, bestPosition });
 
-  const { position, page1Share } = diagnose({ queries, bestPosition });
-  const where = `weighted position ${position.toFixed(0)} across ${impressions} impressions`;
+  // Scored on the reachable impressions, not the total. The total counts every
+  // long-tail query the page shows up for at position 70, and a rewrite moves
+  // none of them: onlineshop-erstellen-lassen had 4690 impressions with 5 of
+  // them within reach and outscored freelancer-webdesign-fuerth, which had 786
+  // with 759 within reach and was the only one of the two a rewrite could move.
+  // The floor uses the same figure, so "no page qualifies" means nothing is in
+  // reach rather than nothing has impressions.
+  if (reachable < MIN_IMPRESSIONS) return null;
+
+  const where = `weighted position ${position.toFixed(0)}, ${reachable} of ${impressions} impressions within reach`;
 
   if (clicks === 0 && page1Share >= PAGE1_SHARE_FOR_SNIPPET) {
     return {
-      score: impressions * 3,
+      score: reachable * 3,
       kind: 'snippet',
       reason: `${Math.round(page1Share * 100)}% of impressions on page one and not a single click (${where}): the snippet is the problem, not the ranking`,
     };
   }
-  if (position <= 20) {
-    return { score: impressions * 2, kind: 'near_page1', reason: `${where}: within reach of page one` };
+  if (position <= REACHABLE_POSITION) {
+    return { score: reachable * 2, kind: 'near_page1', reason: `${where}: within reach of page one` };
   }
-  return { score: impressions, kind: 'far', reason: `${where}: relevance gap` };
+  return { score: reachable, kind: 'far', reason: `${where}: relevance gap` };
 }
 
 /**
