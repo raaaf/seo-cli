@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { scorePage, selectPage } from '../src/steps/improve.js';
-import { loadImprovements, recordImprovement, slugsInCooldown } from '../src/lib/improvements.js';
+
+const complete = vi.fn();
+vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
+
+const { scorePage, selectPage, ctrDeficit, expectedCtr, improvePage } = await import('../src/steps/improve.js');
+const { loadImprovements, recordImprovement, slugsInCooldown } = await import('../src/lib/improvements.js');
 
 const config = {
   base_url: 'https://acme.io',
@@ -36,8 +40,10 @@ describe('scorePage', () => {
     expect(snippet.score).toBeGreaterThan(nearPage1.score);
   });
 
-  it('treats a top-five page with clicks as an ordinary near-page-one case', () => {
-    expect(scorePage({ impressions: 100, clicks: 3, bestPosition: 3 }).kind).toBe('near_page1');
+  it('treats a top-five page with clicks as an ordinary near-page-one case, when its CTR clears the curve', () => {
+    // 10 clicks on 100 impressions at position 3 is well above the expected
+    // CTR for that position, so this is not a snippet problem.
+    expect(scorePage({ impressions: 100, clicks: 10, bestPosition: 3 }).kind).toBe('near_page1');
   });
 
   it('scores pages beyond position 20 lowest, on their reachable impressions only', () => {
@@ -147,6 +153,43 @@ describe('scorePage', () => {
 
     expect(page.score).toBe(300); // same as before: reach degrades to the full total here
   });
+
+  it('classifies a page with clicks but a CTR far under the curve as snippet, and one at or above the curve as not', () => {
+    // Real shape from events: abschiedsfeier-organisieren, weighted position
+    // ~11.5, CTR 0.86%, well under what position 11-12 normally returns.
+    const farUnderCurve = scorePage({
+      impressions: 1000,
+      clicks: 8.6,
+      bestPosition: 2,
+      queries: [
+        { query: 'a', position: 2, impressions: 406 },
+        { query: 'b', position: 18, impressions: 594 },
+      ],
+    });
+    expect(farUnderCurve.kind).toBe('snippet');
+
+    const atCurve = scorePage({
+      impressions: 1000,
+      clicks: 30,
+      bestPosition: 2,
+      queries: [
+        { query: 'a', position: 2, impressions: 406 },
+        { query: 'b', position: 18, impressions: 594 },
+      ],
+    });
+    expect(atCurve.kind).toBe('near_page1');
+  });
+});
+
+describe('ctrDeficit', () => {
+  it('returns roughly zero for a page right at its position\'s expected CTR', () => {
+    const position = 5;
+    expect(ctrDeficit({ position, ctr: expectedCtr(position) })).toBeCloseTo(0, 5);
+  });
+
+  it('returns a large deficit for the abschiedsfeier-organisieren shape (position 11.5, CTR 0.86%)', () => {
+    expect(ctrDeficit({ position: 11.5, ctr: 0.0086 })).toBeGreaterThan(0.5);
+  });
 });
 
 describe('selectPage', () => {
@@ -255,6 +298,24 @@ describe('selectPage', () => {
     seedPages('preise');
     const rows = [{ url: 'https://acme.io/preise', query: 'x', position: 2, impressions: 5, clicks: 0 }];
     expect(selectPage({ rows, config, cwd })).toBeNull();
+  });
+});
+
+describe('improvePage prompt', () => {
+  beforeEach(() => complete.mockReset());
+
+  it('includes the GSC-numbers guardrail in the rendered prompt', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('not estimates');
   });
 });
 

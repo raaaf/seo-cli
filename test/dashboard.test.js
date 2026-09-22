@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { projectSummary } from '../src/lib/dashboard.js';
+import { projectSummary, classifyDecay } from '../src/lib/dashboard.js';
 
 let path;
 beforeEach(() => { path = mkdtempSync(join(tmpdir(), 'seo-dash-')); });
@@ -60,6 +60,26 @@ describe('dashboard-summary', () => {
     expect(summary.backlog).toEqual([]);
     expect(summary.suggestions.map(s => s.kind)).toContain('empty_backlog');
     expect(summary.rank).toBe(null);
+  });
+});
+
+describe('classifyDecay', () => {
+  it('calls a page sitewide when the whole site fell by a similar proportion', () => {
+    const pages = [
+      { url: 'a', from: 100, to: 50 },
+      { url: 'b', from: 100, to: 40 },
+    ]; // site fell from 200 to 90, -55%
+    const [a] = classifyDecay(pages);
+    expect(a.classification).toBe('sitewide');
+  });
+
+  it('calls a page page_specific when the site held steady', () => {
+    const pages = [
+      { url: 'a', from: 100, to: 50 },
+      { url: 'b', from: 100, to: 150 },
+    ]; // site held flat at 200, but page a fell -50% on its own
+    const [a] = classifyDecay(pages);
+    expect(a.classification).toBe('page_specific');
   });
 });
 
