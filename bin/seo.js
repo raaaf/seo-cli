@@ -17,6 +17,7 @@ import { runCommand } from '../src/commands/run.js';
 import { checkCommand } from '../src/commands/check.js';
 import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
 import { indexnowCommand } from '../src/commands/indexnow.js';
+import { indexStatusCommand } from '../src/commands/index-status.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
 import { improveCommand } from '../src/commands/improve.js';
 
@@ -65,5 +66,12 @@ program
   .command('indexnow')
   .description('push all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver)')
   .action(indexnowCommand);
+
+program
+  .command('index-status')
+  .description('Inspect live Google index status for the sitemap URLs and diff against last week')
+  .option('--json', 'print the inspection results and diff as JSON')
+  .option('--commit', 'commit seo/index-status.json to main via the GitHub API')
+  .action(indexStatusCommand);
 
 program.parse();
