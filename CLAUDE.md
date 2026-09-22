@@ -15,6 +15,8 @@ node bin/seo.js dashboard --live  # same, but pull current positions/clicks from
 node bin/seo.js check <files...>  # validate already-generated landing markdown (CI gate)
 node bin/seo.js submit-sitemap    # (re)submit <base_url>/sitemap.xml to GSC
 node bin/seo.js indexnow          # push all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver)
+node bin/seo.js index-status      # live Google index coverage per sitemap URL, diffed against last week
+node bin/seo.js conversational    # group GSC queries into AI-Mode artefacts, tracker probes and real questions
 ```
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated) and reads their committed state files. It does *not* run in the context of a single target project. Flags: `--live`, `--project <match>`, `--json`.
@@ -47,9 +49,13 @@ Greenfield (inventing keywords without GSC demand) is **opt-in** via `greenfield
 
 **pr** (`src/steps/pr.js`): Commits all generated files plus `seo/keywords.json` and `seo/sitemap-pending.json` to a branch named `seo/YYYY-WW`, then opens a GitHub PR with an SEO check table in the body. Writes `seo/last-pr.json` for CI auto-merge workflows. The gate that auto-merges such a PR also resubmits the sitemap to Google and, when `indexnow_key` is set, pushes all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver) via `seo indexnow`.
 
-**improve** (`src/steps/improve.js`, `src/commands/improve.js`): Runs when the backlog is empty, and standalone via `seo improve`. Aggregates live GSC page/query data per landing page of the default locale and picks the one with the strongest case: a clickless page in the top five is a snippet problem (title and description), a page at position 6-20 with impressions is a relevance problem. The rewrite gets the page's actual queries as context and may not claim services the page does not already claim. Rewritten slugs go into `seo/improvements.json` and are off the list for 56 days. Own branch `seo/improve-YYYY-WW`.
+**improve** (`src/steps/improve.js`, `src/commands/improve.js`): Runs when the backlog is empty, and standalone via `seo improve`. Aggregates live GSC page/query data per landing page of the default locale and picks the one with the strongest case. Scoring uses a page's *reachable* impressions, meaning those from queries at position 20 or better, not its total: the total counts long-tail queries at position 70 that no rewrite moves, and scoring on it sent the budget to pages that could not be helped (`onlineshop-erstellen-lassen`, 4690 impressions with 5 in reach, outranked `freelancer-webdesign-fuerth`, 786 with 759 in reach). A page with at least 30 percent of its impressions on page one whose CTR sits below half of what its position normally returns is a snippet problem (title and description); a page within reach of page one is a relevance problem; anything further out scores lowest. The CTR curve comes from published English-language studies, is not calibrated for German SERPs, and is used only to compare a page against itself. The rewrite gets the page's actual queries as context and may not claim services the page does not already claim. Rewritten slugs go into `seo/improvements.json` and are off the list for 56 days. Own branch `seo/improve-YYYY-WW`.
 
 Two cluster guards, added after an improve run pushed a page further into its neighbour's topic: `selectPage` drops every query another landing page ranks better for, before scoring, so a page is neither picked for nor rewritten towards impressions that belong elsewhere (the dropped ones are logged and kept on `page.foreignQueries`). For the fuzzier half, the prompt receives the slugs of all sibling pages and the instruction to trim, not extend, whatever reaches into their topics.
+
+**index-check** (`src/steps/index-check.js`, `src/commands/index-status.js`): Inspects the live Google index state of every sitemap URL (capped at 50) and diffs it against `seo/index-status.json` from the previous run, reporting newly dropped, newly indexed and still-missing URLs. It exists because `zeit.rafaelalex.de` lost its whole index on 2026-08-04 and nobody noticed for five weeks: a quiet week and a silently deindexed one both print "nothing to do". A first run writes a baseline rather than claiming everything just dropped. `--commit` (used only by the weekly workflow) pushes the snapshot straight to `main`, with `[skip ci]` in the message because portfolio-2025 deploys to FTP on every unfiltered push.
+
+**conversational** (`src/lib/conversational.js`, `src/commands/conversational.js`): A reading instrument, not a pipeline step. Google folds AI Mode and AI Overview activity into the ordinary web search type and counts every follow-up turn as its own query, so conversation fragments, full natural-language prompts and AI-visibility-tracker probes land in the query table. The classifier is deterministic pattern matching into `artefact`, `tracker_probe`, `conversational` and `keyword`. Deliberately not wired into `discover`: making it an input is a separate decision.
 
 **track** (`src/steps/track.js`): Appends GSC page/query performance to `seo/rankings/YYYY-WW.csv`. Gitignored in target projects.
 
@@ -58,7 +64,7 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 | File | Role |
 |---|---|
 | `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, up to 4 total attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. `complete({ batch: true })` submits a single-request Message Batch, polls, and falls back to an interactive call on error, non-success, or wait-cap timeout. |
-| `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. |
+| `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. Queries ask for the API ceiling of 25000 rows and warn when a response comes back at exactly that size: the old 500-row cap truncated silently and every aggregate built on it was a biased sample. |
 | `src/lib/serpapi.js` | SerpAPI wrapper. Quota tracked in `~/.seo-cli-serpapi.json`, resets monthly. Hard stop at 240/month (free tier is 250/month). |
 | `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum, `SLUG_REGEX`/`isValidSlug`, and state-file path constants. |
 | `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`, merges `DEFAULTS`. Also `defaultLocale`/`localeLandingPath` helpers. |
@@ -69,6 +75,8 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 | `src/lib/safe-fetch.js` | `safeFetch`: SSRF guard. Resolves DNS and blocks private/reserved IPs before fetching. |
 | `src/lib/site-fetch.js` | `fetchPages`/`stripHtml`: fetch a list of URLs (via `safeFetch`) and strip to plain text. |
 | `src/lib/landings.js` | `getExistingSlugs`/`getExistingTitles`/`getExistingPages`: enumerate on-disk landing pages. Module-scope memo cache. |
+| `src/lib/index-status.js` | Fetch/load/save/diff Google index coverage per URL. The "is indexed" predicate lists Google's three not-indexed wordings in one place, because that wording drifts. |
+| `src/lib/conversational.js` | `classifyQuery`/`groupConversational`: deterministic buckets for AI-Mode traces in GSC query rows. No LLM. |
 | `src/lib/improvements.js` | Load/save `seo/improvements.json`, plus the 56-day cooldown per slug. |
 | `src/lib/similarity.js` | `findTokenSetDuplicate`: rejects word-order variants of keywords/slugs we already cover. |
 | `src/lib/cannibalization.js` | `competingPages`/`isCannibalized`: counts our own landing pages already ranking for a query, from GSC page/query rows. |
@@ -100,6 +108,7 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 | `seo/last-pr.json` | Last PR URL for CI | commit |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo/improvements.json` | Which pages were rewritten when, with the queries that drove it | commit |
+| `seo/index-status.json` | Last week's Google index coverage per sitemap URL, for the weekly diff | commit |
 
 ### Multi-locale support
 
