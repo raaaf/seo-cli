@@ -5,7 +5,7 @@ import { format } from '../lib/date.js';
 import { getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { isValidSlug } from '../lib/keywords.js';
-import { MODELS } from '../lib/models.js';
+import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { defaultLocale } from '../lib/config.js';
 import { stripCodeFence } from './generate.js';
@@ -58,7 +58,7 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
       system: 'You are an experienced SEO writer creating a localized adaptation of an existing page, not a literal translation. Follow the instructions exactly.',
       prompt,
       model: MODELS.generate,
-      maxTokens: 8000,
+      maxTokens: GENERATE_MAX_TOKENS,
     });
 
     markdown = stripCodeFence(markdown);

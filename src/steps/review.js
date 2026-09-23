@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
 import { format } from '../lib/date.js';
 import { fillTemplate } from '../lib/template.js';
-import { MODELS } from '../lib/models.js';
+import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { getExistingPages } from '../lib/landings.js';
 import { defaultLocale } from '../lib/config.js';
 
@@ -42,7 +42,7 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
       system: 'You are a fact-checker. You verify claims against sources and correct them. You do not rewrite prose you cannot fault.',
       prompt: fillTemplate(REVIEW_PROMPT, vars),
       model: MODELS.generate,
-      maxTokens: 8000,
+      maxTokens: GENERATE_MAX_TOKENS,
       json: true,
       webSearch: true,
     });

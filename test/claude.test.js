@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const create = vi.fn();
+const stream = vi.fn();
 const batchCreate = vi.fn();
 const batchRetrieve = vi.fn();
 const batchResults = vi.fn();
@@ -9,7 +9,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
   default: class Anthropic {
     constructor() {
       this.messages = {
-        create,
+        stream,
         batches: { create: batchCreate, retrieve: batchRetrieve, results: batchResults, cancel: batchCancel },
       };
     }
@@ -21,13 +21,17 @@ const { complete } = await import('../src/lib/claude.js');
 
 const reply = (text) => ({ content: [{ type: 'text', text }] });
 
+// The interactive path is `messages.stream(params).finalMessage()`; wrap a
+// resolved message the way the SDK's MessageStream does.
+const streamsTo = (res) => ({ finalMessage: () => Promise.resolve(res) });
+
 // Async iterable helper for batches.results().
 function resultsOf(entries) {
   return { [Symbol.asyncIterator]: async function* () { for (const e of entries) yield e; } };
 }
 
 beforeEach(() => {
-  create.mockReset();
+  stream.mockReset();
   batchCreate.mockReset();
   batchRetrieve.mockReset();
   batchResults.mockReset();
@@ -36,71 +40,95 @@ beforeEach(() => {
 
 describe('claude-complete', () => {
   it('returns trimmed text', async () => {
-    create.mockResolvedValue(reply('  hello world  '));
+    stream.mockReturnValue(streamsTo(reply('  hello world  ')));
     expect(await complete({ system: 's', prompt: 'p' })).toBe('hello world');
   });
 
   it('uses the shared default model when none is given', async () => {
-    create.mockResolvedValue(reply('ok'));
+    stream.mockReturnValue(streamsTo(reply('ok')));
     await complete({ system: 's', prompt: 'p' });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-5' }));
+    expect(stream).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-5' }));
+  });
+
+  it('calls messages.stream().finalMessage() on the interactive path, not messages.create', async () => {
+    stream.mockReturnValue(streamsTo(reply('ok')));
+    await complete({ system: 's', prompt: 'p' });
+    expect(stream).toHaveBeenCalledTimes(1);
   });
 
   it('extracts JSON from a ```json fence', async () => {
-    create.mockResolvedValue(reply('```json\n{"a":1}\n```'));
+    stream.mockReturnValue(streamsTo(reply('```json\n{"a":1}\n```')));
     expect(await complete({ system: 's', prompt: 'p', json: true })).toEqual({ a: 1 });
   });
 
   it('extracts a bare JSON object', async () => {
-    create.mockResolvedValue(reply('here you go {"b":2} done'));
+    stream.mockReturnValue(streamsTo(reply('here you go {"b":2} done')));
     expect(await complete({ system: 's', prompt: 'p', json: true })).toEqual({ b: 2 });
   });
 
   it('throws when no JSON is present', async () => {
-    create.mockResolvedValue(reply('no json here'));
+    stream.mockReturnValue(streamsTo(reply('no json here')));
     await expect(complete({ system: 's', prompt: 'p', json: true })).rejects.toThrow(/no JSON/);
   });
 
   it('throws on malformed JSON', async () => {
-    create.mockResolvedValue(reply('{ not: valid, }'));
+    stream.mockReturnValue(streamsTo(reply('{ not: valid, }')));
     await expect(complete({ system: 's', prompt: 'p', json: true })).rejects.toThrow(/malformed JSON/);
   });
 
   it('rethrows a non-retryable error without retrying', async () => {
-    // Guard against vitest's phantom no-arg probe call; only a real request throws.
-    create.mockImplementation((req) => {
-      if (req) throw Object.assign(new Error('bad request'), { status: 400 });
-    });
+    stream.mockReturnValue({ finalMessage: () => Promise.reject(Object.assign(new Error('bad request'), { status: 400 })) });
     let caught;
     try { await complete({ system: 's', prompt: 'p' }); } catch (e) { caught = e; }
     expect(caught?.message).toBe('bad request');
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(stream).toHaveBeenCalledTimes(1);
   });
 
   it('skips a leading thinking block to find the text block', async () => {
-    create.mockResolvedValue({
+    stream.mockReturnValue(streamsTo({
       content: [
         { type: 'thinking', thinking: '...' },
         { type: 'text', text: '{"a":1}' },
       ],
-    });
+    }));
     expect(await complete({ system: 's', prompt: 'p', json: true })).toEqual({ a: 1 });
   });
 
   it('throws a descriptive error instead of crashing when there is no text block', async () => {
-    create.mockResolvedValue({ content: [], stop_reason: 'max_tokens' });
-    await expect(complete({ system: 's', prompt: 'p' })).rejects.toThrow(/max_tokens/);
+    stream.mockReturnValue(streamsTo({ content: [], stop_reason: 'end_turn' }));
+    await expect(complete({ system: 's', prompt: 'p' })).rejects.toThrow(/no text block/);
   });
 
-  it('batch success returns the batch result text and never calls messages.create', async () => {
+  it('throws naming max_tokens and the usage when the interactive response was truncated', async () => {
+    stream.mockReturnValue(streamsTo({
+      content: [{ type: 'text', text: 'cut off half' }],
+      stop_reason: 'max_tokens',
+      usage: { input_tokens: 10, output_tokens: 4096 },
+    }));
+    await expect(complete({ system: 's', prompt: 'p', maxTokens: 4096 }))
+      .rejects.toThrow(/max_tokens.*4096.*4096/s);
+  });
+
+  it('batch success returns the batch result text and never calls messages.stream', async () => {
     batchCreate.mockResolvedValue({ id: 'batch_1', processing_status: 'ended' });
     batchRetrieve.mockResolvedValue({ processing_status: 'ended' });
     batchResults.mockResolvedValue(resultsOf([
-      { custom_id: 'seo-1', result: { type: 'succeeded', message: { ...reply('batched text'), usage: { input_tokens: 10, output_tokens: 20 } } } },
+      { custom_id: 'seo-1', result: { type: 'succeeded', message: { ...reply('batched text'), stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 20 } } } },
     ]));
     const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
     expect(text).toBe('batched text');
-    expect(create).not.toHaveBeenCalled();
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('throws on a succeeded batch result that hit max_tokens, without falling back to the interactive request', async () => {
+    batchCreate.mockResolvedValue({ id: 'batch_max', processing_status: 'ended' });
+    batchRetrieve.mockResolvedValue({ processing_status: 'ended' });
+    batchResults.mockResolvedValue(resultsOf([
+      { custom_id: 'seo-1', result: { type: 'succeeded', message: { ...reply('cut off'), stop_reason: 'max_tokens', usage: { input_tokens: 10, output_tokens: 32000 } } } },
+    ]));
+    await expect(complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1, maxTokens: 32000 }))
+      .rejects.toThrow(/max_tokens/);
+    expect(stream).not.toHaveBeenCalled();
   });
 
   it('falls back to the interactive request when the batch result errors', async () => {
@@ -109,16 +137,16 @@ describe('claude-complete', () => {
     batchResults.mockResolvedValue(resultsOf([
       { custom_id: 'seo-1', result: { type: 'errored' } },
     ]));
-    create.mockResolvedValue(reply('interactive fallback'));
+    stream.mockReturnValue(streamsTo(reply('interactive fallback')));
     const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
     expect(text).toBe('interactive fallback');
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(stream).toHaveBeenCalledTimes(1);
   });
 
   it('cancels and falls back to interactive when the wait cap is reached', async () => {
     batchCreate.mockResolvedValue({ id: 'batch_3', processing_status: 'in_progress' });
     batchRetrieve.mockResolvedValue({ processing_status: 'in_progress' });
-    create.mockResolvedValue(reply('interactive after timeout'));
+    stream.mockReturnValue(streamsTo(reply('interactive after timeout')));
     const text = await complete({ system: 's', prompt: 'p', batch: true, batchWaitMs: 0, batchPollMs: 1 });
     expect(text).toBe('interactive after timeout');
     expect(batchCancel).toHaveBeenCalledWith('batch_3');
@@ -133,9 +161,9 @@ describe('claude-complete', () => {
 
   it('falls back to interactive when batch submission itself throws', async () => {
     batchCreate.mockRejectedValue(new Error('quota exceeded'));
-    create.mockResolvedValue(reply('interactive after submit failure'));
+    stream.mockReturnValue(streamsTo(reply('interactive after submit failure')));
     const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
     expect(text).toBe('interactive after submit failure');
-    expect(create).toHaveBeenCalledTimes(1);
+    expect(stream).toHaveBeenCalledTimes(1);
   });
 });

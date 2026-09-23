@@ -6,7 +6,7 @@ import { format } from '../lib/date.js';
 import { getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { isValidSlug } from '../lib/keywords.js';
-import { MODELS } from '../lib/models.js';
+import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
@@ -50,7 +50,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     system: 'You are an experienced SEO writer. Follow the instructions exactly.',
     prompt,
     model: MODELS.generate,
-    maxTokens: 8000,
+    maxTokens: GENERATE_MAX_TOKENS,
     batch: config.batch_generation !== false,
   });
 

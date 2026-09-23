@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
 import { queryPagePerformance } from '../lib/gsc.js';
 import { fillTemplate } from '../lib/template.js';
-import { MODELS } from '../lib/models.js';
+import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { format } from '../lib/date.js';
 import { defaultLocale, localeLandingPath } from '../lib/config.js';
 import { getExistingSlugs } from '../lib/landings.js';
@@ -251,7 +251,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     system: 'You are an experienced SEO editor improving an existing page. You keep what works and change only what the data says is wrong.',
     prompt,
     model: MODELS.generate,
-    maxTokens: 8000,
+    maxTokens: GENERATE_MAX_TOKENS,
   }));
 
   return { slug: page.slug, filePath, markdown };
