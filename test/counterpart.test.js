@@ -7,7 +7,7 @@ const complete = vi.fn();
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { generateCounterpart, linkAlternates } = await import('../src/steps/counterpart.js');
-const { MODELS } = await import('../src/lib/models.js');
+const { MODELS, GENERATE_MAX_TOKENS } = await import('../src/lib/models.js');
 
 let dir;
 const config = {
@@ -39,7 +39,7 @@ describe('generate-counterpart', () => {
     expect(slug).toBe('company-event-planning');
     expect(markdown).toContain('slug: company-event-planning');
     expect(complete).toHaveBeenCalledTimes(1);
-    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ model: MODELS.generate, maxTokens: 8000 }));
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ model: MODELS.generate, maxTokens: GENERATE_MAX_TOKENS }));
   });
 
   it('retries once when the chosen slug collides with an existing page, then succeeds', async () => {

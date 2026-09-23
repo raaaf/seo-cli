@@ -7,7 +7,7 @@ const complete = vi.fn();
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { generatePage } = await import('../src/steps/generate.js');
-const { MODELS } = await import('../src/lib/models.js');
+const { MODELS, GENERATE_MAX_TOKENS } = await import('../src/lib/models.js');
 
 let dir;
 const config = {
@@ -43,7 +43,7 @@ describe('generate-page', () => {
     complete.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
     await generatePage(keyword, config, dir);
     expect(complete).toHaveBeenCalledWith(expect.objectContaining({
-      model: MODELS.generate, maxTokens: 8000,
+      model: MODELS.generate, maxTokens: GENERATE_MAX_TOKENS,
     }));
   });
 

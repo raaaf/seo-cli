@@ -34,10 +34,24 @@ function buildParams({ model, maxTokens, system, messages, thinking, outputConfi
   };
 }
 
+// A message that hit the max_tokens cap is not usable output, whether or not
+// it happened to contain a text block: on 2026-09-23 adaptive thinking spent
+// most or all of an 8000-token budget, leaving generate.js and improve.js
+// truncated markdown or none at all. Fail loudly here instead of letting
+// runBatch log "succeeded" or validate.js discover it downstream.
+function assertNotTruncated(res, maxTokens) {
+  if (res.stop_reason === 'max_tokens') {
+    throw new Error(`Claude hit stop_reason: max_tokens (limit ${maxTokens}, used ${res.usage?.output_tokens} output tokens)`);
+  }
+}
+
 // Submits a single-request batch and polls until it ends or the wait cap is
 // reached. Returns the batch result message on success, or null when the
 // caller should fall back to the interactive request (submission failure,
-// non-succeeded result, or wait cap reached).
+// non-succeeded result, or wait cap reached). A succeeded result is returned
+// even when it hit max_tokens (not null): the caller's assertNotTruncated
+// throws on it, rather than a retry falling back to the interactive request
+// and truncating the exact same way on the exact same params.
 async function runBatch(params, batchWaitMs, batchPollMs) {
   let batch;
   try {
@@ -67,8 +81,8 @@ async function runBatch(params, batchWaitMs, batchPollMs) {
   for await (const r of await getClient().messages.batches.results(batch.id)) {
     if (r.custom_id !== 'seo-1') continue;
     if (r.result.type === 'succeeded') {
-      const { usage } = r.result.message;
-      console.log(chalk.green(`  Batch ${batch.id} succeeded (${usage.input_tokens} in / ${usage.output_tokens} out tokens)`));
+      const { usage, stop_reason } = r.result.message;
+      console.log(chalk.green(`  Batch ${batch.id} succeeded (${usage.input_tokens} in / ${usage.output_tokens} out tokens, stop_reason: ${stop_reason})`));
       return r.result.message;
     }
     console.log(chalk.yellow(`  Batch ${batch.id} result: ${r.result.type}, falling back to the interactive request`));
@@ -102,15 +116,20 @@ export async function complete({
 
       let res = batch ? await runBatch(params, batchWaitMs, batchPollMs) : null;
       if (!res) {
-        res = await getClient().messages.create(params);
+        // Streamed rather than a plain create(): a 32000-max_tokens request
+        // (raised from 8000 so adaptive thinking has room, see models.js)
+        // risks hitting the SDK's HTTP timeout on a non-streaming call.
+        res = await getClient().messages.stream(params).finalMessage();
       }
+      assertNotTruncated(res, maxTokens);
 
       // The server-side search loop caps out at 10 iterations and returns
       // stop_reason "pause_turn"; resending the assistant turn resumes it.
       for (let resume = 0; res.stop_reason === 'pause_turn' && resume < MAX_PAUSE_RESUMES; resume++) {
-        res = await getClient().messages.create(
+        res = await getClient().messages.stream(
           buildParams({ model, maxTokens, system, messages: [...messages, { role: 'assistant', content: res.content }], thinking, outputConfig, tools })
-        );
+        ).finalMessage();
+        assertNotTruncated(res, maxTokens);
       }
 
       // With web search the answer is the LAST text block: earlier ones narrate
