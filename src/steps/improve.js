@@ -8,7 +8,7 @@ import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { format } from '../lib/date.js';
 import { defaultLocale, localeLandingPath } from '../lib/config.js';
 import { getExistingSlugs } from '../lib/landings.js';
-import { stripCodeFence } from './generate.js';
+import { stripCodeFence, loadStyleDoc } from './generate.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
 const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
@@ -236,6 +236,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     clicks: page.clicks,
     best_position: page.bestPosition.toFixed(1),
     gsc_guardrail: GSC_GUARDRAIL,
+    style_guide: loadStyleDoc(config, cwd),
     validator_feedback: validatorFeedback
       ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
       : '(first attempt — no prior feedback)',

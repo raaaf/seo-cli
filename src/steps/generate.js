@@ -82,7 +82,7 @@ export function stripCodeFence(text) {
   return t.trim();
 }
 
-function loadStyleDoc(config, cwd) {
+export function loadStyleDoc(config, cwd) {
   const key = `${cwd}::${config.style_doc || ''}`;
   if (styleDocCacheKey === key) return styleDocCache;
   let result;

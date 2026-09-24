@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -135,6 +135,24 @@ describe('reviewPage', () => {
 
     expect(markdown).toBe(PAGE);
     expect(findings).toEqual([]);
+  });
+
+  it('includes the project style doc when config.style_doc points at a file', async () => {
+    writeFileSync(join(cwd, 'style.md'), 'CANONICAL_PRICE_MARKER: 4900 EUR', 'utf8');
+    complete.mockResolvedValue({ findings: [] });
+
+    await reviewPage(PAGE, keyword, { ...config, style_doc: 'style.md' }, cwd);
+
+    expect(complete.mock.calls[0][0].prompt).toContain('CANONICAL_PRICE_MARKER: 4900 EUR');
+  });
+
+  it('falls back to the default style doc when config.style_doc is not set', async () => {
+    complete.mockResolvedValue({ findings: [] });
+
+    await reviewPage(PAGE, keyword, config, cwd);
+
+    const defaultStyle = readFileSync(new URL('../src/prompts/style-default.md', import.meta.url), 'utf8');
+    expect(complete.mock.calls[0][0].prompt).toContain(defaultStyle.slice(0, 50));
   });
 
   it('ignores findings with an unknown severity', async () => {

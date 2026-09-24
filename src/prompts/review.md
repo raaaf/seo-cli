@@ -36,6 +36,15 @@ If you cannot verify a claim either way, do NOT report it as a finding. Report
 only what search actually contradicts or confirms as outdated. Absence of
 evidence is not a finding.
 
+## Style guide
+
+{{style_guide}}
+
+If the page below states a price or pricing rule that contradicts a canonical
+value or rule in the style guide, that is a **medium** finding, and the
+correction should move the number to the canonical value. The style guide
+outranks the cluster below when the two disagree.
+
 ## Cluster consistency
 
 These pages are already published in the same cluster. If the page below states a

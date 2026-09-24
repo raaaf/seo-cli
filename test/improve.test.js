@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -316,6 +316,34 @@ describe('improvePage prompt', () => {
 
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toContain('not estimates');
+  });
+
+  it('includes the project style doc when config.style_doc points at a file', async () => {
+    seedPages('preise');
+    writeFileSync(join(cwd, 'style.md'), 'CANONICAL_PRICE_MARKER: 4900 EUR', 'utf8');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      { ...config, style_doc: 'style.md' },
+      cwd,
+    );
+
+    expect(complete.mock.calls[0][0].prompt).toContain('CANONICAL_PRICE_MARKER: 4900 EUR');
+  });
+
+  it('falls back to the default style doc when config.style_doc is not set', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    const defaultStyle = readFileSync(new URL('../src/prompts/style-default.md', import.meta.url), 'utf8');
+    expect(complete.mock.calls[0][0].prompt).toContain(defaultStyle.slice(0, 50));
   });
 });
 
