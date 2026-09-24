@@ -64,6 +64,32 @@ describe('pr-create', () => {
     expect(enPage.content).not.toContain('hreflang:');
   });
 
+  it('prefixes the counterpart sitemap entry with counterpart_url_prefix when set', async () => {
+    const config = { repo: 'o/r', locale: 'de', locales: ['de'], counterpart_locale: 'en', counterpart_url_prefix: '/en' };
+    const pages = [
+      page(),
+      page({ locale: 'en', slug: 'website-maintenance', filePath: 'resources/landing/en/website-maintenance.md' }),
+    ];
+    await createPR({ generatedPages: pages, keywordsJsonContent: { keywords: [] }, config, cwd: dir });
+
+    const { files } = createBranchAndCommit.mock.calls[0][0];
+    const sitemap = JSON.parse(files.find(f => f.path === 'seo/sitemap-pending.json').content);
+    expect(sitemap.slugs).toContain('/en/website-maintenance');
+  });
+
+  it('keeps the bare /{slug} counterpart sitemap entry when counterpart_url_prefix is unset (default behavior)', async () => {
+    const config = { repo: 'o/r', locale: 'de', locales: ['de'], counterpart_locale: 'en' };
+    const pages = [
+      page(),
+      page({ locale: 'en', slug: 'website-maintenance', filePath: 'resources/landing/en/website-maintenance.md' }),
+    ];
+    await createPR({ generatedPages: pages, keywordsJsonContent: { keywords: [] }, config, cwd: dir });
+
+    const { files } = createBranchAndCommit.mock.calls[0][0];
+    const sitemap = JSON.parse(files.find(f => f.path === 'seo/sitemap-pending.json').content);
+    expect(sitemap.slugs).toContain('/website-maintenance');
+  });
+
   it('injects hreflang frontmatter for multi-locale pages', async () => {
     const config = { repo: 'o/r', locale: 'de', locales: ['de', 'en'] };
     const pages = [

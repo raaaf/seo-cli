@@ -92,10 +92,30 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
     }
   }
 
+  const prefix = config.counterpart_url_prefix || '';
+  markdown = rewriteCounterpartLinks(markdown, { targetSlugs, newSlug: slug, prefix });
+
   const canonicalBaseUrl = (config.base_url || '').replace(/\/$/, '');
-  markdown = markdown.replace(/CANONICAL_URL/g, `${canonicalBaseUrl}/${slug}`);
+  markdown = markdown.replace(/CANONICAL_URL/g, `${canonicalBaseUrl}${prefix}/${slug}`);
 
   return { markdown, slug };
+}
+
+/**
+ * Rewrite root-relative Markdown links `](/<slug>)` (optionally with a
+ * `#anchor`) to `](<prefix>/<slug>)`, but only when `<slug>` is a known
+ * target-locale slug (an existing one, or the counterpart's own newly
+ * generated slug) and isn't already prefixed. External URLs, source-locale
+ * slugs, and already-prefixed links pass through untouched. Pure string
+ * manipulation, no I/O. No-op when `prefix` is empty.
+ */
+export function rewriteCounterpartLinks(markdown, { targetSlugs, newSlug, prefix }) {
+  if (!prefix) return markdown;
+  const allowedSlugs = new Set([...targetSlugs, newSlug]);
+  return markdown.replace(/\]\(\/([a-z0-9-]+)((?:#[^)]*)?)\)/g, (match, slug, anchor) => {
+    if (!allowedSlugs.has(slug)) return match;
+    return `](${prefix}/${slug}${anchor})`;
+  });
 }
 
 /**

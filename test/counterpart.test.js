@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 const complete = vi.fn();
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
-const { generateCounterpart, linkAlternates } = await import('../src/steps/counterpart.js');
+const { generateCounterpart, linkAlternates, rewriteCounterpartLinks } = await import('../src/steps/counterpart.js');
 const { MODELS, GENERATE_MAX_TOKENS } = await import('../src/lib/models.js');
 
 let dir;
@@ -117,6 +117,82 @@ describe('generate-counterpart', () => {
     complete.mockResolvedValue('---\nslug: club-events\n---\nBody.');
 
     await expect(generateCounterpart(sourceMarkdown, keyword, config, dir)).rejects.toThrow(/collides/);
+  });
+
+  it('leaves CANONICAL_URL byte-identical to today when counterpart_url_prefix is unset', async () => {
+    complete.mockResolvedValue('---\nslug: club-events\n---\nCanonical: CANONICAL_URL');
+    const { markdown } = await generateCounterpart(sourceMarkdown, keyword, config, dir);
+
+    expect(markdown).toContain('Canonical: https://acme.io/club-events');
+  });
+
+  it('includes counterpart_url_prefix in CANONICAL_URL when set', async () => {
+    writeLanding('resources/landing/en', 'web-development.md');
+    const prefixedConfig = { ...config, counterpart_url_prefix: '/en' };
+    complete.mockResolvedValue('---\nslug: club-events\n---\nCanonical: CANONICAL_URL');
+
+    const { markdown } = await generateCounterpart(sourceMarkdown, keyword, prefixedConfig, dir);
+
+    expect(markdown).toContain('Canonical: https://acme.io/en/club-events');
+  });
+
+  it('rewrites links to other target-locale slugs with counterpart_url_prefix', async () => {
+    writeLanding('resources/landing/en', 'web-development.md');
+    const prefixedConfig = { ...config, counterpart_url_prefix: '/en' };
+    complete.mockResolvedValue(
+      '---\nslug: club-events\n---\nSee [web dev](/web-development), [de page](/firmenfeier-planen), [external](https://example.com), [already](/en/already-prefixed).'
+    );
+
+    const { markdown } = await generateCounterpart(sourceMarkdown, keyword, prefixedConfig, dir);
+
+    expect(markdown).toContain('[web dev](/en/web-development)');
+    expect(markdown).toContain('[de page](/firmenfeier-planen)');
+    expect(markdown).toContain('[external](https://example.com)');
+    expect(markdown).toContain('[already](/en/already-prefixed)');
+  });
+});
+
+describe('rewrite-counterpart-links', () => {
+  it('rewrites a link to a known target-locale slug with the prefix', () => {
+    const md = 'Read [more](/web-development) here.';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: ['web-development'], newSlug: 'club-events', prefix: '/en' });
+    expect(out).toBe('Read [more](/en/web-development) here.');
+  });
+
+  it('rewrites a link to the newly generated slug with the prefix', () => {
+    const md = 'Back to [this page](/club-events).';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: [], newSlug: 'club-events', prefix: '/en' });
+    expect(out).toBe('Back to [this page](/en/club-events).');
+  });
+
+  it('preserves an anchor fragment on a rewritten link', () => {
+    const md = '[jump](/web-development#pricing)';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: ['web-development'], newSlug: 'club-events', prefix: '/en' });
+    expect(out).toBe('[jump](/en/web-development#pricing)');
+  });
+
+  it('leaves a DE-locale slug link unchanged', () => {
+    const md = '[de link](/firmenfeier-planen)';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: ['web-development'], newSlug: 'club-events', prefix: '/en' });
+    expect(out).toBe(md);
+  });
+
+  it('leaves an external link unchanged', () => {
+    const md = '[ext](https://example.com)';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: ['web-development'], newSlug: 'club-events', prefix: '/en' });
+    expect(out).toBe(md);
+  });
+
+  it('leaves an already-prefixed link unchanged', () => {
+    const md = '[already](/en/already-prefixed)';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: ['already-prefixed'], newSlug: 'club-events', prefix: '/en' });
+    expect(out).toBe(md);
+  });
+
+  it('is a no-op when the prefix is empty', () => {
+    const md = '[link](/web-development)';
+    const out = rewriteCounterpartLinks(md, { targetSlugs: ['web-development'], newSlug: 'club-events', prefix: '' });
+    expect(out).toBe(md);
   });
 });
 

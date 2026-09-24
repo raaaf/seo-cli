@@ -9,7 +9,15 @@ export function loadConfig(cwd = process.cwd()) {
   if (!existsSync(path)) {
     throw new Error(`${CONFIG_FILE} not found. Run "seo init" first.`);
   }
-  return { ...DEFAULTS, ...(yaml.load(readFileSync(path, 'utf8')) || {}) };
+  const config = { ...DEFAULTS, ...(yaml.load(readFileSync(path, 'utf8')) || {}) };
+  config.counterpart_url_prefix = normalizeUrlPrefix(config.counterpart_url_prefix);
+  return config;
+}
+
+function normalizeUrlPrefix(prefix) {
+  const trimmed = String(prefix || '').replace(/\/+$/, '');
+  if (!trimmed) return '';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
 }
 
 export function saveConfig(config, cwd = process.cwd()) {
@@ -25,6 +33,11 @@ export const DEFAULTS = {
   weekly_cap: 2,
   min_impressions: 5,
   counterpart_locale: null,
+  // Root-relative URL prefix for counterpart pages, e.g. '/en' when the
+  // target site serves them under their own path segment instead of sharing
+  // the bare /{slug} URL space with the default locale. Normalized on load:
+  // trailing slash stripped, leading slash enforced when non-empty.
+  counterpart_url_prefix: '',
   // Invent keywords when Search Console yields none. Off by default: an empty
   // backlog means the topic space is covered, not that the week needs filling.
   greenfield: false,
