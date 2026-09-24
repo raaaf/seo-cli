@@ -20,6 +20,15 @@ function getClient() {
 const WEB_SEARCH_TOOL = Object.freeze({ type: 'web_search_20260209', name: 'web_search' });
 const MAX_PAUSE_RESUMES = 3;
 
+// Opus 5.5 runs broader safety classifiers (bio, reasoning_extraction, on top
+// of cyber) than Opus 5 and can decline a request with stop_reason: "refusal".
+// Ship the fallback opt-in so a decline recovers on Opus 5 instead of failing
+// the pipeline outright. Beta, array form (fallbacks: "default" isn't typed in
+// the installed SDK yet) — not available on the Batches API, so only the
+// interactive path below uses it.
+const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
+const FALLBACK_MODELS = Object.freeze([{ model: 'claude-opus-5' }]);
+
 // Builds the params object shared by the interactive request, its pause_turn
 // resume, and the batch request.
 function buildParams({ model, maxTokens, system, messages, thinking, outputConfig, tools }) {
@@ -42,6 +51,16 @@ function buildParams({ model, maxTokens, system, messages, thinking, outputConfi
 function assertNotTruncated(res, maxTokens) {
   if (res.stop_reason === 'max_tokens') {
     throw new Error(`Claude hit stop_reason: max_tokens (limit ${maxTokens}, used ${res.usage?.output_tokens} output tokens)`);
+  }
+}
+
+// A classifier decline is a normal HTTP 200 with stop_reason: "refusal", not
+// an exception — surface it as one so callers don't treat empty/partial
+// content as a successful generation.
+function assertNotRefused(res) {
+  if (res.stop_reason === 'refusal') {
+    const category = res.stop_details?.category ?? 'unknown';
+    throw new Error(`Claude declined the request (stop_reason: refusal, category: ${category})`);
   }
 }
 
@@ -106,9 +125,17 @@ export async function complete({
   // generation/review/improve/counterpart routes are judgment-heavy and
   // should think, whichever model MODELS.generate points at.
   const thinking = model === MODELS.generate ? { type: 'adaptive' } : undefined;
+  const useFallback = model === MODELS.generate && !batch;
   // Structured Outputs are incompatible with citations, so callers that use
-  // web search (and therefore citations) must not pass a schema.
-  const outputConfig = json && schema ? { output_config: { format: { type: 'json_schema', schema } } } : undefined;
+  // web search (and therefore citations) must not pass a schema. Opus 5.5's
+  // default effort is `medium` (Opus 5's was `high`); set it explicitly so
+  // these judgment-heavy routes keep running at the effort they were tuned
+  // at — Sonnet already defaults to `high` and is left unset.
+  const outputConfigFields = {
+    ...(model === MODELS.generate ? { effort: 'high' } : {}),
+    ...(json && schema ? { format: { type: 'json_schema', schema } } : {}),
+  };
+  const outputConfig = Object.keys(outputConfigFields).length ? { output_config: outputConfigFields } : undefined;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -119,17 +146,22 @@ export async function complete({
         // Streamed rather than a plain create(): a 32000-max_tokens request
         // (raised from 8000 so adaptive thinking has room, see models.js)
         // risks hitting the SDK's HTTP timeout on a non-streaming call.
-        res = await getClient().messages.stream(params).finalMessage();
+        const client = useFallback ? getClient().beta.messages : getClient().messages;
+        const streamParams = useFallback ? { ...params, fallbacks: FALLBACK_MODELS, betas: [FALLBACK_BETA] } : params;
+        res = await client.stream(streamParams).finalMessage();
       }
       assertNotTruncated(res, maxTokens);
+      assertNotRefused(res);
 
       // The server-side search loop caps out at 10 iterations and returns
       // stop_reason "pause_turn"; resending the assistant turn resumes it.
       for (let resume = 0; res.stop_reason === 'pause_turn' && resume < MAX_PAUSE_RESUMES; resume++) {
-        res = await getClient().messages.stream(
-          buildParams({ model, maxTokens, system, messages: [...messages, { role: 'assistant', content: res.content }], thinking, outputConfig, tools })
-        ).finalMessage();
+        const resumeParams = buildParams({ model, maxTokens, system, messages: [...messages, { role: 'assistant', content: res.content }], thinking, outputConfig, tools });
+        const client = useFallback ? getClient().beta.messages : getClient().messages;
+        const streamParams = useFallback ? { ...resumeParams, fallbacks: FALLBACK_MODELS, betas: [FALLBACK_BETA] } : resumeParams;
+        res = await client.stream(streamParams).finalMessage();
         assertNotTruncated(res, maxTokens);
+        assertNotRefused(res);
       }
 
       // With web search the answer is the LAST text block: earlier ones narrate

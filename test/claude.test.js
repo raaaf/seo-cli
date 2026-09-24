@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const stream = vi.fn();
+const betaStream = vi.fn();
 const batchCreate = vi.fn();
 const batchRetrieve = vi.fn();
 const batchResults = vi.fn();
@@ -12,12 +13,14 @@ vi.mock('@anthropic-ai/sdk', () => ({
         stream,
         batches: { create: batchCreate, retrieve: batchRetrieve, results: batchResults, cancel: batchCancel },
       };
+      this.beta = { messages: { stream: betaStream } };
     }
   },
 }));
 
 process.env.ANTHROPIC_API_KEY = 'test-key';
 const { complete } = await import('../src/lib/claude.js');
+const { MODELS } = await import('../src/lib/models.js');
 
 const reply = (text) => ({ content: [{ type: 'text', text }] });
 
@@ -32,6 +35,7 @@ function resultsOf(entries) {
 
 beforeEach(() => {
   stream.mockReset();
+  betaStream.mockReset();
   batchCreate.mockReset();
   batchRetrieve.mockReset();
   batchResults.mockReset();
@@ -165,5 +169,71 @@ describe('claude-complete', () => {
     const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
     expect(text).toBe('interactive after submit failure');
     expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws mentioning the refusal and stop_details category, and does not retry, on the interactive response', async () => {
+    stream.mockReturnValue(streamsTo({
+      content: [{ type: 'text', text: 'declined' }],
+      stop_reason: 'refusal',
+      stop_details: { category: 'bio' },
+    }));
+    await expect(complete({ system: 's', prompt: 'p' }))
+      .rejects.toThrow(/refusal.*bio/s);
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws on a refusal returned from a pause_turn resume, and does not retry', async () => {
+    stream
+      .mockReturnValueOnce(streamsTo({
+        content: [{ type: 'text', text: 'searching...' }],
+        stop_reason: 'pause_turn',
+      }))
+      .mockReturnValueOnce(streamsTo({
+        content: [{ type: 'text', text: 'declined after resume' }],
+        stop_reason: 'refusal',
+        stop_details: { category: 'cyber' },
+      }));
+    await expect(complete({ system: 's', prompt: 'p', webSearch: true }))
+      .rejects.toThrow(/refusal.*cyber/s);
+    expect(stream).toHaveBeenCalledTimes(2);
+  });
+
+  it('routes a non-batch Opus call through the beta client with fallbacks and high effort', async () => {
+    betaStream.mockReturnValue(streamsTo(reply('opus text')));
+    const text = await complete({ system: 's', prompt: 'p', model: MODELS.generate });
+    expect(text).toBe('opus text');
+    expect(stream).not.toHaveBeenCalled();
+    expect(betaStream).toHaveBeenCalledWith(expect.objectContaining({
+      model: MODELS.generate,
+      fallbacks: [{ model: 'claude-opus-5' }],
+      betas: ['server-side-fallback-2026-06-01'],
+      output_config: expect.objectContaining({ effort: 'high' }),
+    }));
+  });
+
+  it('does not carry fallbacks or effort for a Sonnet call', async () => {
+    stream.mockReturnValue(streamsTo(reply('sonnet text')));
+    await complete({ system: 's', prompt: 'p', model: MODELS.default });
+    expect(betaStream).not.toHaveBeenCalled();
+    const callArgs = stream.mock.calls[0][0];
+    expect(callArgs.fallbacks).toBeUndefined();
+    expect(callArgs.betas).toBeUndefined();
+    expect(callArgs.output_config).toBeUndefined();
+  });
+
+  it('does not carry fallbacks for a batch Opus call, but still sends high effort', async () => {
+    batchCreate.mockResolvedValue({ id: 'batch_opus', processing_status: 'ended' });
+    batchRetrieve.mockResolvedValue({ processing_status: 'ended' });
+    batchResults.mockResolvedValue(resultsOf([
+      { custom_id: 'seo-1', result: { type: 'succeeded', message: { ...reply('batched opus text'), stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 20 } } } },
+    ]));
+    const text = await complete({ system: 's', prompt: 'p', model: MODELS.generate, batch: true, batchPollMs: 1 });
+    expect(text).toBe('batched opus text');
+    expect(stream).not.toHaveBeenCalled();
+    expect(betaStream).not.toHaveBeenCalled();
+    const sentParams = batchCreate.mock.calls[0][0].requests[0].params;
+    expect(sentParams.fallbacks).toBeUndefined();
+    expect(sentParams.betas).toBeUndefined();
+    expect(sentParams.output_config).toEqual({ effort: 'high' });
   });
 });
