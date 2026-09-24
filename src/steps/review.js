@@ -6,6 +6,7 @@ import { fillTemplate } from '../lib/template.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { getExistingPages } from '../lib/landings.js';
 import { defaultLocale } from '../lib/config.js';
+import { loadStyleDoc } from './generate.js';
 
 const REVIEW_PROMPT = readFileSync(new URL('../prompts/review.md', import.meta.url), 'utf8');
 
@@ -34,6 +35,7 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
     site_name: config.site_name || config.project || '',
     today: format(new Date()),
     cluster_context: clusterContext(config, cwd, locale),
+    style_guide: loadStyleDoc(config, cwd),
   };
 
   let parsed;

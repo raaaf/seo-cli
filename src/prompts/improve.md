@@ -41,6 +41,14 @@ reaches into a sibling's topic, trim that part to a sentence and link to the
 sibling instead. Only queries that are genuinely this page's subject drive the
 rewrite.
 
+## Style guide
+
+{{style_guide}}
+
+Where this style guide states a price or a pricing rule, it overrides whatever
+figure the current page states: rewrite the page's numbers to match it, not the
+other way round.
+
 ## What to change
 
 **When the diagnosis is a snippet problem** (ranking well, no clicks): the
