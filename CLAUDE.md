@@ -21,7 +21,7 @@ node bin/seo.js conversational    # group GSC queries into AI-Mode artefacts, tr
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated) and reads their committed state files. It does *not* run in the context of a single target project. Flags: `--live`, `--project <match>`, `--json`.
 
-No build step. Tests: `npm test` (vitest, `test/*.test.js`). Linting: `npm run lint` (eslint flat config). ESM (`"type": "module"`), Node 18+.
+No build step. Tests: `npm test` (vitest, `test/*.test.js`). Filtered: `npx vitest run test/<file>.test.js` or `npx vitest run -t <name>`. During work run only affected tests; full suite only before push. Linting: `npm run lint` (eslint flat config). ESM (`"type": "module"`), Node 18+.
 
 ## Architecture
 
