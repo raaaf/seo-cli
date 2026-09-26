@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { loadConfig } from '../lib/config.js';
+import { loadConfig, defaultLocale } from '../lib/config.js';
 import { fetchSitemapUrls, submitIndexNow } from '../lib/indexnow.js';
 
 export async function indexnowCommand() {
@@ -15,7 +15,7 @@ export async function indexnowCommand() {
     process.exit(1);
   }
 
-  const urls = await fetchSitemapUrls(config.base_url);
+  const urls = await fetchSitemapUrls(config.base_url, fetch, defaultLocale(config));
   if (urls.length === 0) {
     console.log(chalk.yellow('indexnow: sitemap has no URLs'));
     process.exit(1);
