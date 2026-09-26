@@ -3,9 +3,14 @@ export function extractSitemapUrls(xml) {
   return Array.from(matches, (m) => m[1]);
 }
 
-export async function fetchSitemapUrls(baseUrl, fetchImpl = fetch) {
+export async function fetchSitemapUrls(baseUrl, fetchImpl = fetch, locale) {
   const base = baseUrl.replace(/\/$/, '');
-  const res = await fetchImpl(`${base}/sitemap.xml`);
+  // Some sitemaps (e.g. zeit) localize their URL set by Accept-Language;
+  // undici's fetch defaults to "*", which some of these servers treat as
+  // English and drop non-English landing pages from. Send the project's
+  // locale explicitly so we get the full URL set.
+  const headers = locale ? { 'Accept-Language': locale } : undefined;
+  const res = await fetchImpl(`${base}/sitemap.xml`, headers ? { headers } : undefined);
   const xml = await res.text();
   return extractSitemapUrls(xml);
 }

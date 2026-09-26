@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { extractSitemapUrls, submitIndexNow } from '../src/lib/indexnow.js';
+import { extractSitemapUrls, fetchSitemapUrls, submitIndexNow } from '../src/lib/indexnow.js';
 
 describe('extractSitemapUrls', () => {
   it('extracts all <loc> values from sitemap XML', () => {
@@ -14,6 +14,18 @@ describe('extractSitemapUrls', () => {
       'https://acme.io/b',
       'https://acme.io/c',
     ]);
+  });
+});
+
+describe('fetchSitemapUrls', () => {
+  it('sends Accept-Language for the given locale', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ text: async () => '<urlset></urlset>' });
+    await fetchSitemapUrls('https://zeit.rafaelalex.de', fetchImpl, 'de');
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://zeit.rafaelalex.de/sitemap.xml',
+      expect.objectContaining({ headers: { 'Accept-Language': 'de' } })
+    );
   });
 });
 

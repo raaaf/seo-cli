@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { fetchSitemapUrls } from '../lib/indexnow.js';
 import { safeFetch } from '../lib/safe-fetch.js';
 import { fetchIndexStatus, loadIndexStatus, saveIndexStatus, diffIndexStatus } from '../lib/index-status.js';
+import { defaultLocale } from '../lib/config.js';
 
 // The Inspection API's daily quota is shared across the whole property, not just
 // this command — a site with a large sitemap must not spend it all on one run.
@@ -15,7 +16,7 @@ const MAX_URLS = 50;
  * first snapshot is itself new information).
  */
 export async function checkIndexStatus(config, cwd = process.cwd()) {
-  const urls = await fetchSitemapUrls(config.base_url, safeFetch);
+  const urls = await fetchSitemapUrls(config.base_url, safeFetch, defaultLocale(config));
   const truncated = urls.length > MAX_URLS;
   const inspectUrls = urls.slice(0, MAX_URLS);
   if (truncated) {
