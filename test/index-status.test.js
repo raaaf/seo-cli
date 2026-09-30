@@ -57,6 +57,18 @@ describe('index-status: diffIndexStatus', () => {
     expect(diff.unchanged).toBe(1);
   });
 
+  it('does not report a URL missing from a non-empty previous snapshot as newly dropped', () => {
+    const previous = { entries: [{ url: 'a', coverageState: 'Submitted and indexed' }] };
+    const current = [
+      { url: 'a', coverageState: 'Submitted and indexed' },
+      { url: 'new', coverageState: 'Crawled - currently not indexed' }, // first time inspected
+    ];
+    const diff = diffIndexStatus(previous, current);
+    expect(diff.newlyDropped).toEqual([]);
+    expect(diff.stillMissing).toEqual([]);
+    expect(diff.unchanged).toBe(2);
+  });
+
   it('reports a first run with no previous snapshot as baseline, not as newly dropped', () => {
     const current = [
       { url: 'a', coverageState: 'Crawled - currently not indexed' },

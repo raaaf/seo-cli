@@ -116,7 +116,14 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   // something false that we cannot correct automatically — drop it rather than
   // publish it. Everything else is patched and reported.
   if (config.fact_check !== false && !dryRun) {
-    const { markdown: reviewed, findings } = await reviewPage(markdown, kw, localeConfig, cwd, { locale });
+    const { markdown: reviewed, findings, unchecked, error } = await reviewPage(markdown, kw, localeConfig, cwd, { locale });
+    // These pages auto-merge, so a page whose check never ran is not published.
+    // The keyword stays proposed: the failure says nothing about the topic, and
+    // validation_failed would drop real GSC demand from the backlog for good.
+    if (unchecked) {
+      console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (fact check did not run: ${error}), retried next run`));
+      return [];
+    }
     if (unresolvedSeverity(findings) === 'high') {
       console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (unresolved factual error, see finding above)`));
       kw.status = KEYWORD_STATUS.VALIDATION_FAILED;

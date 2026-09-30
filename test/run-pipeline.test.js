@@ -14,6 +14,7 @@ const validate = vi.fn();
 const createPR = vi.fn();
 const improveCommand = vi.fn();
 const track = vi.fn();
+const reviewPage = vi.fn();
 const saveKeywords = vi.fn();
 const saveLastPR = vi.fn();
 
@@ -34,7 +35,7 @@ vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) 
 // that the page survives it untouched.
 vi.mock('../src/commands/improve.js', () => ({ improveCommand: (...a) => improveCommand(...a) }));
 vi.mock('../src/steps/review.js', () => ({
-  reviewPage: async (markdown) => ({ markdown, findings: [] }),
+  reviewPage: (...a) => reviewPage(...a),
   unresolvedSeverity: () => null,
 }));
 vi.mock('../src/steps/pr.js', () => ({ createPR: (...a) => createPR(...a) }));
@@ -63,7 +64,8 @@ beforeEach(() => {
   process.chdir(dir);
   saved = {};
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
-  for (const fn of [discover, generatePage, generateCounterpart, validate, createPR, track, saveKeywords, saveLastPR]) fn.mockReset();
+  for (const fn of [discover, generatePage, generateCounterpart, validate, createPR, track, saveKeywords, saveLastPR, reviewPage]) fn.mockReset();
+  reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   generatePage.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
   validate.mockReturnValue({ ok: true, errors: [], warnings: [] });
   logs = [];
@@ -126,6 +128,18 @@ describe('run-pipeline', () => {
     // second attempt receives the failed validation result as feedback (4th arg)
     expect(generatePage.mock.calls[1][3]).toMatchObject({ ok: false });
     expect(createPR.mock.calls[0][0].generatedPages).toHaveLength(1);
+  });
+
+  it('drops a page whose fact check did not run and keeps the keyword proposed', async () => {
+    const data = keywordsData();
+    discover.mockResolvedValue(data);
+    reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [], unchecked: true, error: 'Claude returned no JSON:' }));
+
+    await runCommand({});
+
+    expect(logs.join('\n')).toMatch(/fact check did not run: Claude returned no JSON/);
+    expect(data.keywords[0].status).toBe('proposed');
+    expect(createPR).not.toHaveBeenCalled();
   });
 
   it('marks a keyword validation_failed after two failed attempts and opens no PR', async () => {

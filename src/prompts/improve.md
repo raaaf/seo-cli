@@ -81,6 +81,17 @@ In both cases:
 - Keep the body between 800 and 1400 words.
 - `updated:` becomes {{today}}.
 
+## Issues the validator already flags on the current page
+
+{{current_issues}}
+
+Resolve each of these in the rewrite. This is the one case where the existing
+structure does not stay: if `hero.headline` lacks the target keyword, rewrite the
+headline so it contains it. A body section headed like the FAQ, steps or checklist
+competes with the section the template renders from the frontmatter: delete it when
+it only repeats the frontmatter items, otherwise keep its content under a heading
+that names what it specifically is (for example a dated example timeline).
+
 ## Validator feedback (if this is a retry)
 
 {{validator_feedback}}

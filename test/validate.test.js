@@ -44,6 +44,18 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     expect(warnings.some(w => /hamburg/i.test(w))).toBe(true);
   });
 
+  it("treats a possessive 's in the headline as matching the keyword without it", () => {
+    const md = makeValid().replace('Webdesign Berlin fuer moderne Unternehmen', "New Year's party ideas");
+    const { warnings } = validate(md, { keyword: 'new years party', expected_entities: [] });
+    expect(warnings.some(w => w.startsWith('hero.headline'))).toBe(false);
+  });
+
+  it("treats a trailing plural possessive s' in the keyword as matching the headline without it", () => {
+    const md = makeValid().replace('Webdesign Berlin fuer moderne Unternehmen', 'Kids birthday ideas');
+    const { warnings } = validate(md, { keyword: "kids\u2019 birthday", expected_entities: [] });
+    expect(warnings.some(w => w.startsWith('hero.headline'))).toBe(false);
+  });
+
   it('errors on em-dash in body', () => {
     const { errors } = validate(makeValid({ body: makeBody('Webdesign Berlin — super.') }), KW);
     expect(errors.some(e => e.includes('Em-dash'))).toBe(true);

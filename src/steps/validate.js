@@ -265,12 +265,19 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Lowercases and drops possessive apostrophes (straight or typographic, "'s"
+// and trailing "s'") so "New Year's" matches the keyword "new years" instead of
+// tempting an editor to strip the apostrophe from real copy.
+function normalizePossessives(str) {
+  return String(str).toLowerCase().replace(/(\w)['\u2019]s\b/g, '$1s').replace(/s['\u2019](?=\W|$)/g, 's');
+}
+
 // Tokens of `keyword` (lowercased) not present in `text`. Considers tokens of
 // 4+ chars to skip short stop-words; falls back to all tokens when none qualify.
 function missingKeywordTokens(text, keyword) {
-  const tokens = String(keyword).toLowerCase().split(/\s+/).filter(Boolean);
+  const tokens = normalizePossessives(keyword).split(/\s+/).filter(Boolean);
   const significant = tokens.filter(t => t.length >= 4);
   const check = significant.length ? significant : tokens;
-  const haystack = String(text).toLowerCase();
+  const haystack = normalizePossessives(text);
   return check.filter(t => !haystack.includes(t));
 }

@@ -6,6 +6,14 @@ import { tmpdir } from 'os';
 const complete = vi.fn();
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
+// Real validator by default; a test overrides it to get a clean or a flagged page
+// without hand-building an 800-word fixture.
+const validateOverride = vi.fn();
+vi.mock('../src/steps/validate.js', async (orig) => {
+  const real = await orig();
+  return { ...real, validate: (...a) => validateOverride(...a) ?? real.validate(...a) };
+});
+
 const { scorePage, selectPage, ctrDeficit, expectedCtr, improvePage } = await import('../src/steps/improve.js');
 const { loadImprovements, recordImprovement, slugsInCooldown } = await import('../src/lib/improvements.js');
 
@@ -302,7 +310,7 @@ describe('selectPage', () => {
 });
 
 describe('improvePage prompt', () => {
-  beforeEach(() => complete.mockReset());
+  beforeEach(() => { complete.mockReset(); validateOverride.mockReset(); });
 
   it('includes the GSC-numbers guardrail in the rendered prompt', async () => {
     seedPages('preise');
@@ -316,6 +324,46 @@ describe('improvePage prompt', () => {
 
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toContain('not estimates');
+  });
+
+  it('requests the rewrite as a batch unless batch_generation is false', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+    const page = { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] };
+
+    await improvePage(page, config, cwd);
+    await improvePage(page, { ...config, batch_generation: false }, cwd);
+
+    expect(complete.mock.calls[0][0].batch).toBe(true);
+    expect(complete.mock.calls[1][0].batch).toBe(false);
+  });
+
+  it('hands the validator issues of the current page to the prompt', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+    validateOverride.mockReturnValueOnce({ ok: false, errors: [], warnings: ['hero.headline may not contain target keyword (missing: preise)'] });
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    expect(complete.mock.calls[0][0].prompt).toContain('- hero.headline may not contain target keyword (missing: preise)');
+  });
+
+  it('renders (none) when the current page has no validator issues', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+    validateOverride.mockReturnValueOnce({ ok: true, errors: [], warnings: [] });
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    expect(complete.mock.calls[0][0].prompt).toContain('(none)\n\nResolve each of these');
   });
 
   it('includes the project style doc when config.style_doc points at a file', async () => {

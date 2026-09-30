@@ -5,7 +5,7 @@ import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
 import { createBranchAndCommit, openPR } from '../lib/github.js';
 import { isoWeek } from '../lib/date.js';
 import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown, IMPROVEMENTS_FILE } from '../lib/improvements.js';
-import { fetchPagePerformance, selectPage, improvePage } from '../steps/improve.js';
+import { fetchPagePerformance, selectPage, improvePage, keywordFor } from '../steps/improve.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
@@ -20,6 +20,8 @@ import { parseFrontmatter } from '../lib/frontmatter.js';
 export async function improveCommand(opts = {}, cwd = process.cwd()) {
   const config = opts.config ?? loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
+  // A dry run never waits on a batch that outlives the preview; force interactive.
+  if (dryRun) config.batch_generation = false;
 
   console.log(chalk.bold(`\nseo improve — ${config.project}${dryRun ? ' (dry run)' : ''}\n`));
 
@@ -40,7 +42,7 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   }
 
   const before = readMeta(page.slug, config, cwd);
-  const keywordLike = { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
+  const keywordLike = keywordFor(page);
 
   // Two attempts, same as generate. A rewrite costs a full Opus call, and a
   // single hard error (one word over the tldr limit) is not worth losing it.
@@ -58,8 +60,11 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   }
 
   let finalMarkdown = markdown;
+  let factCheckError = null;
   if (config.fact_check !== false && !dryRun) {
-    const { markdown: reviewed, findings } = await reviewPage(markdown, keywordLike, config, cwd);
+    const { markdown: reviewed, findings, unchecked, error } = await reviewPage(markdown, keywordLike, config, cwd);
+    // A human reviews this PR, so keep the rewrite but tell them to check the facts.
+    if (unchecked) factCheckError = error;
     if (unresolvedSeverity(findings) === 'high') {
       console.log(chalk.red(`  Improvement discarded: unresolved factual error in the rewrite of ${page.slug}`));
       return null;
@@ -97,7 +102,7 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     repo: config.repo,
     branch,
     title: `SEO: improve ${page.slug} (${week})`,
-    body: buildBody(page, before, readMetaFrom(finalMarkdown)),
+    body: buildBody(page, before, readMetaFrom(finalMarkdown), factCheckError, validate(finalMarkdown, keywordLike).warnings),
   });
 
   console.log(chalk.green(`  PR opened: ${prUrl}`));
@@ -122,7 +127,7 @@ function readMetaFrom(markdown) {
   }
 }
 
-function buildBody(page, before, after) {
+function buildBody(page, before, after, factCheckError = null, warnings = []) {
   const queries = page.queries
     .slice(0, 8)
     .map(q => `| ${q.query} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`)
@@ -140,7 +145,12 @@ function buildBody(page, before, after) {
     ].join('\n')
     : '';
 
+  const warning = factCheckError
+    ? [`**ACHTUNG: Der Faktencheck ist nicht gelaufen (${factCheckError}). Bitte alle Fakten, Preise und Zahlen von Hand prüfen.**`, '']
+    : [];
+
   return [
+    ...warning,
     `Überarbeitung von \`${page.slug}\` auf Basis der Suchanfragen der letzten 28 Tage.`,
     '',
     `**Befund:** ${page.reason}`,
@@ -155,8 +165,11 @@ function buildBody(page, before, after) {
     '',
     metaBlock,
     '',
-    'Die Seite wurde nach der Überarbeitung erneut validiert und faktengeprüft.',
+    factCheckError
+      ? 'Die Seite wurde nach der Überarbeitung erneut validiert, aber nicht faktengeprüft.'
+      : 'Die Seite wurde nach der Überarbeitung erneut validiert und faktengeprüft.',
     '',
+    ...(warnings.length ? [`**Validator-Warnungen, die nach der Überarbeitung bleiben:** ${warnings.join(' | ')}`, ''] : []),
     '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
   ].join('\n');
 }

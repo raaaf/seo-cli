@@ -14,6 +14,7 @@ const improvePage = vi.fn();
 const validate = vi.fn();
 const createBranchAndCommit = vi.fn();
 const openPR = vi.fn();
+const reviewPage = vi.fn();
 
 const CONFIG = { project: 'demo', locale: 'de', locales: ['de'], landing_path: 'content/landing/de/', repo: 'o/demo' };
 
@@ -21,10 +22,11 @@ vi.mock('../src/steps/improve.js', () => ({
   fetchPagePerformance: (...a) => fetchPagePerformance(...a),
   selectPage: (...a) => selectPage(...a),
   improvePage: (...a) => improvePage(...a),
+  keywordFor: () => ({ keyword: 'preise', expected_entities: [] }),
 }));
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 vi.mock('../src/steps/review.js', () => ({
-  reviewPage: async (markdown) => ({ markdown, findings: [] }),
+  reviewPage: (...a) => reviewPage(...a),
   unresolvedSeverity: () => null,
 }));
 vi.mock('../src/lib/github.js', () => ({
@@ -47,7 +49,8 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-improve-cmd-'));
   cwd = process.cwd();
   process.chdir(dir);
-  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR]) fn.mockReset();
+  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, reviewPage]) fn.mockReset();
+  reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   fetchPagePerformance.mockResolvedValue([]);
   selectPage.mockReturnValue({ ...PAGE });
   improvePage.mockResolvedValue({ slug: 'preise', filePath: 'content/landing/de/preise.md', markdown: '---\nslug: preise\n---\nbody' });
@@ -95,5 +98,43 @@ describe('improveCommand', () => {
     expect(improvePage).toHaveBeenCalledTimes(2);
     expect(createBranchAndCommit).not.toHaveBeenCalled();
     expect(openPR).not.toHaveBeenCalled();
+  });
+
+  it('forces an interactive rewrite on a dry run', async () => {
+    const config = { ...CONFIG, batch_generation: true };
+
+    await improveCommand({ config, dryRun: true });
+
+    expect(improvePage.mock.calls[0][1].batch_generation).toBe(false);
+  });
+
+  it('puts a fact-check warning at the top of the PR body when the check did not run', async () => {
+    reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [], unchecked: true, error: 'Claude returned no JSON' }));
+
+    await improveCommand({ config: CONFIG });
+
+    const body = openPR.mock.calls[0][0].body;
+    expect(body.startsWith('**ACHTUNG')).toBe(true);
+    expect(body).toContain('Claude returned no JSON');
+  });
+
+  it('adds no fact-check warning when the check ran', async () => {
+    await improveCommand({ config: CONFIG });
+
+    expect(openPR.mock.calls[0][0].body).not.toContain('ACHTUNG');
+  });
+
+  it('lists the validator warnings that remain on the rewrite in the PR body', async () => {
+    validate.mockReturnValue({ ok: true, errors: [], warnings: ['hero.headline may not contain target keyword (missing: preise)'] });
+
+    await improveCommand({ config: CONFIG });
+
+    expect(openPR.mock.calls[0][0].body).toContain('hero.headline may not contain target keyword');
+  });
+
+  it('lists no validator warnings in the PR body when the rewrite is clean', async () => {
+    await improveCommand({ config: CONFIG });
+
+    expect(openPR.mock.calls[0][0].body).not.toContain('Validator-Warnungen');
   });
 });

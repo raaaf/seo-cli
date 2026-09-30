@@ -4,9 +4,11 @@ import { safeFetch } from '../lib/safe-fetch.js';
 import { fetchIndexStatus, loadIndexStatus, saveIndexStatus, diffIndexStatus } from '../lib/index-status.js';
 import { defaultLocale } from '../lib/config.js';
 
-// The Inspection API's daily quota is shared across the whole property, not just
-// this command — a site with a large sitemap must not spend it all on one run.
-const MAX_URLS = 50;
+// The Inspection API allows 2000 queries/day and 600/min per property, shared
+// across the whole property, not just this command. 500 covers every sitemap we
+// run against with room to spare; the cap only stops a huge sitemap from
+// spending the daily quota in one run.
+const MAX_URLS = 500;
 
 /**
  * Fetches live index status for the site's sitemap URLs, diffs it against last
