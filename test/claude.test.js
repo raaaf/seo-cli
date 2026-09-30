@@ -51,7 +51,7 @@ describe('claude-complete', () => {
   it('uses the shared default model when none is given', async () => {
     stream.mockReturnValue(streamsTo(reply('ok')));
     await complete({ system: 's', prompt: 'p' });
-    expect(stream).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-5' }));
+    expect(stream).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-sonnet-5-5' }));
   });
 
   it('calls messages.stream().finalMessage() on the interactive path, not messages.create', async () => {
@@ -205,8 +205,8 @@ describe('claude-complete', () => {
     expect(stream).not.toHaveBeenCalled();
     expect(betaStream).toHaveBeenCalledWith(expect.objectContaining({
       model: MODELS.generate,
-      fallbacks: [{ model: 'claude-opus-5' }],
-      betas: ['server-side-fallback-2026-06-01'],
+      fallbacks: 'default',
+      betas: ['server-side-fallback-2026-07-01'],
       output_config: expect.objectContaining({ effort: 'high' }),
     }));
   });

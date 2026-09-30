@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -14,6 +14,8 @@ const improvePage = vi.fn();
 const validate = vi.fn();
 const createBranchAndCommit = vi.fn();
 const openPR = vi.fn();
+const reviewPage = vi.fn();
+const complete = vi.fn();
 
 const CONFIG = { project: 'demo', locale: 'de', locales: ['de'], landing_path: 'content/landing/de/', repo: 'o/demo' };
 
@@ -21,10 +23,12 @@ vi.mock('../src/steps/improve.js', () => ({
   fetchPagePerformance: (...a) => fetchPagePerformance(...a),
   selectPage: (...a) => selectPage(...a),
   improvePage: (...a) => improvePage(...a),
+  keywordFor: () => ({ keyword: 'preise', expected_entities: [] }),
 }));
+vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 vi.mock('../src/steps/review.js', () => ({
-  reviewPage: async (markdown) => ({ markdown, findings: [] }),
+  reviewPage: (...a) => reviewPage(...a),
   unresolvedSeverity: () => null,
 }));
 vi.mock('../src/lib/github.js', () => ({
@@ -47,7 +51,8 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-improve-cmd-'));
   cwd = process.cwd();
   process.chdir(dir);
-  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR]) fn.mockReset();
+  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, reviewPage, complete]) fn.mockReset();
+  reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   fetchPagePerformance.mockResolvedValue([]);
   selectPage.mockReturnValue({ ...PAGE });
   improvePage.mockResolvedValue({ slug: 'preise', filePath: 'content/landing/de/preise.md', markdown: '---\nslug: preise\n---\nbody' });
@@ -95,5 +100,101 @@ describe('improveCommand', () => {
     expect(improvePage).toHaveBeenCalledTimes(2);
     expect(createBranchAndCommit).not.toHaveBeenCalled();
     expect(openPR).not.toHaveBeenCalled();
+  });
+
+  it('forces an interactive rewrite on a dry run', async () => {
+    const config = { ...CONFIG, batch_generation: true };
+
+    await improveCommand({ config, dryRun: true });
+
+    expect(improvePage.mock.calls[0][1].batch_generation).toBe(false);
+  });
+
+  it('puts a fact-check warning at the top of the PR body when the check did not run', async () => {
+    reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [], unchecked: true, error: 'Claude returned no JSON' }));
+
+    await improveCommand({ config: CONFIG });
+
+    const body = openPR.mock.calls[0][0].body;
+    expect(body.startsWith('**ACHTUNG')).toBe(true);
+    expect(body).toContain('Claude returned no JSON');
+  });
+
+  it('adds no fact-check warning when the check ran', async () => {
+    await improveCommand({ config: CONFIG });
+
+    expect(openPR.mock.calls[0][0].body).not.toContain('ACHTUNG');
+  });
+
+  it('lists the validator warnings that remain on the rewrite in the PR body', async () => {
+    validate.mockReturnValue({ ok: true, errors: [], warnings: ['hero.headline may not contain target keyword (missing: preise)'] });
+
+    await improveCommand({ config: CONFIG });
+
+    expect(openPR.mock.calls[0][0].body).toContain('hero.headline may not contain target keyword');
+  });
+
+  it('lists no validator warnings in the PR body when the rewrite is clean', async () => {
+    await improveCommand({ config: CONFIG });
+
+    expect(openPR.mock.calls[0][0].body).not.toContain('Validator-Warnungen');
+  });
+
+  describe('counterpart re-adaptation', () => {
+    const CP_CONFIG = { ...CONFIG, counterpart_locale: 'en', site_name: 'Demo' };
+    const page = (slug, faq, alternate) => [
+      '---', `slug: ${slug}`, ...(alternate ? [`alternate: ${alternate}`] : []),
+      'faq:', ...Array.from({ length: faq }, (_, n) => `  - q: "Q${n}"\n    a: "A${n}"`),
+      '---', 'body',
+    ].join('\n');
+    const filesOfCommit = () => createBranchAndCommit.mock.calls[0][0].files.map(f => f.path);
+
+    beforeEach(() => {
+      mkdirSync(join(dir, 'content/landing/en'), { recursive: true });
+      writeFileSync(join(dir, 'content/landing/en/pricing.md'), page('pricing', 1, 'preise'));
+      improvePage.mockResolvedValue({ slug: 'preise', filePath: 'content/landing/de/preise.md', markdown: page('preise', 2, 'pricing') });
+    });
+
+    it('re-adapts the counterpart with its existing slug and ships it in the same PR', async () => {
+      complete.mockResolvedValue(page('some-new-slug', 2));
+
+      await improveCommand({ config: CP_CONFIG });
+
+      const counterpart = createBranchAndCommit.mock.calls[0][0].files.find(f => f.path === 'content/landing/en/pricing.md');
+      expect(counterpart.content).toContain('slug: pricing\nalternate: preise');
+      expect(complete.mock.calls[0][0].batch).toBeUndefined();
+      expect(openPR.mock.calls[0][0].body).toContain('`pricing`');
+    });
+
+    it('skips the counterpart when the rewrite has no alternate', async () => {
+      improvePage.mockResolvedValue({ slug: 'preise', filePath: 'content/landing/de/preise.md', markdown: page('preise', 2) });
+
+      await improveCommand({ config: CP_CONFIG });
+
+      expect(complete).not.toHaveBeenCalled();
+      expect(filesOfCommit()).not.toContain('content/landing/en/pricing.md');
+      expect(openPR.mock.calls[0][0].body).not.toContain('Counterpart');
+    });
+
+    it('retries with feedback when the counterpart FAQ count differs from the German page', async () => {
+      complete.mockResolvedValueOnce(page('pricing', 1)).mockResolvedValueOnce(page('pricing', 2));
+
+      await improveCommand({ config: CP_CONFIG });
+
+      expect(complete).toHaveBeenCalledTimes(2);
+      expect(complete.mock.calls[1][0].prompt).toContain('faq count differs from the source page: 1 instead of 2');
+      expect(filesOfCommit()).toContain('content/landing/en/pricing.md');
+    });
+
+    it('keeps the German rewrite and flags the PR when the counterpart fails twice', async () => {
+      complete.mockResolvedValue(page('pricing', 1));
+
+      await improveCommand({ config: CP_CONFIG });
+
+      expect(complete).toHaveBeenCalledTimes(2);
+      expect(filesOfCommit()).toContain('content/landing/de/preise.md');
+      expect(filesOfCommit()).not.toContain('content/landing/en/pricing.md');
+      expect(openPR.mock.calls[0][0].body).toContain('Counterpart pricing could not be re-adapted');
+    });
   });
 });

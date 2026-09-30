@@ -9,6 +9,7 @@ import { format } from '../lib/date.js';
 import { defaultLocale, localeLandingPath } from '../lib/config.js';
 import { getExistingSlugs } from '../lib/landings.js';
 import { stripCodeFence, loadStyleDoc } from './generate.js';
+import { validate } from './validate.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
 const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
@@ -204,6 +205,11 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
   return best;
 }
 
+/** The keyword the validator checks a rewrite of this page against. */
+export function keywordFor(page) {
+  return { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
+}
+
 /** Rewrite one page against the queries it actually ranks for. */
 export async function improvePage(page, config, cwd = process.cwd(), validatorFeedback = null) {
   const locale = defaultLocale(config);
@@ -222,8 +228,16 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     ? siblings.map(slug => `- /${slug}`).join('\n')
     : '(no other landing pages yet)';
 
+  // Defects the validator already flags on the live page. Without this the
+  // rewrite keeps them (events#650 kept an H1 without the keyword and body H2s
+  // that duplicate the template sections).
+  const current = readFileSync(full, 'utf8');
+  const { errors, warnings } = validate(current, keywordFor(page));
+  const currentIssues = [...errors, ...warnings];
+
   const prompt = fillTemplate(IMPROVE_PROMPT, {
-    markdown: readFileSync(full, 'utf8'),
+    markdown: current,
+    current_issues: currentIssues.length ? currentIssues.map(i => `- ${i}`).join('\n') : '(none)',
     slug: page.slug,
     locale,
     site_name: config.site_name || config.project || '',
@@ -253,6 +267,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     prompt,
     model: MODELS.generate,
     maxTokens: GENERATE_MAX_TOKENS,
+    batch: config.batch_generation !== false,
   }));
 
   return { slug: page.slug, filePath, markdown };

@@ -51,9 +51,9 @@ jobs:
       HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -83,7 +83,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Checkout seo-cli
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: raaaf/seo-cli
           path: .seo-cli

@@ -12,6 +12,18 @@ import { stripCodeFence } from './generate.js';
 
 const COUNTERPART_PROMPT = readFileSync(new URL('../prompts/counterpart.md', import.meta.url), 'utf8');
 
+const NEW_SLUG_INSTRUCTION = `Choose a short noun-phrase slug for the new page (e.g. \`club-events\`,
+\`team-building-event\`) that collides with NEITHER list above, and set \`slug:\`
+to it. Do NOT include an \`alternate\` field in the frontmatter; the reciprocal
+link between the two pages is injected by the pipeline afterward, not by you.`;
+
+const fixedSlugInstruction = (slug) => `This page already exists in the target locale and is being re-adapted from a
+rewritten source. Its slug is fixed: set \`slug:\` to \`${slug}\` exactly. Cover
+everything the source now covers, with the same number of steps, checklist items
+and FAQ entries as the source. Do NOT include an \`alternate\` field in the
+frontmatter; the reciprocal link between the two pages is injected by the
+pipeline afterward, not by you.`;
+
 /**
  * Generate a counterpart page (a localized adaptation, not a translation) of an
  * already-generated, already-validated source-locale page. The model picks its
@@ -20,6 +32,9 @@ const COUNTERPART_PROMPT = readFileSync(new URL('../prompts/counterpart.md', imp
  *
  * `opts.extraExistingSlugs` lets the caller add slugs generated earlier in the
  * same run (not yet on disk) to the collision check.
+ *
+ * `opts.fixedSlug` re-adapts an existing counterpart: the slug is not chosen by
+ * the model, is forced onto the output, and there is no collision retry.
  */
 export async function generateCounterpart(sourceMarkdown, keyword, config, cwd = process.cwd(), opts = {}) {
   const sourceLocale = defaultLocale(config);
@@ -30,7 +45,9 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
   // belong to which locale: related_pages in the target-locale page must only
   // ever reference target-locale slugs, never a source-locale one.
   const sourceSlugs = Array.from(new Set(getExistingSlugs(config, cwd, sourceLocale)));
-  const targetSlugs = Array.from(new Set(getExistingSlugs(config, cwd, targetLocale)));
+  const fixedSlug = opts.fixedSlug || null;
+  // The page being re-adapted must not appear in its own "do not reuse" list.
+  const targetSlugs = Array.from(new Set(getExistingSlugs(config, cwd, targetLocale))).filter(s => s !== fixedSlug);
   // Collision checking still needs the union, plus in-run slugs from either locale.
   const existingSlugs = Array.from(new Set([...sourceSlugs, ...targetSlugs, ...extraExistingSlugs]));
 
@@ -47,6 +64,7 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
       existing_slugs_target: targetSlugs.join(', ') || 'none',
       site_name: config.site_name || config.project || '',
       today: format(new Date()),
+      slug_instruction: fixedSlug ? fixedSlugInstruction(fixedSlug) : NEW_SLUG_INSTRUCTION,
       validator_feedback: feedbackBlock,
     };
 
@@ -59,6 +77,9 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
       prompt,
       model: MODELS.generate,
       maxTokens: GENERATE_MAX_TOKENS,
+      // Interactive on purpose: it runs after a batched generate or improve call,
+      // and a second batch (45 min cap, times two attempts) can push the job past
+      // its 120-minute timeout.
     });
 
     markdown = stripCodeFence(markdown);
@@ -78,8 +99,15 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
   };
 
   let markdown = await runAttempt(opts.validatorFeedback);
-  let slug = parseFrontmatter(markdown).parsed.slug;
-  let problem = slugProblem(slug);
+  let slug;
+  let problem = null;
+  if (fixedSlug) {
+    slug = fixedSlug;
+    markdown = markdown.replace(/^slug:.*$/m, `slug: ${fixedSlug}`);
+  } else {
+    slug = parseFrontmatter(markdown).parsed.slug;
+    problem = slugProblem(slug);
+  }
 
   if (problem) {
     markdown = await runAttempt(

@@ -22,12 +22,14 @@ const MAX_PAUSE_RESUMES = 3;
 
 // Opus 5.5 runs broader safety classifiers (bio, reasoning_extraction, on top
 // of cyber) than Opus 5 and can decline a request with stop_reason: "refusal".
-// Ship the fallback opt-in so a decline recovers on Opus 5 instead of failing
-// the pipeline outright. Beta, array form (fallbacks: "default" isn't typed in
-// the installed SDK yet) — not available on the Batches API, so only the
-// interactive path below uses it.
-const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
-const FALLBACK_MODELS = Object.freeze([{ model: 'claude-opus-5' }]);
+// Ship the fallback opt-in so a decline recovers instead of failing the
+// pipeline outright. Scalar form: Anthropic picks the fallback model by refusal
+// category. The SDK passes the body through untyped, so its typings do not
+// matter here. The beta header must pair with the form (the array form needs
+// -2026-06-01, the scalar one -2026-07-01, a mismatch is a 400). Not available
+// on the Batches API, so only the interactive path below uses it.
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+const FALLBACK_MODELS = 'default';
 
 // Builds the params object shared by the interactive request, its pause_turn
 // resume, and the batch request.

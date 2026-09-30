@@ -1,14 +1,16 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
 import { createBranchAndCommit, openPR } from '../lib/github.js';
 import { isoWeek } from '../lib/date.js';
 import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown, IMPROVEMENTS_FILE } from '../lib/improvements.js';
-import { fetchPagePerformance, selectPage, improvePage } from '../steps/improve.js';
+import { fetchPagePerformance, selectPage, improvePage, keywordFor } from '../steps/improve.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
+import { linkAlternates } from '../steps/counterpart.js';
+import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 
 /**
  * Rewrite the one existing page with the strongest case for it, based on live
@@ -20,6 +22,8 @@ import { parseFrontmatter } from '../lib/frontmatter.js';
 export async function improveCommand(opts = {}, cwd = process.cwd()) {
   const config = opts.config ?? loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
+  // A dry run never waits on a batch that outlives the preview; force interactive.
+  if (dryRun) config.batch_generation = false;
 
   console.log(chalk.bold(`\nseo improve — ${config.project}${dryRun ? ' (dry run)' : ''}\n`));
 
@@ -40,7 +44,7 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   }
 
   const before = readMeta(page.slug, config, cwd);
-  const keywordLike = { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
+  const keywordLike = keywordFor(page);
 
   // Two attempts, same as generate. A rewrite costs a full Opus call, and a
   // single hard error (one word over the tldr limit) is not worth losing it.
@@ -58,8 +62,11 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   }
 
   let finalMarkdown = markdown;
+  let factCheckError = null;
   if (config.fact_check !== false && !dryRun) {
-    const { markdown: reviewed, findings } = await reviewPage(markdown, keywordLike, config, cwd);
+    const { markdown: reviewed, findings, unchecked, error } = await reviewPage(markdown, keywordLike, config, cwd);
+    // A human reviews this PR, so keep the rewrite but tell them to check the facts.
+    if (unchecked) factCheckError = error;
     if (unresolvedSeverity(findings) === 'high') {
       console.log(chalk.red(`  Improvement discarded: unresolved factual error in the rewrite of ${page.slug}`));
       return null;
@@ -67,11 +74,19 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     if (reviewed !== markdown && validate(reviewed, keywordLike).ok) finalMarkdown = reviewed;
   }
 
+  // The counterpart adapts the already-checked rewrite, so it is not fact-checked
+  // separately. A failure keeps the German rewrite and is flagged in the PR body.
+  const counterpart = await readaptCounterpart(finalMarkdown, page, keywordLike, config, cwd);
+
   if (dryRun) {
     // Print the whole file: a dry run exists to be read, and the interesting
     // part of a rewrite (new sections, adjusted FAQ) is below the frontmatter.
     console.log(chalk.cyan(`\n--- ${page.slug} ---\n`));
     console.log(finalMarkdown);
+    if (counterpart?.markdown) {
+      console.log(chalk.cyan(`\n--- ${counterpart.slug} (${config.counterpart_locale}) ---\n`));
+      console.log(counterpart.markdown);
+    }
     return null;
   }
 
@@ -82,6 +97,7 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
   const branch = `seo/improve-${week}`;
   const files = [
     { path: filePath, content: finalMarkdown },
+    ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
     { path: IMPROVEMENTS_FILE, content: JSON.stringify(improvements, null, 2) + '\n' },
   ];
 
@@ -97,11 +113,40 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     repo: config.repo,
     branch,
     title: `SEO: improve ${page.slug} (${week})`,
-    body: buildBody(page, before, readMetaFrom(finalMarkdown)),
+    body: buildBody(page, before, readMetaFrom(finalMarkdown), {
+      factCheckError,
+      warnings: validate(finalMarkdown, keywordLike).warnings,
+      counterpart,
+    }),
   });
 
   console.log(chalk.green(`  PR opened: ${prUrl}`));
   return prUrl;
+}
+
+// Re-adapts the counterpart page named by the rewrite's `alternate:` field, keeping
+// its slug. Returns null when there is nothing to do, `{ slug, filePath, markdown }`
+// on success and `{ slug, failure }` when both attempts failed.
+async function readaptCounterpart(finalMarkdown, page, keywordLike, config, cwd) {
+  const locale = config.counterpart_locale;
+  if (!locale || locale === defaultLocale(config)) return null;
+
+  const alternate = parseFrontmatter(finalMarkdown).parsed?.alternate;
+  const filePath = alternate ? join(localeLandingPath(config, locale), `${alternate}.md`) : null;
+  if (!filePath || !existsSync(join(cwd, filePath))) {
+    console.log(chalk.gray(`  No ${locale} counterpart to re-adapt for ${page.slug} (no alternate page on disk)`));
+    return null;
+  }
+
+  const result = await generateValidatedCounterpart(keywordLike, finalMarkdown, config, cwd, { fixedSlug: alternate, matchCounts: true });
+  if (result.failure) {
+    const reason = [result.failure, ...result.errors].join('; ');
+    console.log(chalk.yellow(`  Counterpart ${alternate} could not be re-adapted: ${reason}`));
+    return { slug: alternate, failure: reason };
+  }
+
+  const { counterpartMarkdown } = linkAlternates(finalMarkdown, result.markdown, page.slug, alternate);
+  return { slug: alternate, filePath, markdown: counterpartMarkdown };
 }
 
 function readMeta(slug, config, cwd) {
@@ -122,7 +167,7 @@ function readMetaFrom(markdown) {
   }
 }
 
-function buildBody(page, before, after) {
+function buildBody(page, before, after, { factCheckError = null, warnings = [], counterpart = null } = {}) {
   const queries = page.queries
     .slice(0, 8)
     .map(q => `| ${q.query} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`)
@@ -140,7 +185,18 @@ function buildBody(page, before, after) {
     ].join('\n')
     : '';
 
+  const warning = factCheckError
+    ? [`**ACHTUNG: Der Faktencheck ist nicht gelaufen (${factCheckError}). Bitte alle Fakten, Preise und Zahlen von Hand prüfen.**`, '']
+    : [];
+
+  const counterpartNote = !counterpart ? []
+    : counterpart.failure
+      ? [`**Counterpart ${counterpart.slug} could not be re-adapted: ${counterpart.failure}. Sync by hand before merging, landing-sync tests may fail.**`, '']
+      : [`Die Gegenseite \`${counterpart.slug}\` wurde aus der Überarbeitung neu angepasst (gleicher Slug, gleiche Anzahl Schritte, Checklistenpunkte und FAQ).`, ''];
+
   return [
+    ...warning,
+    ...counterpartNote,
     `Überarbeitung von \`${page.slug}\` auf Basis der Suchanfragen der letzten 28 Tage.`,
     '',
     `**Befund:** ${page.reason}`,
@@ -155,8 +211,11 @@ function buildBody(page, before, after) {
     '',
     metaBlock,
     '',
-    'Die Seite wurde nach der Überarbeitung erneut validiert und faktengeprüft.',
+    factCheckError
+      ? 'Die Seite wurde nach der Überarbeitung erneut validiert, aber nicht faktengeprüft.'
+      : 'Die Seite wurde nach der Überarbeitung erneut validiert und faktengeprüft.',
     '',
+    ...(warnings.length ? [`**Validator-Warnungen, die nach der Überarbeitung bleiben:** ${warnings.join(' | ')}`, ''] : []),
     '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
   ].join('\n');
 }

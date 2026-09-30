@@ -48,6 +48,38 @@ describe('reviewPage', () => {
     expect(unresolvedSeverity(findings)).toBeNull();
   });
 
+  it('retries once with a JSON-only instruction when the answer had no JSON', async () => {
+    complete
+      .mockRejectedValueOnce(new Error('Claude returned no JSON:\n- **All prices match.**'))
+      .mockResolvedValueOnce({ findings: [] });
+
+    const result = await reviewPage(PAGE, keyword, config, cwd);
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(complete.mock.calls[1][0].prompt).toContain('contained no JSON');
+    expect(complete.mock.calls[0][0].prompt).not.toContain('contained no JSON');
+    expect(result.unchecked).toBeUndefined();
+  });
+
+  it('returns unchecked when the retry still has no JSON', async () => {
+    complete.mockRejectedValue(new Error('Claude returned no JSON:\nprose'));
+
+    const result = await reviewPage(PAGE, keyword, config, cwd);
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ markdown: PAGE, findings: [], unchecked: true, error: 'Claude returned no JSON:' });
+  });
+
+  it('returns unchecked without a retry on any other error', async () => {
+    complete.mockRejectedValue(new Error('overloaded'));
+
+    const result = await reviewPage(PAGE, keyword, config, cwd);
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.unchecked).toBe(true);
+    expect(result.error).toBe('overloaded');
+  });
+
   it('reports but does not apply a finding whose quote is not in the page', async () => {
     complete.mockResolvedValue({
       findings: [{

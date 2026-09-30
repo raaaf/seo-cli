@@ -14,6 +14,12 @@ const REVIEW_PROMPT = readFileSync(new URL('../prompts/review.md', import.meta.u
 // than this and the prompt grows faster than the check gets better.
 const CLUSTER_PAGES = 8;
 const SEVERITIES = new Set(['high', 'medium', 'low']);
+const NO_JSON_RETRY = 'Your previous answer contained no JSON. Return only the JSON object in the documented shape, with no prose before or after it. Use an empty findings array when nothing is wrong.';
+
+// The two parse failures thrown by claude.js when json is requested.
+function isNoJsonError(e) {
+  return /^Claude returned (no|malformed) JSON/.test(e?.message ?? '');
+}
 
 /**
  * Fact-check a generated page against the live web and against the already
@@ -24,7 +30,8 @@ const SEVERITIES = new Set(['high', 'medium', 'low']);
  * is reported but not applied, which is what the caller gates on.
  *
  * A reviewer failure is never fatal: the unreviewed page is returned with an
- * empty finding list, and the caller decides what that means.
+ * empty finding list and `unchecked: true`, and the caller decides what that
+ * means. An empty list without that flag is a real "nothing found".
  */
 export async function reviewPage(markdown, keyword, config, cwd = process.cwd(), opts = {}) {
   const locale = opts.locale || defaultLocale(config);
@@ -38,19 +45,30 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
     style_guide: loadStyleDoc(config, cwd),
   };
 
+  const prompt = fillTemplate(REVIEW_PROMPT, vars);
+  const request = (text) => complete({
+    system: 'You are a fact-checker. You verify claims against sources and correct them. You do not rewrite prose you cannot fault.',
+    prompt: text,
+    model: MODELS.generate,
+    maxTokens: GENERATE_MAX_TOKENS,
+    json: true,
+    webSearch: true,
+  });
+
   let parsed;
   try {
-    parsed = await complete({
-      system: 'You are a fact-checker. You verify claims against sources and correct them. You do not rewrite prose you cannot fault.',
-      prompt: fillTemplate(REVIEW_PROMPT, vars),
-      model: MODELS.generate,
-      maxTokens: GENERATE_MAX_TOKENS,
-      json: true,
-      webSearch: true,
-    });
+    try {
+      parsed = await request(prompt);
+    } catch (e) {
+      if (!isNoJsonError(e)) throw e;
+      // The model answered in prose once (2026-09-30) and the page went out as
+      // if checked. One more try, told what went wrong; transport errors are
+      // already retried in claude.js.
+      parsed = await request(`${prompt}\n\n${NO_JSON_RETRY}`);
+    }
   } catch (e) {
-    console.log(chalk.yellow(`  Review skipped: ${keyword.keyword} (${e.message})`));
-    return { markdown, findings: [] };
+    console.log(chalk.yellow(`  Fact check did not run: ${keyword.keyword} (${e.message.split('\n')[0]}). The page is NOT fact-checked.`));
+    return { markdown, findings: [], unchecked: true, error: e.message.split('\n')[0] };
   }
 
   const findings = (parsed?.findings || []).filter(f => f && SEVERITIES.has(f.severity) && f.quote);

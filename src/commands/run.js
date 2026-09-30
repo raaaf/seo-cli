@@ -5,7 +5,8 @@ import { loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as get
 import { saveKeywords, getPending, KEYWORD_STATUS, saveLastPR } from '../lib/keywords.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
-import { generateCounterpart, linkAlternates } from '../steps/counterpart.js';
+import { linkAlternates } from '../steps/counterpart.js';
+import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { improveCommand } from './improve.js';
@@ -42,29 +43,13 @@ async function generateCounterpartPage(kw, sourceMarkdown, config, cwd, dryRun, 
   const counterpartLocale = config.counterpart_locale;
   const label = ` [${counterpartLocale}]`;
 
-  let markdown;
-  let slug;
-  let valid = false;
-  let lastResult;
-  let validatorFeedback = null;
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      ({ markdown, slug } = await generateCounterpart(sourceMarkdown, kw, config, cwd, { validatorFeedback, extraExistingSlugs }));
-    } catch (e) {
-      console.log(chalk.yellow(`  Counterpart skipped: ${kw.keyword}${label} (${e.message})`));
-      return null;
-    }
-    lastResult = validate(markdown, kw, { counterpart: true });
-    if (lastResult.ok) { valid = true; break; }
-    validatorFeedback = lastResult.errors.join('\n');
-  }
-
-  if (!valid) {
-    console.log(chalk.yellow(`  Counterpart skipped: ${kw.keyword}${label} (validation failed after 2 attempts)`));
-    (lastResult?.errors ?? []).forEach(e => console.log(chalk.yellow(`    ⚠ ${e}`)));
+  const result = await generateValidatedCounterpart(kw, sourceMarkdown, config, cwd, { extraExistingSlugs });
+  if (result.failure) {
+    console.log(chalk.yellow(`  Counterpart skipped: ${kw.keyword}${label} (${result.failure})`));
+    result.errors.forEach(e => console.log(chalk.yellow(`    ⚠ ${e}`)));
     return null;
   }
+  const { markdown, slug } = result;
 
   if (dryRun) {
     console.log(chalk.cyan(`\n--- ${kw.keyword}${label} (slug: ${slug}) ---\n`));
@@ -116,7 +101,14 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   // something false that we cannot correct automatically — drop it rather than
   // publish it. Everything else is patched and reported.
   if (config.fact_check !== false && !dryRun) {
-    const { markdown: reviewed, findings } = await reviewPage(markdown, kw, localeConfig, cwd, { locale });
+    const { markdown: reviewed, findings, unchecked, error } = await reviewPage(markdown, kw, localeConfig, cwd, { locale });
+    // These pages auto-merge, so a page whose check never ran is not published.
+    // The keyword stays proposed: the failure says nothing about the topic, and
+    // validation_failed would drop real GSC demand from the backlog for good.
+    if (unchecked) {
+      console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (fact check did not run: ${error}), retried next run`));
+      return [];
+    }
     if (unresolvedSeverity(findings) === 'high') {
       console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (unresolved factual error, see finding above)`));
       kw.status = KEYWORD_STATUS.VALIDATION_FAILED;

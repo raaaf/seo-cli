@@ -1,8 +1,8 @@
 // Single source of truth for the Claude model ids used across the pipeline.
 // Bump here, not at the call sites, so generation and scoring never drift apart.
 export const MODELS = Object.freeze({
-  generate: 'claude-opus-5-5', // full page generation (generate.js)
-  default: 'claude-sonnet-5', // scoring, greenfield, site analysis (claude.js default)
+  generate: 'claude-opus-5-5', // page generation, improve rewrites, counterpart adaptation, fact check
+  default: 'claude-sonnet-5-5', // scoring, greenfield, site analysis (claude.js default)
 });
 
 // Adaptive thinking is always on whenever the model is MODELS.generate (see
