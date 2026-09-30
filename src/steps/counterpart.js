@@ -77,7 +77,9 @@ export async function generateCounterpart(sourceMarkdown, keyword, config, cwd =
       prompt,
       model: MODELS.generate,
       maxTokens: GENERATE_MAX_TOKENS,
-      batch: config.batch_generation !== false,
+      // Interactive on purpose: it runs after a batched generate or improve call,
+      // and a second batch (45 min cap, times two attempts) can push the job past
+      // its 120-minute timeout.
     });
 
     markdown = stripCodeFence(markdown);

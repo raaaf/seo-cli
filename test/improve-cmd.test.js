@@ -162,7 +162,7 @@ describe('improveCommand', () => {
 
       const counterpart = createBranchAndCommit.mock.calls[0][0].files.find(f => f.path === 'content/landing/en/pricing.md');
       expect(counterpart.content).toContain('slug: pricing\nalternate: preise');
-      expect(complete.mock.calls[0][0].batch).toBe(true);
+      expect(complete.mock.calls[0][0].batch).toBeUndefined();
       expect(openPR.mock.calls[0][0].body).toContain('`pricing`');
     });
 
