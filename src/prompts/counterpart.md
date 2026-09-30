@@ -33,10 +33,7 @@ related_pages here): {{existing_slugs_source}}
 Slugs already used in {{target_locale}} (do not reuse; these are the ONLY slugs
 you may reference in related_pages): {{existing_slugs_target}}
 
-Choose a short noun-phrase slug for the new page (e.g. `club-events`,
-`team-building-event`) that collides with NEITHER list above, and set `slug:`
-to it. Do NOT include an `alternate` field in the frontmatter; the reciprocal
-link between the two pages is injected by the pipeline afterward, not by you.
+{{slug_instruction}}
 
 ## Source page
 

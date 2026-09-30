@@ -265,19 +265,24 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Lowercases and drops possessive apostrophes (straight or typographic, "'s"
-// and trailing "s'") so "New Year's" matches the keyword "new years" instead of
-// tempting an editor to strip the apostrophe from real copy.
-function normalizePossessives(str) {
-  return String(str).toLowerCase().replace(/(\w)['\u2019]s\b/g, '$1s').replace(/s['\u2019](?=\W|$)/g, 's');
+// Lowercases and folds a string for keyword matching. Possessive apostrophes
+// (straight or typographic, "'s" and trailing "s'") are dropped so "New Year's"
+// matches the keyword "new years" instead of tempting an editor to strip the
+// apostrophe from real copy. Umlauts fold to their digraphs so the ASCII keyword
+// "web design fuerth" matches the copy "Fürth" and the other way round. This is
+// matching only; the transliteration-error check above stays untouched.
+function normalizeForMatch(str) {
+  return String(str).toLowerCase()
+    .replace(/(\w)['\u2019]s\b/g, '$1s').replace(/s['\u2019](?=\W|$)/g, 's')
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss');
 }
 
 // Tokens of `keyword` (lowercased) not present in `text`. Considers tokens of
 // 4+ chars to skip short stop-words; falls back to all tokens when none qualify.
 function missingKeywordTokens(text, keyword) {
-  const tokens = normalizePossessives(keyword).split(/\s+/).filter(Boolean);
+  const tokens = normalizeForMatch(keyword).split(/\s+/).filter(Boolean);
   const significant = tokens.filter(t => t.length >= 4);
   const check = significant.length ? significant : tokens;
-  const haystack = normalizePossessives(text);
+  const haystack = normalizeForMatch(text);
   return check.filter(t => !haystack.includes(t));
 }

@@ -56,6 +56,18 @@ Webdesign Berlin ist wichtig. Zahlen: 1 2 3 4 5.`;
     expect(warnings.some(w => w.startsWith('hero.headline'))).toBe(false);
   });
 
+  it('matches an ASCII keyword against the umlaut spelling in the headline', () => {
+    const md = makeValid().replace('Webdesign Berlin fuer moderne Unternehmen', 'Webdesign Fürth für Gründer');
+    const { warnings } = validate(md, { keyword: 'webdesign fuerth', expected_entities: [] });
+    expect(warnings.some(w => w.startsWith('hero.headline'))).toBe(false);
+  });
+
+  it('matches an umlaut keyword against the ASCII spelling in the headline', () => {
+    const md = makeValid().replace('Webdesign Berlin fuer moderne Unternehmen', 'Webdesign fuerth Preise');
+    const { warnings } = validate(md, { keyword: 'Webdesign Fürth', expected_entities: [] });
+    expect(warnings.some(w => w.startsWith('hero.headline'))).toBe(false);
+  });
+
   it('errors on em-dash in body', () => {
     const { errors } = validate(makeValid({ body: makeBody('Webdesign Berlin — super.') }), KW);
     expect(errors.some(e => e.includes('Em-dash'))).toBe(true);
