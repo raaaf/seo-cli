@@ -51,7 +51,7 @@ async function generateCounterpartPage(kw, sourceMarkdown, config, cwd, dryRun, 
   const counterpartLocale = config.counterpart_locale;
   const label = ` [${counterpartLocale}]`;
 
-  const result = await generateValidatedCounterpart(kw, sourceMarkdown, config, cwd, { extraExistingSlugs });
+  const result = await generateValidatedCounterpart(kw, sourceMarkdown, config, cwd, { extraExistingSlugs, matchCounts: true });
   if (result.failure) {
     console.log(chalk.yellow(`  Counterpart skipped: ${kw.keyword}${label} (${result.failure})`));
     result.errors.forEach(e => console.log(chalk.yellow(`    ⚠ ${e}`)));

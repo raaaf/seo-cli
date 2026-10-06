@@ -247,6 +247,27 @@ describe('run-pipeline', () => {
     }
   });
 
+  it('rejects a counterpart whose steps count differs from the source page', async () => {
+    CONFIG.counterpart_locale = 'en';
+    try {
+      const data = keywordsData();
+      discover.mockResolvedValue(data);
+      generatePage.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
+      generateCounterpart.mockResolvedValue({
+        markdown: '---\nslug: wedding-planning\nsteps:\n  - a\n  - b\n---\nbody',
+        slug: 'wedding-planning',
+      });
+
+      await run();
+
+      expect(generateCounterpart).toHaveBeenCalledTimes(2);
+      expect(createPRs).not.toHaveBeenCalled();
+      expect(logs.join('\n')).toMatch(/steps count differs from the source page: 2 instead of 0/);
+    } finally {
+      delete CONFIG.counterpart_locale;
+    }
+  });
+
   it('drops the default-locale page too when its counterpart fails, and leaves the keyword for next run', async () => {
     CONFIG.counterpart_locale = 'en';
     try {
