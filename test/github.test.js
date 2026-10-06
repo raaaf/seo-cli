@@ -97,6 +97,11 @@ describe('github-blob-shas', () => {
     ] } });
     expect(await getBlobShas({ repo: 'o/r' })).toEqual({ 'seo/keywords.json': 'b1' });
   });
+
+  it('throws when GitHub truncated the tree', async () => {
+    git.getTree.mockResolvedValue({ data: { truncated: true, tree: [] } });
+    await expect(getBlobShas({ repo: 'o/r' })).rejects.toThrow(/truncated/);
+  });
 });
 
 describe('github-get-pr', () => {

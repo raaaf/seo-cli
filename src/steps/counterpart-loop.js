@@ -1,6 +1,7 @@
 import { generateCounterpart } from './counterpart.js';
 import { validate } from './validate.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
+import { rethrowIfBudget } from '../lib/budget.js';
 
 const COUNTED_FIELDS = ['steps', 'checklist', 'faq'];
 
@@ -34,6 +35,7 @@ export async function generateValidatedCounterpart(kw, sourceMarkdown, config, c
     try {
       result = await generateCounterpart(sourceMarkdown, kw, config, cwd, { ...generateOpts, validatorFeedback });
     } catch (e) {
+      rethrowIfBudget(e);
       return { failure: e.message, errors: [] };
     }
     errors = [

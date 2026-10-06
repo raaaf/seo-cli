@@ -12,6 +12,12 @@ export class BudgetExceededError extends Error {
   }
 }
 
+// For generic catches around paid calls: a spent budget ends the run, it is
+// not a per-item failure to log and skip.
+export function rethrowIfBudget(e) {
+  if (e instanceof BudgetExceededError) throw e;
+}
+
 function currentMonth() {
   return format(new Date()).slice(0, 7); // YYYY-MM
 }

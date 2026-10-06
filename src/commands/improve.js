@@ -135,7 +135,11 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
     prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody });
   } catch (e) {
     // Without a PR the branch is an orphan that would block this page for good.
-    await deleteBranch({ repo: config.repo, branch }).catch(() => {});
+    await deleteBranch({ repo: config.repo, branch }).catch(err => {
+      const warning = `Could not delete orphan branch ${branch}: ${err.message}`;
+      console.log(chalk.yellow(`  ${warning}`));
+      warnings.push(warning);
+    });
     throw e;
   }
 

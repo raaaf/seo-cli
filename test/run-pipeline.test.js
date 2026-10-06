@@ -118,14 +118,19 @@ describe('run-pipeline', () => {
     expect(commitState.mock.calls[0][0]).toMatchObject({ repo: 'o/demo', cwd: process.cwd() });
   });
 
-  it('writes the keyword status pr_opened to disk before the first state commit', async () => {
+  it('commits the generated keyword as proposed before the PRs, and as pr_opened with its pr_url after', async () => {
     discover.mockResolvedValue(keywordsData());
-    let onDisk;
-    commitState.mockImplementationOnce(async () => { onDisk = loadKeywords(dir).keywords[0].status; return []; });
+    let beforePRs;
+    commitState.mockImplementationOnce(async () => { beforePRs = loadKeywords(dir).keywords[0]; return []; });
+    createPRs.mockImplementation(async ({ keywordsData: kd }) => {
+      Object.assign(kd.keywords[0], { status: 'pr_opened', pr_url: 'https://github.com/o/demo/pull/1' }); // what pr.js does
+      return opened('https://github.com/o/demo/pull/1');
+    });
 
     await run();
 
-    expect(onDisk).toBe('pr_opened');
+    expect(beforePRs.status).toBe('proposed');
+    expect(loadKeywords(dir).keywords[0]).toMatchObject({ status: 'pr_opened', pr_url: 'https://github.com/o/demo/pull/1' });
   });
 
   it('sets keywords whose PR failed back to proposed in the final state', async () => {
@@ -381,6 +386,15 @@ describe('run-reconcile', () => {
     expect(entries[1].merged_at).toBeUndefined();
   });
 
+  it('persists merged_at when a merged improvement PR is the only change', async () => {
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'merged-page', date: '2026-10-01', pr_url: PR(6) }] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: '2026-10-03T09:00:00Z' });
+
+    await run();
+
+    expect(JSON.parse(readFileSync(join(dir, 'seo', 'improvements.json'), 'utf8')).entries[0].merged_at).toBe('2026-10-03T09:00:00Z');
+  });
+
   it('does not ask GitHub again about an improvement that is already merged', async () => {
     seedState('improvements.json', { version: 1, entries: [{ slug: 'p', date: '2026-10-01', pr_url: PR(6), merged_at: '2026-10-02' }] });
 
@@ -412,6 +426,21 @@ describe('run-report', () => {
 
     expect(report()).toMatchObject({ status: 'budget_exceeded', errors: ['Anthropic monthly budget exhausted'] });
     expect(createPRs).not.toHaveBeenCalled();
+  });
+
+  it('waits for sibling generations before committing state when one hits the budget', async () => {
+    discover.mockResolvedValue(manyKeywords(2));
+    let siblingDone = false;
+    generatePage
+      .mockRejectedValueOnce(new BudgetExceededError('Anthropic monthly budget exhausted'))
+      .mockImplementationOnce(async () => { await new Promise(r => setTimeout(r, 30)); siblingDone = true; return '---\nslug: slug-1\n---\nbody'; });
+    let doneAtCommit;
+    commitState.mockImplementation(async () => { doneAtCommit = siblingDone; return []; });
+
+    await run();
+
+    expect(doneAtCommit).toBe(true);
+    expect(report().status).toBe('budget_exceeded');
   });
 
   it('still commits state and writes the report when the run fails, then rethrows', async () => {

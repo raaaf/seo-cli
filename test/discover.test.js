@@ -17,6 +17,7 @@ vi.mock('../src/lib/serpapi.js', () => ({ getSerp: (...a) => getSerp(...a), chec
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { discover } = await import('../src/steps/discover.js');
+const { BudgetExceededError } = await import('../src/lib/budget.js');
 
 const EMPTY_SERP = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
 const config = {
@@ -169,6 +170,15 @@ describe('discover-run', () => {
     const data = await discover({ ...config, score_cutoff: 99 }, dir);
 
     expect(data.keywords.find(k => k.keyword === 'sommerfest firma planen')).toBeTruthy();
+  });
+
+  it('rethrows a spent budget from scoring instead of skipping the keyword', async () => {
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 },
+    ]);
+    complete.mockRejectedValue(new BudgetExceededError('Anthropic monthly budget exhausted'));
+
+    await expect(discover(config, dir)).rejects.toBeInstanceOf(BudgetExceededError);
   });
 
   it('skips a keyword the model reports as already covered', async () => {

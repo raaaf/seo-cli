@@ -141,5 +141,6 @@ export async function getBlobShas({ repo, branch = 'main' }) {
   const { data: ref } = await octokit.git.getRef({ owner, repo: name, ref: `heads/${branch}` });
   const { data: commit } = await octokit.git.getCommit({ owner, repo: name, commit_sha: ref.object.sha });
   const { data: tree } = await octokit.git.getTree({ owner, repo: name, tree_sha: commit.tree.sha, recursive: 'true' });
+  if (tree.truncated) throw new Error(`Git tree of ${repo}@${branch} is truncated (too many files); cannot compare blob SHAs`);
   return Object.fromEntries(tree.tree.filter(t => t.type === 'blob').map(t => [t.path, t.sha]));
 }

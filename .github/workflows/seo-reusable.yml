@@ -118,6 +118,7 @@ jobs:
       # the reason this exists, but a Search Console hiccup here must not fail
       # the whole run.
       - name: Check index status
+        if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
@@ -129,7 +130,8 @@ jobs:
 
       # One pass per PR from the run report. The state files are already on main
       # (committed by `seo run`), so the PR branches contain pages only.
-      - name: Gate — validate, auto-merge
+      - name: Gate (validate, auto-merge)
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REQUIRE_REVIEW: ${{ inputs.require_review }}
@@ -160,7 +162,7 @@ jobs:
             local MD
             mapfile -t MD < <(gh pr view "$PR_NUM" --json files -q '.files[].path' | grep -E '\.md$' || true)
             if [ ${#MD[@]} -eq 0 ]; then
-              echo "PR has no markdown pages — skipping gate."
+              echo "PR has no markdown pages: skipping gate."
               echo "$PR_URL no_pages" >> "$GATE_STATUS_FILE"
               return 0
             fi
@@ -187,7 +189,7 @@ jobs:
             # Human review gate: skip the CI wait and the merge entirely. The
             # notify path still runs so the needs_review mail goes out.
             if [ "${REQUIRE_REVIEW}" = "true" ]; then
-              echo "require_review is set — leaving PR #$PR_NUM open for human review."
+              echo "require_review is set, leaving PR #$PR_NUM open for human review."
             fi
 
             # Wait for the target repo's PR checks (e.g. Pest CI) before merging.
@@ -201,7 +203,7 @@ jobs:
 
               # An empty check rollup is ambiguous: the repo may have no PR CI at
               # all, or its checks may simply not have registered yet. Waiting a
-              # fixed grace period guessed at the answer and guessed wrong — a
+              # fixed grace period guessed at the answer and guessed wrong: a
               # page merged ungated in 2026-W31 and broke the target repo's test
               # suite. Ask the repo instead: does any active workflow trigger on
               # pull_request? If one does, an empty rollup means "not yet" and we
@@ -243,12 +245,12 @@ jobs:
 
                 if [ "$NUM_CHECKS" -eq 0 ]; then
                   if [ "$ELAPSED" -lt "$GRACE_PERIOD" ]; then
-                    echo "No PR checks registered yet (${ELAPSED}s elapsed) — waiting out grace period..."
+                    echo "No PR checks registered yet (${ELAPSED}s elapsed), waiting out grace period..."
                     sleep "$POLL_INTERVAL"
                     ELAPSED=$((ELAPSED + POLL_INTERVAL))
                     continue
                   fi
-                  echo "No PR checks after ${GRACE_PERIOD}s and no pull_request workflow to wait for — proceeding without CI gating."
+                  echo "No PR checks after ${GRACE_PERIOD}s and no pull_request workflow to wait for, proceeding without CI gating."
                   CHECKS_STATUS=none
                   break
                 fi
@@ -267,7 +269,7 @@ jobs:
                   break
                 fi
 
-                echo "PR checks still pending (${ELAPSED}s elapsed) — waiting ${POLL_INTERVAL}s..."
+                echo "PR checks still pending (${ELAPSED}s elapsed), waiting ${POLL_INTERVAL}s..."
                 sleep "$POLL_INTERVAL"
                 ELAPSED=$((ELAPSED + POLL_INTERVAL))
               done
@@ -318,7 +320,7 @@ jobs:
             mapfile -t PR_URLS < <(jq -r '.prs[].url' "$REPORT_FILE")
           fi
           if [ ${#PR_URLS[@]} -eq 0 ]; then
-            echo "No PR this run — nothing to gate."
+            echo "No PR this run, nothing to gate."
             exit 0
           fi
 

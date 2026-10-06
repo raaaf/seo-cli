@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
+import { rethrowIfBudget } from '../lib/budget.js';
 import { format } from '../lib/date.js';
 import { fillTemplate } from '../lib/template.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
@@ -67,6 +68,7 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
       parsed = await request(`${prompt}\n\n${NO_JSON_RETRY}`);
     }
   } catch (e) {
+    rethrowIfBudget(e);
     console.log(chalk.yellow(`  Fact check did not run: ${keyword.keyword} (${e.message.split('\n')[0]}). The page is NOT fact-checked.`));
     return { markdown, findings: [], unchecked: true, error: e.message.split('\n')[0] };
   }

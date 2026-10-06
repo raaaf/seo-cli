@@ -67,7 +67,11 @@ export async function createPRs({ generatedPages, keywordsData, config }) {
       if (kw) Object.assign(kw, { status: KEYWORD_STATUS.PR_OPENED, pr_url: url, sitemap_slugs: sitemapSlugs });
       result.prs.push({ url, keyword, slug });
     } catch (e) {
-      if (branchCreated) await deleteBranch({ repo: config.repo, branch }).catch(() => {}); // else the orphan blocks the keyword for good
+      if (branchCreated) await deleteBranch({ repo: config.repo, branch }).catch(err => {
+        const warning = `Could not delete orphan branch ${branch}: ${err.message}`;
+        console.log(chalk.yellow(`  ${warning}`));
+        result.warnings.push(warning);
+      }); // else the orphan blocks the keyword for good
       if (kw) releasePending([kw]);
       if (e.code === 'BRANCH_EXISTS') {
         const warning = `PR skipped for "${keyword}": branch ${branch} already exists (open PR for the same keyword)`;

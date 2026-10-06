@@ -230,17 +230,18 @@ export async function reconcileState({ config, cwd, warnings }) {
 
   const improvements = loadImprovements(cwd);
   const kept = [];
+  let improvementsChanged = false;
   for (const entry of improvements.entries) {
     if (!entry.pr_url || entry.merged_at) { kept.push(entry); continue; }
     const { state, mergedAt, headRef } = await readPR(config.repo, entry.pr_url, warnings);
     if (state === 'closed') {
       await dropClosedBranch(config.repo, headRef, warnings);
+      improvementsChanged = true;
       continue;
     }
-    if (state === 'merged') entry.merged_at = mergedAt ?? format(new Date());
+    if (state === 'merged') { entry.merged_at = mergedAt ?? format(new Date()); improvementsChanged = true; }
     kept.push(entry);
   }
-  const improvementsChanged = JSON.stringify(kept) !== JSON.stringify(improvements.entries);
   improvements.entries = kept;
 
   if (keywordsChanged) saveKeywords(keywords, cwd);
@@ -329,11 +330,19 @@ export async function runCommand(opts) {
           }));
         }
       }
-      await Promise.all(tasks);
+      // Wait for every sibling before rethrowing: a task still running would
+      // book its cost after the state commit in `finally`.
+      const settled = await Promise.allSettled(tasks);
+      const rejected = settled.filter(s => s.status === 'rejected').map(s => s.reason);
+      if (rejected.length) throw rejected.find(r => r instanceof BudgetExceededError) ?? rejected[0];
     }
 
     if (!dryRun) {
-      // 4. State to main before the PRs, so the PR branches start from it
+      // 4. State to main before the PRs, so the PR branches start from it. The
+      // awaiting keywords go in as proposed: a run killed before `finally` must
+      // not leave pr_opened without a pr_url (reconcile skips those, discover
+      // excludes them). createPRs sets pr_opened together with the pr_url.
+      releasePending([...awaiting]);
       saveKeywords(keywordsData, cwd);
       await commitState({ cwd, repo: config.repo, reason: `run ${week}` });
 
