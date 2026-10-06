@@ -23,7 +23,7 @@ function currentMonth() {
 }
 
 function freshBudget() {
-  return { month: currentMonth(), serpapi: { used: 0 }, anthropic: { usd: 0, calls: 0 } };
+  return { month: currentMonth(), serpapi: { used: 0 }, anthropic: { usd: 0, calls: 0 }, subscription: { calls: 0, usd_equivalent: 0 } };
 }
 
 // Paths are relative to cwd because getSerp() and complete() know no config or
@@ -43,6 +43,7 @@ export function loadBudget(cwd = process.cwd()) {
     month: stored.month,
     serpapi: { used: stored.serpapi?.used ?? 0 },
     anthropic: { usd: stored.anthropic?.usd ?? 0, calls: stored.anthropic?.calls ?? 0 },
+    subscription: { calls: stored.subscription?.calls ?? 0, usd_equivalent: stored.subscription?.usd_equivalent ?? 0 },
   };
 }
 
@@ -87,5 +88,15 @@ export function addAnthropicCost(usd, cwd = process.cwd()) {
   const budget = loadBudget(cwd);
   budget.anthropic.usd += usd;
   budget.anthropic.calls += 1;
+  saveBudget(budget, cwd);
+}
+
+// Subscription calls cost no API money, so they are tallied (usd_equivalent is
+// what the same call would have cost on the API) and never checked against
+// usd_per_month.
+export function addSubscriptionUsage(usdEquivalent, cwd = process.cwd()) {
+  const budget = loadBudget(cwd);
+  budget.subscription.calls += 1;
+  budget.subscription.usd_equivalent += usdEquivalent;
   saveBudget(budget, cwd);
 }

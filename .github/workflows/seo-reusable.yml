@@ -21,6 +21,9 @@ on:
         required: false
       SERPAPI_KEY:
         required: false
+      # Optional: run LLM calls on the Claude subscription (`claude setup-token`). Without it every call uses ANTHROPIC_API_KEY.
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
       # Immer projektspezifisch:
       GSC_CREDENTIALS:
         required: true
@@ -54,6 +57,7 @@ jobs:
       statuses: read
     env:
       HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
+      HAVE_CC_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -97,6 +101,11 @@ jobs:
         run: npm ci
         working-directory: .seo-cli
 
+      # Only with a token: without it seo-cli never starts `claude`.
+      - name: Install Claude Code
+        if: env.HAVE_CC_TOKEN == 'true'
+        run: npm install -g @anthropic-ai/claude-code@2.1.292
+
       - name: Write Google credentials
         env:
           GSC_CREDENTIALS: ${{ secrets.GSC_CREDENTIALS }}
@@ -110,6 +119,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
+          # ANTHROPIC_API_KEY (from GITHUB_ENV) stays set: it is the fallback.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: node .seo-cli/bin/seo.js run --report "$RUNNER_TEMP/seo-report.json"
 
       # Weekly index-status snapshot, committed straight to main. Non-fatal: the
@@ -374,6 +385,7 @@ jobs:
             '{repo:$repo, run_url:$run_url, status:$status,
               prs: ($report.prs // [] | map({url, gate_status: ($gates[.url] // "unknown")})),
               budget: ($report.budget // null),
+              llm: ($report.llm // null),
               warnings: (($report.warnings // []) + $extra),
               errors: ($report.errors // [])}' \
             | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \

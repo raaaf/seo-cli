@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { MODELS, PRICES, BATCH_DISCOUNT, WEB_SEARCH_USD } from './models.js';
-import { assertBudget, addAnthropicCost } from './budget.js';
+import { assertBudget, addAnthropicCost, addSubscriptionUsage } from './budget.js';
+import { completeViaClaudeCode, claudeOnPath, ClaudeCodeError } from './claude-code.js';
 
 const MAX_RETRIES = 4;
 const BASE_RETRY_MS = 5000;
@@ -150,12 +151,91 @@ async function runBatch(params, batchWaitMs, batchPollMs) {
   return null;
 }
 
+// Subscription backend state, per process. A limit, auth error or timeout
+// switches every model to the API for good; an Opus or Sonnet limit only that
+// family. After SUBSCRIPTION_WINDOW_MS the run stays on the API so the job
+// finishes inside the workflow's timeout-minutes (120).
+const SUBSCRIPTION_WINDOW_MS = 60 * 60 * 1000;
+let startedAt = Date.now();
+let switchedAll = false;
+let switchedFamilies = new Set();
+let missingCliWarned = false;
+let stats = { subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] };
+
+export function resetLlmState() {
+  startedAt = Date.now();
+  switchedAll = false;
+  switchedFamilies = new Set();
+  missingCliWarned = false;
+  stats = { subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] };
+}
+
+export function getLlmStats() {
+  return { ...stats, fallbacks: [...stats.fallbacks] };
+}
+
+function modelFamily(model) {
+  if (/opus/i.test(model)) return 'opus';
+  if (/sonnet/i.test(model)) return 'sonnet';
+  return null;
+}
+
+// Every fallback is booked once and printed as a GitHub Actions annotation.
+function noteFallback(model, kind, reason) {
+  stats.fallbacks.push({ model, kind, reason });
+  console.log(`::warning::seo-cli fell back to the API (${kind})`);
+}
+
+// Shared by both backends. The error messages are matched by regex in
+// steps/review.js (isNoJsonError), keep them stable.
+function extractJson(text) {
+  const match = text.match(/```json\s*([\s\S]+?)\s*```/) || text.match(/(\{[\s\S]+\})/);
+  if (!match) throw new Error(`Claude returned no JSON:\n${text.slice(0, 300)}`);
+  try {
+    return JSON.parse(match[1]);
+  } catch (parseErr) {
+    throw new Error(`Claude returned malformed JSON: ${parseErr.message}\n${match[1].slice(0, 300)}`, { cause: parseErr });
+  }
+}
+
 export async function complete({
   system, prompt, model = MODELS.default, maxTokens = 4096, json = false, schema = null,
   webSearch = false, maxSearches = 6, batch = false, batchWaitMs = 45 * 60 * 1000, batchPollMs = BATCH_POLL_MS,
+  backend = null,
 }) {
   if (batch && webSearch) {
     throw new Error('complete(): batch and webSearch cannot be combined, a batch cannot resume a pause_turn.');
+  }
+
+  const family = modelFamily(model);
+  const wantsSubscription = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN)
+    && process.env.SEO_LLM_BACKEND !== 'api' && backend !== 'api';
+  const windowOpen = Date.now() - startedAt < SUBSCRIPTION_WINDOW_MS;
+  const switched = switchedAll || (family !== null && switchedFamilies.has(family));
+  // Past the window an API fallback must not wait on a batch for 45 minutes.
+  if (wantsSubscription && !windowOpen) batch = false;
+
+  if (wantsSubscription && windowOpen && !switched) {
+    if (!claudeOnPath()) {
+      if (!missingCliWarned) {
+        missingCliWarned = true;
+        noteFallback(model, 'error', 'claude not found in PATH');
+      }
+    } else {
+      try {
+        const res = await completeViaClaudeCode({ system, prompt, model, maxTokens, schema: json && schema ? schema : null, webSearch, maxSearches });
+        addSubscriptionUsage(res.costUsd);
+        stats.subscription_calls += 1;
+        stats.usd_equivalent += res.costUsd;
+        if (json && schema) return res.structured;
+        return json ? extractJson(res.text) : res.text;
+      } catch (e) {
+        if (!(e instanceof ClaudeCodeError)) throw e;
+        if (e.kind === 'limit' && e.family) switchedFamilies.add(e.family);
+        else if (e.kind !== 'error') switchedAll = true;
+        noteFallback(model, e.kind, e.message);
+      }
+    }
   }
 
   const messages = [{ role: 'user', content: prompt }];
@@ -208,23 +288,14 @@ export async function complete({
       const textBlock = textBlocks[textBlocks.length - 1];
       if (!textBlock) throw new Error(`Claude returned no text block (stop_reason: ${res.stop_reason})`);
       const text = textBlock.text.trim();
+      stats.api_calls += 1;
 
       if (json && schema) {
         // Structured Outputs guarantee schema-conformant JSON, no extraction needed.
         return JSON.parse(text);
       }
 
-      if (json) {
-        const match = text.match(/```json\s*([\s\S]+?)\s*```/) || text.match(/(\{[\s\S]+\})/);
-        if (!match) throw new Error(`Claude returned no JSON:\n${text.slice(0, 300)}`);
-        try {
-          return JSON.parse(match[1]);
-        } catch (parseErr) {
-          throw new Error(`Claude returned malformed JSON: ${parseErr.message}\n${match[1].slice(0, 300)}`, { cause: parseErr });
-        }
-      }
-
-      return text;
+      return json ? extractJson(text) : text;
     } catch (e) {
       const retryable = e.status === 529 || e.status === 503 || e.status === 502;
       if (!retryable || attempt === MAX_RETRIES) throw e;

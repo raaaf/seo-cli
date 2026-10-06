@@ -10,6 +10,7 @@ import { loadImprovements, saveImprovements } from '../lib/improvements.js';
 import { getPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { BudgetExceededError, loadBudget, budgetLimits } from '../lib/budget.js';
+import { getLlmStats } from '../lib/claude.js';
 import { isoWeek, format } from '../lib/date.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
@@ -264,6 +265,22 @@ function writeReport(path, report) {
   writeFileSync(path, JSON.stringify(report, null, 2) + '\n', 'utf8');
 }
 
+// Roughly 1 percent of the weekly Max limit (see the plan's calibration).
+const SUBSCRIPTION_WARN_USD = 25;
+
+// Which backend answered, and why it did not: the fallbacks cost API money.
+function llmSummary(warnings) {
+  const llm = getLlmStats();
+  if (llm.fallbacks.length > 0) {
+    const kinds = [...new Set(llm.fallbacks.map(f => f.kind))].join(', ');
+    warnings.push(`${llm.fallbacks.length} LLM call(s) fell back from the subscription to the API (${kinds})`);
+  }
+  if (llm.usd_equivalent > SUBSCRIPTION_WARN_USD) {
+    warnings.push(`Subscription usage this run is worth ${llm.usd_equivalent.toFixed(2)} USD on the API, over ${SUBSCRIPTION_WARN_USD} USD`);
+  }
+  return llm;
+}
+
 function budgetSummary(cwd) {
   const { month, serpapi, anthropic } = loadBudget(cwd);
   const limits = budgetLimits(cwd);
@@ -402,6 +419,7 @@ export async function runCommand(opts) {
       }
     }
     try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
+    report.llm = llmSummary(report.warnings);
     if (opts.report) writeReport(opts.report, report);
   }
 

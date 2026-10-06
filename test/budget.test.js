@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { assertBudget, addAnthropicCost, adjustSerpapi, loadBudget, BudgetExceededError, BUDGET_FILE } from '../src/lib/budget.js';
+import { assertBudget, addAnthropicCost, addSubscriptionUsage, adjustSerpapi, loadBudget, BudgetExceededError, BUDGET_FILE } from '../src/lib/budget.js';
 
 const month = new Date().toISOString().slice(0, 7);
 let dir;
@@ -16,7 +16,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('budget', () => {
   it('creates a missing file with zeroed counters', () => {
-    expect(loadBudget(dir)).toEqual({ month, serpapi: { used: 0 }, anthropic: { usd: 0, calls: 0 } });
+    expect(loadBudget(dir)).toEqual({ month, serpapi: { used: 0 }, anthropic: { usd: 0, calls: 0 }, subscription: { calls: 0, usd_equivalent: 0 } });
     expect(existsSync(join(dir, BUDGET_FILE))).toBe(true);
   });
 
@@ -41,6 +41,22 @@ describe('budget', () => {
     addAnthropicCost(0.01, dir);
     expect(() => assertBudget('anthropic', dir)).toThrow(BudgetExceededError);
     expect(JSON.parse(readFileSync(join(dir, BUDGET_FILE), 'utf8')).anthropic.calls).toBe(2);
+  });
+
+  it('books subscription calls separately and never refuses them against the API limit', () => {
+    writeFileSync(join(dir, 'seo.config.yaml'), 'budget:\n  usd_per_month: 1\n');
+    addSubscriptionUsage(30, dir);
+    addSubscriptionUsage(0.5, dir);
+    expect(() => assertBudget('anthropic', dir)).not.toThrow();
+    const stored = JSON.parse(readFileSync(join(dir, BUDGET_FILE), 'utf8'));
+    expect(stored.subscription).toEqual({ calls: 2, usd_equivalent: 30.5 });
+    expect(stored.anthropic).toEqual({ usd: 0, calls: 0 });
+    expect(loadBudget(dir).subscription).toEqual({ calls: 2, usd_equivalent: 30.5 });
+  });
+
+  it('normalises a stored file without a subscription section', () => {
+    seed({ month, serpapi: { used: 1 }, anthropic: { usd: 2, calls: 3 } });
+    expect(loadBudget(dir).subscription).toEqual({ calls: 0, usd_equivalent: 0 });
   });
 
   it('throws on an unreadable file instead of resetting it', () => {

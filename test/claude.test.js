@@ -21,8 +21,19 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }));
 
+// The subscription backend spawns `claude -p`: mocked at that boundary, the real
+// ClaudeCodeError class stays.
+const viaClaudeCode = vi.fn();
+const claudeOnPath = vi.fn();
+vi.mock('../src/lib/claude-code.js', async (orig) => ({
+  ...(await orig()),
+  completeViaClaudeCode: (...a) => viaClaudeCode(...a),
+  claudeOnPath: () => claudeOnPath(),
+}));
+
 process.env.ANTHROPIC_API_KEY = 'test-key';
-const { complete } = await import('../src/lib/claude.js');
+const { complete, getLlmStats, resetLlmState } = await import('../src/lib/claude.js');
+const { ClaudeCodeError } = await import('../src/lib/claude-code.js');
 const { MODELS } = await import('../src/lib/models.js');
 
 const reply = (text) => ({ content: [{ type: 'text', text }] });
@@ -49,6 +60,12 @@ beforeEach(() => {
   batchRetrieve.mockReset();
   batchResults.mockReset();
   batchCancel.mockReset();
+  viaClaudeCode.mockReset();
+  claudeOnPath.mockReset();
+  claudeOnPath.mockReturnValue(true);
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete process.env.SEO_LLM_BACKEND;
+  resetLlmState();
 });
 
 afterEach(() => {
@@ -305,5 +322,134 @@ describe('claude-budget', () => {
     await expect(complete({ system: 's', prompt: 'p' })).rejects.toThrow(/Anthropic monthly budget exhausted/);
     expect(stream).not.toHaveBeenCalled();
     expect(batchCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('claude-subscription-backend', () => {
+  const ccOk = (extra = {}) => ({ text: 'cc answer', structured: null, costUsd: 0.5, ...extra });
+  const bookedUsd = () => JSON.parse(readFileSync(join(dir, 'seo', 'budget.json'), 'utf8'));
+  const call = (extra = {}) => complete({ system: 's', prompt: 'p', ...extra });
+  const apiOk = () => stream.mockReturnValue(streamsTo(reply('api answer')));
+
+  beforeEach(() => {
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'tok';
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  it('uses claude -p when the token is set', async () => {
+    viaClaudeCode.mockResolvedValue(ccOk());
+    expect(await call()).toBe('cc answer');
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('uses the API without the token', async () => {
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    apiOk();
+    expect(await call()).toBe('api answer');
+    expect(viaClaudeCode).not.toHaveBeenCalled();
+  });
+
+  it('forces the API with SEO_LLM_BACKEND=api or backend: api', async () => {
+    apiOk();
+    process.env.SEO_LLM_BACKEND = 'api';
+    await call();
+    delete process.env.SEO_LLM_BACKEND;
+    await call({ backend: 'api' });
+    expect(viaClaudeCode).not.toHaveBeenCalled();
+    expect(stream).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the API with one warning when claude is not in PATH', async () => {
+    claudeOnPath.mockReturnValue(false);
+    apiOk();
+    await call();
+    await call();
+    expect(viaClaudeCode).not.toHaveBeenCalled();
+    expect(getLlmStats().fallbacks).toHaveLength(1);
+  });
+
+  it('falls back for one call on kind error, the next call uses the subscription again', async () => {
+    viaClaudeCode.mockRejectedValueOnce(new ClaudeCodeError('boom', { kind: 'error' })).mockResolvedValue(ccOk());
+    apiOk();
+    expect(await call()).toBe('api answer');
+    expect(await call()).toBe('cc answer');
+    expect(getLlmStats().fallbacks).toEqual([{ model: MODELS.default, kind: 'error', reason: 'boom' }]);
+  });
+
+  it.each(['limit', 'auth', 'timeout'])('switches every model to the API for good after kind %s', async (kind) => {
+    viaClaudeCode.mockRejectedValueOnce(new ClaudeCodeError('x', { kind }));
+    apiOk();
+    betaStream.mockReturnValue(streamsTo(reply('api answer')));
+    await call();
+    await call({ model: MODELS.generate });
+    expect(viaClaudeCode).toHaveBeenCalledTimes(1);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(betaStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches only the Opus family after an Opus limit', async () => {
+    viaClaudeCode.mockRejectedValueOnce(new ClaudeCodeError('x', { kind: 'limit', family: 'opus' })).mockResolvedValue(ccOk());
+    betaStream.mockReturnValue(streamsTo(reply('api answer')));
+    expect(await call({ model: MODELS.generate })).toBe('api answer');
+    expect(await call({ model: MODELS.generate })).toBe('api answer');
+    expect(await call({ model: MODELS.default })).toBe('cc answer');
+    expect(viaClaudeCode).toHaveBeenCalledTimes(2);
+  });
+
+  it('stays on the API after 60 minutes and runs the fallback without batch', async () => {
+    const t0 = Date.now();
+    resetLlmState();
+    vi.spyOn(Date, 'now').mockReturnValue(t0 + 61 * 60 * 1000);
+    apiOk();
+    await call({ batch: true });
+    expect(viaClaudeCode).not.toHaveBeenCalled();
+    expect(batchCreate).not.toHaveBeenCalled();
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rejects batch together with web search when the token is set', async () => {
+    await expect(call({ batch: true, webSearch: true })).rejects.toThrow(/cannot be combined/);
+    expect(viaClaudeCode).not.toHaveBeenCalled();
+  });
+
+  it('books a subscription call under subscription, not anthropic', async () => {
+    viaClaudeCode.mockResolvedValue(ccOk({ costUsd: 0.75 }));
+    await call();
+    const stored = bookedUsd();
+    expect(stored.subscription).toEqual({ calls: 1, usd_equivalent: 0.75 });
+    expect(stored.anthropic).toEqual({ usd: 0, calls: 0 });
+  });
+
+  it('counts both paths and the fallbacks in getLlmStats', async () => {
+    viaClaudeCode.mockResolvedValueOnce(ccOk({ costUsd: 1 })).mockRejectedValueOnce(new ClaudeCodeError('lim', { kind: 'limit' }));
+    apiOk();
+    await call();
+    await call();
+    expect(getLlmStats()).toEqual({
+      subscription_calls: 1, api_calls: 1, usd_equivalent: 1,
+      fallbacks: [{ model: MODELS.default, kind: 'limit', reason: 'lim' }],
+    });
+  });
+
+  it('prints a GitHub Actions warning per fallback', async () => {
+    viaClaudeCode.mockRejectedValueOnce(new ClaudeCodeError('x', { kind: 'auth' }));
+    apiOk();
+    await call();
+    expect(console.log.mock.calls.flat().join('\n')).toContain('::warning::seo-cli fell back to the API (auth)');
+  });
+
+  it('returns structured_output for a schema call', async () => {
+    viaClaudeCode.mockResolvedValue(ccOk({ structured: { count: 3 } }));
+    expect(await call({ json: true, schema: { type: 'object' } })).toEqual({ count: 3 });
+    expect(viaClaudeCode.mock.calls[0][0].schema).toEqual({ type: 'object' });
+  });
+
+  it('extracts JSON from the subscription text with the same error messages as the API path', async () => {
+    viaClaudeCode.mockResolvedValue(ccOk({ text: '```json\n{"a":1}\n```' }));
+    expect(await call({ json: true })).toEqual({ a: 1 });
+    viaClaudeCode.mockResolvedValue(ccOk({ text: 'no braces here' }));
+    await expect(call({ json: true })).rejects.toThrow(/^Claude returned no JSON:/);
+    viaClaudeCode.mockResolvedValue(ccOk({ text: '{ not json }' }));
+    await expect(call({ json: true })).rejects.toThrow(/^Claude returned malformed JSON:/);
   });
 });
