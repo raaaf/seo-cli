@@ -263,6 +263,7 @@ describe('run-pipeline', () => {
       expect(generateCounterpart).toHaveBeenCalledTimes(2);
       expect(createPRs).not.toHaveBeenCalled();
       expect(logs.join('\n')).toMatch(/steps count differs from the source page: 2 instead of 0/);
+      expect(generateCounterpart.mock.calls[1][4].validatorFeedback).toMatch(/steps count differs/);
     } finally {
       delete CONFIG.counterpart_locale;
     }
@@ -281,6 +282,45 @@ describe('run-pipeline', () => {
       expect(data.keywords[0].status).toBe('proposed');
       expect(logs.join('\n')).toMatch(/Counterpart skipped/);
       expect(logs.join('\n')).toMatch(/the pair ships together or not at all/);
+      expect(data.keywords[0].counterpart_failures).toBe(1);
+    } finally {
+      delete CONFIG.counterpart_locale;
+    }
+  });
+});
+
+describe('counterpart failure limit', () => {
+  it('marks the keyword validation_failed with a note when its counterpart failed in a second run', async () => {
+    CONFIG.counterpart_locale = 'en';
+    try {
+      const data = keywordsData();
+      data.keywords[0].counterpart_failures = 1;
+      discover.mockResolvedValue(data);
+      generateCounterpart.mockRejectedValue(new Error('Counterpart generation failed: slug collides'));
+
+      await run();
+
+      expect(createPRs).not.toHaveBeenCalled();
+      expect(data.keywords[0].status).toBe('validation_failed');
+      expect(data.keywords[0].counterpart_failures).toBe(2);
+      expect(data.keywords[0].note).toMatch(/en counterpart failed/);
+    } finally {
+      delete CONFIG.counterpart_locale;
+    }
+  });
+
+  it('clears the failure counter when the pair ships', async () => {
+    CONFIG.counterpart_locale = 'en';
+    try {
+      const data = keywordsData();
+      data.keywords[0].counterpart_failures = 1;
+      discover.mockResolvedValue(data);
+      generateCounterpart.mockResolvedValue({ markdown: '---\nslug: wedding-planning\n---\nbody', slug: 'wedding-planning' });
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/5'));
+
+      await run();
+
+      expect(data.keywords[0]).not.toHaveProperty('counterpart_failures');
     } finally {
       delete CONFIG.counterpart_locale;
     }

@@ -36,6 +36,8 @@ function pLimit(concurrency) {
   });
 }
 
+const MAX_COUNTERPART_FAILURES = 2;
+
 const REQUIRED_ENV = [
   'ANTHROPIC_API_KEY',
   'GOOGLE_APPLICATION_CREDENTIALS',
@@ -153,10 +155,18 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   // publication: events' LandingPageTest requires an `alternate` slug on every
   // page, so shipping the source page alone turns main red. Keep the keyword
   // at `proposed` — it comes back next run, when the API is reachable again.
+  // A counterpart that keeps failing would be regenerated at full cost every run,
+  // so the second dropped pair marks the keyword validation_failed.
   if (hasCounterpart && !counterpart) {
     console.log(chalk.yellow(`  Skipped: ${kw.keyword} — its ${config.counterpart_locale} counterpart failed, and the pair ships together or not at all`));
+    kw.counterpart_failures = (kw.counterpart_failures ?? 0) + 1;
+    if (kw.counterpart_failures >= MAX_COUNTERPART_FAILURES) {
+      kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
+      kw.note = `${config.counterpart_locale} counterpart failed in ${kw.counterpart_failures} runs`;
+    }
     return [];
   }
+  delete kw.counterpart_failures;
 
   const filePath = join(localeLandingPathStr, `${kw.target_slug}.md`).replace(/\\/g, '/');
   const pages = [];

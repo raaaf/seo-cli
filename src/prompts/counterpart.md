@@ -14,7 +14,9 @@ Adapt the source page below into {{target_locale}} for an international audience
 Rework the phrasing, examples, and framing so it reads as if written natively for
 {{target_locale}} readers, not translated word-for-word. Keep the same overall
 structure and frontmatter field set: hero, tldr, steps, checklist, faq,
-related_pages, meta_title, meta_description, updated.
+related_pages, meta_title, meta_description, updated. The counterpart must have
+exactly the same number of steps, checklist items and FAQ entries as the source
+page; a field the source omits stays omitted.
 
 Localize country-specific specifics sensibly. Example: a German GEMA reference
 becomes "your local performing rights organization"; a German legal or tax detail
