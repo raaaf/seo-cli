@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
 import { tmpdir } from 'os';
 
 // The spawn of `claude -p` is the I/O boundary: a fake child process replays a
@@ -12,17 +13,20 @@ const { MODELS } = await import('../src/lib/models.js');
 
 const OK = { type: 'result', subtype: 'success', is_error: false, result: ' hello ', total_cost_usd: 0.05 };
 
-// Replays `out` on stdout and closes with `code`. `hang` never closes.
+// Replays `out` on stdout (a string, or an array of Buffer chunks) and closes
+// with `code`. `hang` never closes. Real streams, so setEncoding behaves.
 function fakeChild(out, { code = 0, hang = false } = {}) {
   const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
   child.stdin = Object.assign(new EventEmitter(), { end: vi.fn() });
   child.kill = vi.fn();
   if (!hang) {
     setImmediate(() => {
-      child.stdout.emit('data', typeof out === 'string' ? out : JSON.stringify(out));
-      child.emit('close', code);
+      const chunks = Array.isArray(out) ? out : [typeof out === 'string' ? out : JSON.stringify(out)];
+      child.stdout.on('end', () => child.emit('close', code));
+      for (const c of chunks) child.stdout.write(c);
+      child.stdout.end();
     });
   }
   return child;
@@ -137,11 +141,22 @@ describe('claude-code-backend', () => {
     await expect(call()).rejects.toMatchObject({ kind: 'auth' });
   });
 
-  it('maps stop_reason max_tokens and refusal to kind error', async () => {
-    for (const stop_reason of ['max_tokens', 'refusal']) {
-      spawn.mockReturnValueOnce(fakeChild({ ...OK, stop_reason }));
-      await expect(call()).rejects.toMatchObject({ kind: 'error', message: expect.stringContaining(stop_reason === 'refusal' ? 'declined' : 'max_tokens') });
-    }
+  it('does not corrupt a multi-byte character split across stdout chunks', async () => {
+    const bytes = Buffer.from(JSON.stringify({ ...OK, result: 'Tür' }));
+    const cut = bytes.indexOf(0xc3) + 1;
+    spawn.mockReturnValue(fakeChild([bytes.subarray(0, cut), bytes.subarray(cut)]));
+    expect((await call()).text).toBe('Tür');
+  });
+
+  it('throws the API wording as a plain Error on max_tokens and refusal, so complete() does not fall back', async () => {
+    spawn.mockReturnValueOnce(fakeChild({ ...OK, stop_reason: 'max_tokens', usage: { output_tokens: 1234 } }));
+    const truncated = await call().catch((e) => e);
+    expect(truncated).not.toBeInstanceOf(ClaudeCodeError);
+    expect(truncated.message).toBe('Claude hit stop_reason: max_tokens (limit 1234, used 1234 output tokens)');
+    spawn.mockReturnValueOnce(fakeChild({ ...OK, stop_reason: 'refusal', stop_details: { category: 'cyber' } }));
+    const refused = await call().catch((e) => e);
+    expect(refused).not.toBeInstanceOf(ClaudeCodeError);
+    expect(refused.message).toBe('Claude declined the request (stop_reason: refusal, category: cyber)');
   });
 
   it('maps a schema call without structured_output to kind error', async () => {

@@ -444,12 +444,48 @@ describe('claude-subscription-backend', () => {
     expect(viaClaudeCode.mock.calls[0][0].schema).toEqual({ type: 'object' });
   });
 
-  it('extracts JSON from the subscription text with the same error messages as the API path', async () => {
+  it('extracts JSON from the subscription text', async () => {
     viaClaudeCode.mockResolvedValue(ccOk({ text: '```json\n{"a":1}\n```' }));
     expect(await call({ json: true })).toEqual({ a: 1 });
-    viaClaudeCode.mockResolvedValue(ccOk({ text: 'no braces here' }));
-    await expect(call({ json: true })).rejects.toThrow(/^Claude returned no JSON:/);
-    viaClaudeCode.mockResolvedValue(ccOk({ text: '{ not json }' }));
-    await expect(call({ json: true })).rejects.toThrow(/^Claude returned malformed JSON:/);
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it.each(['no braces here', '{ not json }'])('falls back to the API for one call when the subscription text has unusable JSON (%s)', async (text) => {
+    viaClaudeCode.mockResolvedValue(ccOk({ text }));
+    stream.mockReturnValue(streamsTo(reply('{"a":2}')));
+    expect(await call({ json: true })).toEqual({ a: 2 });
+    const { fallbacks } = getLlmStats();
+    expect(fallbacks).toHaveLength(1);
+    expect(fallbacks[0]).toMatchObject({ kind: 'error', reason: expect.stringMatching(/^Claude returned (no|malformed) JSON/) });
+  });
+
+  it('still throws when booking the subscription usage fails (fail closed)', async () => {
+    viaClaudeCode.mockResolvedValue(ccOk());
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo', 'budget.json'), '{ not json');
+    await expect(call()).rejects.toThrow();
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('runs the API call after a failed subscription attempt without batch', async () => {
+    viaClaudeCode.mockRejectedValue(new ClaudeCodeError('boom', { kind: 'error' }));
+    apiOk();
+    expect(await call({ batch: true })).toBe('api answer');
+    expect(batchCreate).not.toHaveBeenCalled();
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fall back to the API when the CLI reports max_tokens or a refusal', async () => {
+    viaClaudeCode.mockRejectedValue(new Error('Claude hit stop_reason: max_tokens (limit 1, used 1 output tokens)'));
+    await expect(call()).rejects.toThrow(/max_tokens/);
+    expect(stream).not.toHaveBeenCalled();
+    expect(getLlmStats().fallbacks).toEqual([]);
+  });
+
+  it('checks for the claude binary once per process', async () => {
+    viaClaudeCode.mockResolvedValue(ccOk());
+    await call();
+    await call();
+    expect(claudeOnPath).toHaveBeenCalledTimes(1);
   });
 });

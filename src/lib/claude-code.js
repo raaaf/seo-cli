@@ -21,6 +21,27 @@ export class ClaudeCodeError extends Error {
   }
 }
 
+// A message that hit the max_tokens cap is not usable output, whether or not
+// it happened to contain a text block: on 2026-09-23 adaptive thinking spent
+// most or all of an 8000-token budget, leaving generate.js and improve.js
+// truncated markdown or none at all. Fail loudly here instead of letting
+// runBatch log "succeeded" or validate.js discover it downstream.
+export function assertNotTruncated(res, maxTokens) {
+  if (res.stop_reason === 'max_tokens') {
+    throw new Error(`Claude hit stop_reason: max_tokens (limit ${maxTokens}, used ${res.usage?.output_tokens} output tokens)`);
+  }
+}
+
+// A classifier decline is a normal HTTP 200 with stop_reason: "refusal", not
+// an exception — surface it as one so callers don't treat empty/partial
+// content as a successful generation.
+export function assertNotRefused(res) {
+  if (res.stop_reason === 'refusal') {
+    const category = res.stop_details?.category ?? 'unknown';
+    throw new Error(`Claude declined the request (stop_reason: refusal, category: ${category})`);
+  }
+}
+
 export function claudeOnPath() {
   return (process.env.PATH ?? '').split(delimiter).some((dir) => {
     try { accessSync(join(dir, 'claude'), constants.X_OK); return true; } catch { return false; }
@@ -53,6 +74,9 @@ function run(args, { prompt, cwd, env, timeoutMs }) {
     const child = spawn('claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    // Decode as a stream: a multi-byte character can be split across chunks.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new ClaudeCodeError(`claude -p timed out after ${Math.round(timeoutMs / 1000)}s`, { kind: 'timeout' }));
@@ -102,12 +126,10 @@ export async function completeViaClaudeCode({
       const why = out?.subtype && out.subtype !== 'success' ? `${out.subtype}: ` : '';
       throw new ClaudeCodeError(`claude -p failed (exit ${code}): ${why}${detail.slice(0, 300)}`, { kind, family });
     }
-    if (out.stop_reason === 'max_tokens') {
-      throw new ClaudeCodeError(`Claude hit stop_reason: max_tokens (limit ${maxTokens})`);
-    }
-    if (out.stop_reason === 'refusal') {
-      throw new ClaudeCodeError('Claude declined the request (stop_reason: refusal)');
-    }
+    // Plain Errors, not ClaudeCodeError: the paid API would fail the same way,
+    // so complete() must not fall back.
+    assertNotTruncated(out, maxTokens);
+    assertNotRefused(out);
     if (schema && out.structured_output == null) {
       throw new ClaudeCodeError('claude -p returned no structured_output for the schema');
     }

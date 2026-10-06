@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
 import { MODELS, PRICES, BATCH_DISCOUNT, WEB_SEARCH_USD } from './models.js';
 import { assertBudget, addAnthropicCost, addSubscriptionUsage } from './budget.js';
-import { completeViaClaudeCode, claudeOnPath, ClaudeCodeError } from './claude-code.js';
+import { completeViaClaudeCode, claudeOnPath, ClaudeCodeError, assertNotTruncated, assertNotRefused } from './claude-code.js';
 
 const MAX_RETRIES = 4;
 const BASE_RETRY_MS = 5000;
@@ -45,27 +45,6 @@ function buildParams({ model, maxTokens, system, messages, thinking, outputConfi
     ...(outputConfig ? outputConfig : {}),
     ...(tools ? { tools } : {}),
   };
-}
-
-// A message that hit the max_tokens cap is not usable output, whether or not
-// it happened to contain a text block: on 2026-09-23 adaptive thinking spent
-// most or all of an 8000-token budget, leaving generate.js and improve.js
-// truncated markdown or none at all. Fail loudly here instead of letting
-// runBatch log "succeeded" or validate.js discover it downstream.
-function assertNotTruncated(res, maxTokens) {
-  if (res.stop_reason === 'max_tokens') {
-    throw new Error(`Claude hit stop_reason: max_tokens (limit ${maxTokens}, used ${res.usage?.output_tokens} output tokens)`);
-  }
-}
-
-// A classifier decline is a normal HTTP 200 with stop_reason: "refusal", not
-// an exception — surface it as one so callers don't treat empty/partial
-// content as a successful generation.
-function assertNotRefused(res) {
-  if (res.stop_reason === 'refusal') {
-    const category = res.stop_details?.category ?? 'unknown';
-    throw new Error(`Claude declined the request (stop_reason: refusal, category: ${category})`);
-  }
 }
 
 // Opus is the most expensive known model, so an id missing from PRICES is
@@ -160,6 +139,7 @@ let startedAt = Date.now();
 let switchedAll = false;
 let switchedFamilies = new Set();
 let missingCliWarned = false;
+let cliOnPath = null;
 let stats = { subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] };
 
 export function resetLlmState() {
@@ -167,6 +147,7 @@ export function resetLlmState() {
   switchedAll = false;
   switchedFamilies = new Set();
   missingCliWarned = false;
+  cliOnPath = null;
   stats = { subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] };
 }
 
@@ -216,7 +197,8 @@ export async function complete({
   if (wantsSubscription && !windowOpen) batch = false;
 
   if (wantsSubscription && windowOpen && !switched) {
-    if (!claudeOnPath()) {
+    cliOnPath ??= claudeOnPath();
+    if (!cliOnPath) {
       if (!missingCliWarned) {
         missingCliWarned = true;
         noteFallback(model, 'error', 'claude not found in PATH');
@@ -228,12 +210,18 @@ export async function complete({
         stats.subscription_calls += 1;
         stats.usd_equivalent += res.costUsd;
         if (json && schema) return res.structured;
-        return json ? extractJson(res.text) : res.text;
+        if (!json) return res.text;
+        // Unusable JSON from the CLI is a per-call fallback, like any other
+        // subscription failure. Booking above stays outside this conversion.
+        try { return extractJson(res.text); } catch (jsonErr) { throw new ClaudeCodeError(jsonErr.message); }
       } catch (e) {
         if (!(e instanceof ClaudeCodeError)) throw e;
         if (e.kind === 'limit' && e.family) switchedFamilies.add(e.family);
         else if (e.kind !== 'error') switchedAll = true;
         noteFallback(model, e.kind, e.message);
+        // A batch can wait up to 45 minutes, too long on top of a failed attempt
+        // inside the workflow's 120 minute timeout.
+        batch = false;
       }
     }
   }
