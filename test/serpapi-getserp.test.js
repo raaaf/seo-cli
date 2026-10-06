@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-// Mirrors serpapi.test.js setup: QUOTA_FILE is captured at module scope, so use a
-// temp quota file + resetModules + dynamic import per case.
+// Mirrors serpapi.test.js setup: the budget file lives under cwd (a temp dir),
+// the account.json read is memoized at module scope, so resetModules + dynamic
+// import per case.
 let dir;
 vi.mock('../src/lib/safe-fetch.js', () => ({ safeFetch: vi.fn() }));
 
@@ -17,13 +18,13 @@ async function freshModule() {
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'serpapi-parse-'));
-  process.env.SEO_CLI_QUOTA_FILE = join(dir, 'quota.json');
+  vi.spyOn(process, 'cwd').mockReturnValue(dir);
   process.env.SERPAPI_KEY = 'test-key';
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
-  delete process.env.SEO_CLI_QUOTA_FILE;
   delete process.env.SERPAPI_KEY;
   vi.clearAllMocks();
 });
@@ -60,7 +61,8 @@ describe('serpapi-getserp', () => {
     const { serpapi, safeFetch } = await freshModule();
     safeFetch.mockResolvedValue({ ok: true, json: async () => ({ organic_results: [] }) });
     await serpapi.getSerp('kw', { locale: 'en', gl: 'us' });
-    const url = safeFetch.mock.calls[0][0];
+    // calls[0] is the one-off account.json read
+    const url = safeFetch.mock.calls.find(([u]) => String(u).includes('search.json'))[0];
     expect(url).toContain('hl=en');
     expect(url).toContain('gl=us');
     expect(url).toContain('q=kw');

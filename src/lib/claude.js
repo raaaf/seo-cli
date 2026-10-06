@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import chalk from 'chalk';
-import { MODELS } from './models.js';
+import { MODELS, PRICES, BATCH_DISCOUNT, WEB_SEARCH_USD } from './models.js';
+import { assertBudget, addAnthropicCost } from './budget.js';
 
 const MAX_RETRIES = 4;
 const BASE_RETRY_MS = 5000;
@@ -64,6 +65,42 @@ function assertNotRefused(res) {
     const category = res.stop_details?.category ?? 'unknown';
     throw new Error(`Claude declined the request (stop_reason: refusal, category: ${category})`);
   }
+}
+
+// Opus is the most expensive known model, so an id missing from PRICES is
+// booked at its rates: the budget errs towards stopping early, not late.
+const FALLBACK_PRICE = Object.values(PRICES).reduce((a, b) => (b.output > a.output ? b : a));
+
+// Books the cost of one API response against the project budget. Priced by the
+// model the server reports in res.model, not the requested one: the server-side
+// fallback (FALLBACK_MODELS) can bill a different model than was asked for.
+function recordUsage(res, { requestedModel, batch = false }) {
+  const model = res.model ?? requestedModel;
+  let price = PRICES[model];
+  if (!price) {
+    console.log(chalk.yellow(`  Unknown model "${model}", booking at the most expensive known price`));
+    price = FALLBACK_PRICE;
+  }
+  const u = res.usage ?? {};
+  const tokensUsd = (
+    (u.input_tokens ?? 0) * price.input
+    + (u.cache_creation_input_tokens ?? 0) * price.cacheWrite
+    + (u.cache_read_input_tokens ?? 0) * price.cacheRead
+    + (u.output_tokens ?? 0) * price.output
+  ) / 1e6 * (batch ? BATCH_DISCOUNT : 1);
+  const searchUsd = (u.server_tool_use?.web_search_requests ?? 0) * WEB_SEARCH_USD;
+  addAnthropicCost(tokensUsd + searchUsd);
+}
+
+// One interactive request: budget check before, booking after (also when the
+// response is truncated or refused, the tokens were spent either way).
+async function streamMessage(params, { useFallback, requestedModel }) {
+  assertBudget('anthropic');
+  const client = useFallback ? getClient().beta.messages : getClient().messages;
+  const streamParams = useFallback ? { ...params, fallbacks: FALLBACK_MODELS, betas: [FALLBACK_BETA] } : params;
+  const res = await client.stream(streamParams).finalMessage();
+  recordUsage(res, { requestedModel });
+  return res;
 }
 
 // Submits a single-request batch and polls until it ends or the wait cap is
@@ -143,15 +180,16 @@ export async function complete({
     try {
       const params = buildParams({ model, maxTokens, system, messages, thinking, outputConfig, tools });
 
-      let res = batch ? await runBatch(params, batchWaitMs, batchPollMs) : null;
-      if (!res) {
-        // Streamed rather than a plain create(): a 32000-max_tokens request
-        // (raised from 8000 so adaptive thinking has room, see models.js)
-        // risks hitting the SDK's HTTP timeout on a non-streaming call.
-        const client = useFallback ? getClient().beta.messages : getClient().messages;
-        const streamParams = useFallback ? { ...params, fallbacks: FALLBACK_MODELS, betas: [FALLBACK_BETA] } : params;
-        res = await client.stream(streamParams).finalMessage();
+      let res = null;
+      if (batch) {
+        assertBudget('anthropic');
+        res = await runBatch(params, batchWaitMs, batchPollMs);
+        if (res) recordUsage(res, { requestedModel: model, batch: true });
       }
+      // Streamed rather than a plain create(): a 32000-max_tokens request
+      // (raised from 8000 so adaptive thinking has room, see models.js)
+      // risks hitting the SDK's HTTP timeout on a non-streaming call.
+      res ??= await streamMessage(params, { useFallback, requestedModel: model });
       assertNotTruncated(res, maxTokens);
       assertNotRefused(res);
 
@@ -159,9 +197,7 @@ export async function complete({
       // stop_reason "pause_turn"; resending the assistant turn resumes it.
       for (let resume = 0; res.stop_reason === 'pause_turn' && resume < MAX_PAUSE_RESUMES; resume++) {
         const resumeParams = buildParams({ model, maxTokens, system, messages: [...messages, { role: 'assistant', content: res.content }], thinking, outputConfig, tools });
-        const client = useFallback ? getClient().beta.messages : getClient().messages;
-        const streamParams = useFallback ? { ...resumeParams, fallbacks: FALLBACK_MODELS, betas: [FALLBACK_BETA] } : resumeParams;
-        res = await client.stream(streamParams).finalMessage();
+        res = await streamMessage(resumeParams, { useFallback, requestedModel: model });
         assertNotTruncated(res, maxTokens);
         assertNotRefused(res);
       }

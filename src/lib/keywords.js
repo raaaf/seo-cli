@@ -4,13 +4,14 @@ import { format } from './date.js';
 
 export const KEYWORDS_FILE = 'seo/keywords.json';
 export const SITEMAP_PENDING_FILE = 'seo/sitemap-pending.json';
-export const LAST_PR_FILE = 'seo/last-pr.json';
 
 export const KEYWORD_STATUS = {
   PROPOSED: 'proposed',
   DONE: 'done',
   SKIP: 'skip',
   PR_OPENED: 'pr_opened',
+  PUBLISHED: 'published', // its PR was merged
+  REJECTED: 'rejected', // its PR was closed without merging
   VALIDATION_FAILED: 'validation_failed',
 };
 
@@ -53,8 +54,23 @@ export function getPending(data, scoreCutoff) {
   );
 }
 
-export function saveLastPR(prUrl, cwd = process.cwd()) {
-  const path = join(cwd, LAST_PR_FILE);
+// A keyword marked pr_opened that never got a PR (it failed, was skipped, or the
+// run broke before the PRs) goes back to proposed. Entries that already carry a
+// pr_url are left alone, they are reconciled against the real PR state.
+export function releasePending(keywords) {
+  for (const kw of keywords) {
+    if (kw.status === KEYWORD_STATUS.PR_OPENED && !kw.pr_url) kw.status = KEYWORD_STATUS.PROPOSED;
+  }
+}
+
+export function loadSitemapPending(cwd = process.cwd()) {
+  const path = join(cwd, SITEMAP_PENDING_FILE);
+  if (!existsSync(path)) return { updated: null, slugs: [] };
+  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return { updated: null, slugs: [] }; }
+}
+
+export function saveSitemapPending(data, cwd = process.cwd()) {
+  const path = join(cwd, SITEMAP_PENDING_FILE);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ pr_url: prUrl, created_at: new Date().toISOString() }, null, 2) + '\n', 'utf8');
+  writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }

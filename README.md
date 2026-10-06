@@ -11,7 +11,7 @@ seo run
   ├── generate     Claude writes markdown (prose + YAML frontmatter)
   ├── validate     structure, word count, entities, tone checks
   ├── fact-check   claims verified against the live web, corrections applied
-  └── pr           commits to branch, opens PR
+  └── pr           one PR per keyword (all locales and the counterpart)
 ```
 
 A new page is only written when Search Console shows demand for a topic no
@@ -20,7 +20,7 @@ with the strongest case instead: a page ranking well without clicks has a title
 problem, a page just off page one has a content gap. An empty backlog is a
 normal result, not a failure.
 
-You review and merge the PR. That's the only manual step.
+You review and merge the PRs. That's the only manual step.
 
 ## Setup
 
@@ -65,12 +65,14 @@ seo run --dry-run  # preview without committing
 | Command | Description |
 |---|---|
 | `seo init` | Interactive setup, writes `seo.config.yaml` in the current project |
-| `seo run [--dry-run]` | Full pipeline: discover, generate, validate, fact-check, open PR. Improves an existing page when the backlog is empty |
+| `seo run [--dry-run] [--report <path>]` | Full pipeline: reconcile status with the real PR state, discover, generate, validate, fact-check, one PR per keyword. Improves an existing page when the backlog is empty. `--report` writes the run report as JSON |
 | `seo improve [--dry-run]` | Rewrite the existing page with the strongest case, from live GSC data |
 | `seo check <files...>` | Validate already-generated landing-page markdown (CI gate) |
 | `seo dashboard [--live] [--project <name>] [--json]` | Cross-project overview: funnel, rankings, movers, suggestions |
 | `seo submit-sitemap` | (Re)submit `<base_url>/sitemap.xml` to Google Search Console |
 | `seo indexnow` | Push all sitemap URLs to IndexNow (Bing, Yandex, Seznam, Naver), using the `indexnow_key` config key |
+
+A local `seo run` without `--dry-run` commits the machine state (see below) straight to `main` as well, so run `git pull` afterwards.
 
 `dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated).
 
@@ -104,6 +106,8 @@ jobs:
 | `OP_SERVICE_ACCOUNT_TOKEN` | 1Password service account token |
 | `GSC_CREDENTIALS` | Google OAuth2 credentials JSON (contents of file) |
 | `GSC_TOKEN` | GSC auth token JSON (contents of `~/.seo-cli-token.json`) |
+
+**Optional secret:** `SEO_NOTIFY_WEBHOOK` receives one report per run (see Run report). Without it the run ends with a visible `::warning::`.
 
 **Optional input:** `require_review: true` (under `with:`) disables auto-merge
 entirely — every generated PR stays open and is reported as `needs_review`.
@@ -164,6 +168,9 @@ counterpart_url_prefix: '' # e.g. '/en' — when the counterpart site serves its
                             # /{slug} URL space
 batch_generation: true  # generate via the Message Batches API at half price,
                          # falling back to an interactive call if it stalls
+budget:                  # per project and calendar month, checked before every
+  usd_per_month: 30      # paid call, counted in seo/budget.json
+  serpapi_per_month: 60
 clusters:
   - event-planning
   - party-organization
@@ -171,12 +178,15 @@ clusters:
 
 ## State files (per project)
 
-| File | Description | Git |
+The machine state goes straight to `main` (commit message `seo: state (<reason>) [skip ci]`), never into a PR: `seo run` commits it before the PRs are opened and once more afterwards, also when the run found nothing to do or failed half way. PRs carry pages only.
+
+| File | Description | Way |
 |---|---|---|
-| `seo/keywords.json` | Keyword backlog and status | commit |
-| `seo/sitemap-pending.json` | Slugs queued for sitemap submission | commit |
-| `seo/last-pr.json` | Last PR URL (used by CI auto-merge) | commit |
-| `seo/improvements.json` | Which page was rewritten when, and the queries behind it | commit |
+| `seo/keywords.json` | Keyword backlog and status | state commit to `main` |
+| `seo/sitemap-pending.json` | Slugs queued for sitemap submission, added when a keyword's PR is merged | state commit to `main` |
+| `seo/improvements.json` | Which page was rewritten when, the queries behind it, its PR url and merge date | state commit to `main` |
+| `seo/index-status.json` | Last week's Google index coverage per sitemap URL | state commit to `main` |
+| `seo/budget.json` | SerpAPI searches and Anthropic spend of the current month | state commit to `main` |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo.config.yaml` | Project config | commit |
 
@@ -184,6 +194,23 @@ Add to `.gitignore`:
 ```
 seo/rankings/
 ```
+
+### Keyword status and PRs
+
+Every keyword is its own PR on `seo/new/<slug>` (all locale files and the counterpart together), every rewrite is its own PR on `seo/improve/<slug>`. A branch that already exists means an earlier PR is still open: that keyword or page is skipped with a warning. The status on `main` follows the real PR state, reconciled at the start of every run:
+
+| Status | Meaning |
+|---|---|
+| `proposed` | Scored, waiting for a PR (also after a failed PR) |
+| `pr_opened` | PR open, `pr_url` stored on the entry |
+| `published` | PR merged, its slugs are queued in `sitemap-pending.json` |
+| `rejected` | PR closed without merge, the keyword is not proposed again |
+
+A rewrite's cooldown entry is only written once its PR exists. A closed rewrite PR removes the entry, a merged one keeps it.
+
+### Run report
+
+`seo run --report <path>` writes `{ status, prs: [{ url, kind: 'new'|'improve', slug }], budget, warnings, errors }`. `status` is `idle`, `prs_opened`, `failed` or `budget_exceeded` (exit code 0). The workflow gates every PR of the report and ends with a notify step that always runs and posts `{ repo, run_url, status, prs: [{ url, gate_status }], budget, warnings, errors }` to `SEO_NOTIFY_WEBHOOK`. `--dry-run` skips the reconcile, the state commits and the PRs, and still writes the report.
 
 ## Supported project types
 
@@ -194,9 +221,9 @@ The CLI generates markdown with YAML frontmatter. The exact schema depends on th
 
 Configure `landing_path` and `locale` in `seo.config.yaml` to match your project.
 
-## SerpAPI quota
+## SerpAPI quota and budget
 
-The CLI tracks usage in `~/.seo-cli-serpapi.json`, resets the counter each calendar month, and shows remaining quota at the start of each run. Hard stop at 240 searches per month (`MONTHLY_LIMIT` in `src/lib/serpapi.js`), 10 below the 250/month SerpAPI free tier. Adjust the limit to match your plan. Failed requests refund their quota reservation; old weekly quota files are migrated automatically (existing count carries over as a conservative lower bound).
+SerpAPI searches and Anthropic spend are counted per project and calendar month in `seo/budget.json` and checked before every paid call. The limits come from `budget:` in `seo.config.yaml` (default 30 USD and 60 searches per month, so up to four projects stay under the shared 250/month free tier). Once per process the free `account.json` endpoint is read as well: with no searches left on the account the run stops, whatever the project budget says. Failed requests refund their reservation. A run that hits a limit ends with status `budget_exceeded` and exit code 0.
 
 ## License
 

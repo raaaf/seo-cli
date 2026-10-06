@@ -1,15 +1,13 @@
 import chalk from 'chalk';
 import { loadConfig } from '../lib/config.js';
-import { createBranchAndCommit } from '../lib/github.js';
+import { commitState } from '../lib/state.js';
 import { checkIndexStatus } from '../steps/index-check.js';
-import { INDEX_STATUS_FILE, loadIndexStatus } from '../lib/index-status.js';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { loadIndexStatus } from '../lib/index-status.js';
 
 /**
- * `--commit` pushes `seo/index-status.json` straight to `main` via the same
- * GitHub API commit path `seo run` and `seo improve` use for their state
- * files — no PR, since this is a bookkeeping snapshot, not content to review.
+ * `--commit` pushes the state files that differ from `main`
+ * (including `seo/index-status.json`) straight to `main` via `commitState`, no PR, since
+ * this is a bookkeeping snapshot, not content to review.
  * Off by default so a local/manual run (e.g. to sanity-check a property) never
  * writes to the target repo by surprise.
  */
@@ -38,21 +36,9 @@ export async function indexStatusCommand(opts = {}) {
       process.exit(1);
     }
     try {
-      const content = readFileSync(join(cwd, INDEX_STATUS_FILE), 'utf8');
       const week = loadIndexStatus(cwd).updated;
-      await createBranchAndCommit({
-        files: [{ path: INDEX_STATUS_FILE, content }],
-        // [skip ci]: raaaf/portfolio-2025 deploys to FTP on every push to main,
-        // unfiltered. Without this, a bookkeeping snapshot would redeploy the
-        // whole site weekly on a step that already dies intermittently with a
-        // control-socket timeout. Content PRs are unaffected and still deploy.
-        message: `seo: weekly index-status snapshot (${week}) [skip ci]`,
-        cwd,
-        repo: config.repo,
-        branch: 'main',
-        baseBranch: 'main',
-      });
-      console.log(chalk.green('  seo/index-status.json committed to main.'));
+      const committed = await commitState({ cwd, repo: config.repo, reason: `index-status ${week}` });
+      console.log(chalk.green(`  state committed to main: ${committed.length ? committed.join(', ') : 'nothing changed'}.`));
     } catch (e) {
       console.error(chalk.red(`  index-status commit failed (non-fatal): ${e.message}`));
     }

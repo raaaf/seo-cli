@@ -1,64 +1,47 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 import { format } from './date.js';
 import { safeFetch } from './safe-fetch.js';
+import { assertBudget, adjustSerpapi, loadBudget, budgetLimits, BudgetExceededError } from './budget.js';
 
-const QUOTA_FILE = process.env.SEO_CLI_QUOTA_FILE || join(homedir(), '.seo-cli-serpapi.json');
-// SerpAPI free tier is 250 searches per MONTH — keep 10 as buffer.
-const MONTHLY_LIMIT = 240;
+// Account-wide state, read once per process from the free account.json
+// endpoint (does not count against the monthly quota). Several projects share
+// one SerpAPI plan, so the per-project budget alone cannot see an account that
+// other projects already drained. `left` is null while unknown or unreadable.
+let account = null;
+let accountLoad = null;
 
 function currentMonth() {
   return format(new Date()).slice(0, 7); // YYYY-MM
 }
 
-let quotaCache = null;
-function loadQuota() {
-  if (quotaCache !== null) return quotaCache;
-  if (!existsSync(QUOTA_FILE)) { quotaCache = { month: null, used: 0 }; return quotaCache; }
-  try { quotaCache = JSON.parse(readFileSync(QUOTA_FILE, 'utf8')); }
-  catch { quotaCache = { month: null, used: 0 }; }
-  // Migrate pre-monthly files ({ week: "YYYY-Www", used }): keep the count as a
-  // conservative lower bound for the current month.
-  if (quotaCache.week !== undefined && quotaCache.month === undefined) {
-    quotaCache = { month: currentMonth(), used: quotaCache.used ?? 0 };
-  }
-  return quotaCache;
+async function loadAccount() {
+  try {
+    const res = await safeFetch(`https://serpapi.com/account.json?api_key=${encodeURIComponent(process.env.SERPAPI_KEY)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (typeof data.total_searches_left === 'number') {
+      account = { left: data.total_searches_left, usedAtLoad: loadBudget().serpapi.used };
+    }
+  } catch { /* unreadable: fall back to the project budget alone */ }
 }
 
-function saveQuota(q) {
-  quotaCache = q;
-  writeFileSync(QUOTA_FILE, JSON.stringify(q), 'utf8');
-}
-
+// Smaller of the project's and the account's remaining searches. Before the
+// first search of a process the account is unknown and only the project counts.
 export function checkQuota() {
-  const q = loadQuota();
-  const month = currentMonth();
-  if (q.month !== month) return { used: 0, remaining: MONTHLY_LIMIT, month };
-  return { used: q.used, remaining: MONTHLY_LIMIT - q.used, month };
-}
-
-function bumpQuota(currentUsed) {
-  const next = currentUsed + 1;
-  saveQuota({ month: currentMonth(), used: next });
-  return next;
-}
-
-// Unconditional decrement: under Promise.all bursts other calls bump the
-// counter between this call's bump and its failure, so an equality check
-// would silently skip the refund. JS is single-threaded — each failed
-// request refunds exactly its own reservation.
-function rollbackQuota() {
-  const q = loadQuota();
-  saveQuota({ month: q.month ?? currentMonth(), used: Math.max(0, q.used - 1) });
+  const { serpapi_per_month: limit } = budgetLimits();
+  const used = loadBudget().serpapi.used;
+  const projectLeft = limit - used;
+  const accountLeft = account ? account.left - (used - account.usedAtLoad) : Infinity;
+  return { used, remaining: Math.min(projectLeft, accountLeft), limit, month: currentMonth() };
 }
 
 export async function getSerp(keyword, { locale = 'de', gl = 'de' } = {}) {
   if (!process.env.SERPAPI_KEY) throw new Error('SERPAPI_KEY not set');
 
-  const before = checkQuota();
-  if (before.remaining <= 0) throw new Error(`SerpAPI monthly quota exhausted (${MONTHLY_LIMIT} searches/month)`);
-  bumpQuota(before.used);
+  assertBudget('serpapi');
+  accountLoad ??= loadAccount();
+  await accountLoad;
+  if (checkQuota().remaining <= 0) throw new BudgetExceededError('SerpAPI budget or account quota exhausted');
+  adjustSerpapi(1);
 
   const params = new URLSearchParams({
     q: keyword,
@@ -72,11 +55,11 @@ export async function getSerp(keyword, { locale = 'de', gl = 'de' } = {}) {
   try {
     res = await safeFetch(`https://serpapi.com/search.json?${params}`);
   } catch (e) {
-    rollbackQuota();
+    adjustSerpapi(-1);
     throw e;
   }
   if (!res.ok) {
-    rollbackQuota();
+    adjustSerpapi(-1);
     throw new Error(`SerpAPI error: ${res.status}`);
   }
 

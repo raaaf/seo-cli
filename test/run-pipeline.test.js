@@ -1,22 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-// End-to-end happy path + PR-failure rollback for `seo run`, with the heavy
-// collaborators (discover/generate/validate/pr/track, config load, state save)
-// mocked. Closes the largest Needs-human-review gap (run orchestration).
+// Orchestration of `seo run`: reconcile, pipeline, state commits around the PRs,
+// run report. The heavy collaborators (discover/generate/validate/pr/track, config
+// load, GitHub) are mocked. Closes the largest Needs-human-review gap.
 
 const discover = vi.fn();
 const generatePage = vi.fn();
 const generateCounterpart = vi.fn();
 const validate = vi.fn();
-const createPR = vi.fn();
-const improveCommand = vi.fn();
+const createPRs = vi.fn();
+const prepareImprove = vi.fn();
+const publishImprove = vi.fn();
 const track = vi.fn();
 const reviewPage = vi.fn();
-const saveKeywords = vi.fn();
-const saveLastPR = vi.fn();
+const commitState = vi.fn();
+const getPR = vi.fn();
+const deleteBranch = vi.fn();
 
 const CONFIG = {
   project: 'demo', locale: 'de', locales: ['de'], score_cutoff: 7,
@@ -33,25 +35,39 @@ vi.mock('../src/steps/counterpart.js', async (orig) => ({
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 // The fact checker calls the API with web search; the pipeline test only cares
 // that the page survives it untouched.
-vi.mock('../src/commands/improve.js', () => ({ improveCommand: (...a) => improveCommand(...a) }));
+vi.mock('../src/commands/improve.js', () => ({
+  prepareImprove: (...a) => prepareImprove(...a),
+  publishImprove: (...a) => publishImprove(...a),
+}));
 vi.mock('../src/steps/review.js', () => ({
   reviewPage: (...a) => reviewPage(...a),
   unresolvedSeverity: () => null,
 }));
-vi.mock('../src/steps/pr.js', () => ({ createPR: (...a) => createPR(...a) }));
+vi.mock('../src/steps/pr.js', () => ({ createPRs: (...a) => createPRs(...a) }));
+vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a) }));
+vi.mock('../src/lib/github.js', () => ({ getPR: (...a) => getPR(...a), deleteBranch: (...a) => deleteBranch(...a) }));
 vi.mock('../src/steps/track.js', () => ({ track: (...a) => track(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
-vi.mock('../src/lib/keywords.js', async (orig) => ({
-  ...(await orig()), saveKeywords: (...a) => saveKeywords(...a), saveLastPR: (...a) => saveLastPR(...a),
-}));
 
 const { runCommand } = await import('../src/commands/run.js');
+const { loadKeywords, loadSitemapPending } = await import('../src/lib/keywords.js');
+const { loadImprovements } = await import('../src/lib/improvements.js');
+const { BudgetExceededError } = await import('../src/lib/budget.js');
 
 const REQUIRED = ['ANTHROPIC_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'SERPAPI_KEY', 'GITHUB_TOKEN'];
-let dir, cwd, saved, logs;
+let dir, cwd, saved, logs, reportPath;
 
 function keywordsData() {
   return { keywords: [{ keyword: 'hochzeit planen', status: 'proposed', score: 9, target_slug: 'hochzeit-planen', type: 'guide' }] };
+}
+
+const opened = (url, slug = 'hochzeit-planen') => ({ prs: [{ url, keyword: 'hochzeit planen', slug }], warnings: [], errors: [] });
+const report = () => JSON.parse(readFileSync(reportPath, 'utf8'));
+const run = (opts = {}) => runCommand({ report: reportPath, ...opts });
+
+function seedState(file, data) {
+  mkdirSync(join(dir, 'seo'), { recursive: true });
+  writeFileSync(join(dir, 'seo', file), JSON.stringify(data));
 }
 
 function manyKeywords(n) {
@@ -64,7 +80,11 @@ beforeEach(() => {
   process.chdir(dir);
   saved = {};
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
-  for (const fn of [discover, generatePage, generateCounterpart, validate, createPR, track, saveKeywords, saveLastPR, reviewPage]) fn.mockReset();
+  reportPath = join(dir, 'report.json');
+  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
+  commitState.mockResolvedValue([]);
+  deleteBranch.mockResolvedValue();
+  createPRs.mockResolvedValue({ prs: [], warnings: [], errors: [] });
   reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   generatePage.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
   validate.mockReturnValue({ ok: true, errors: [], warnings: [] });
@@ -80,54 +100,72 @@ afterEach(() => {
 });
 
 describe('run-pipeline', () => {
-  it('runs discover → generate → pr → track and records the PR url', async () => {
+  it('runs discover → generate → state → PRs → state → track', async () => {
     discover.mockResolvedValue(keywordsData());
-    createPR.mockResolvedValue('https://github.com/o/demo/pull/1');
+    const order = [];
+    commitState.mockImplementation(async () => { order.push('state'); return []; });
+    createPRs.mockImplementation(async () => { order.push('prs'); return opened('https://github.com/o/demo/pull/1'); });
+    track.mockImplementation(async () => { order.push('track'); });
 
-    await runCommand({});
+    await run();
 
     expect(discover).toHaveBeenCalledTimes(1);
     expect(generatePage).toHaveBeenCalledTimes(1);
-    const prArg = createPR.mock.calls[0][0];
+    const prArg = createPRs.mock.calls[0][0];
     expect(prArg.generatedPages).toHaveLength(1);
     expect(prArg.generatedPages[0].slug).toBe('hochzeit-planen');
-    expect(saveLastPR).toHaveBeenCalledWith('https://github.com/o/demo/pull/1', expect.any(String));
-    expect(track).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['state', 'prs', 'track', 'state']);
+    expect(commitState.mock.calls[0][0]).toMatchObject({ repo: 'o/demo', cwd: process.cwd() });
   });
 
-  it('rolls keyword status back to proposed when PR creation fails', async () => {
+  it('writes the keyword status pr_opened to disk before the first state commit', async () => {
+    discover.mockResolvedValue(keywordsData());
+    let onDisk;
+    commitState.mockImplementationOnce(async () => { onDisk = loadKeywords(dir).keywords[0].status; return []; });
+
+    await run();
+
+    expect(onDisk).toBe('pr_opened');
+  });
+
+  it('sets keywords whose PR failed back to proposed in the final state', async () => {
     const data = keywordsData();
     discover.mockResolvedValue(data);
-    createPR.mockRejectedValue(new Error('GitHub 500'));
+    createPRs.mockImplementation(async ({ keywordsData: kd }) => {
+      kd.keywords[0].status = 'proposed'; // what pr.js does for a failed PR
+      return { prs: [], warnings: [], errors: ['PR creation failed for "hochzeit planen": GitHub 500'] };
+    });
 
-    await runCommand({});
+    await run();
 
-    expect(logs.join('\n')).toMatch(/PR creation failed/);
-    expect(data.keywords[0].status).toBe('proposed'); // reset for retry next run
-    expect(saveLastPR).not.toHaveBeenCalled();
+    expect(loadKeywords(dir).keywords[0].status).toBe('proposed');
+    expect(report()).toMatchObject({ status: 'failed', prs: [], errors: [expect.stringMatching(/GitHub 500/)] });
   });
 
-  it('skips PR and track on --dry-run', async () => {
+  it('skips PR and track on --dry-run, with no reconcile and no state commit, but still reports', async () => {
     discover.mockResolvedValue(keywordsData());
-    await runCommand({ dryRun: true });
-    expect(createPR).not.toHaveBeenCalled();
+    await run({ dryRun: true });
+    expect(createPRs).not.toHaveBeenCalled();
     expect(track).not.toHaveBeenCalled();
+    expect(commitState).not.toHaveBeenCalled();
+    expect(getPR).not.toHaveBeenCalled();
+    expect(report().status).toBe('idle');
   });
 
   it('retries generation once with validator feedback after a failed validation', async () => {
     discover.mockResolvedValue(keywordsData());
-    createPR.mockResolvedValue('https://github.com/o/demo/pull/2');
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/2'));
     validate.mockReset();
     validate
       .mockReturnValueOnce({ ok: false, errors: ['Body too short: 10 words (min 800)'], warnings: [] })
       .mockReturnValue({ ok: true, errors: [], warnings: [] });
 
-    await runCommand({});
+    await run();
 
     expect(generatePage).toHaveBeenCalledTimes(2);
     // second attempt receives the failed validation result as feedback (4th arg)
     expect(generatePage.mock.calls[1][3]).toMatchObject({ ok: false });
-    expect(createPR.mock.calls[0][0].generatedPages).toHaveLength(1);
+    expect(createPRs.mock.calls[0][0].generatedPages).toHaveLength(1);
   });
 
   it('drops a page whose fact check did not run and keeps the keyword proposed', async () => {
@@ -135,11 +173,11 @@ describe('run-pipeline', () => {
     discover.mockResolvedValue(data);
     reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [], unchecked: true, error: 'Claude returned no JSON:' }));
 
-    await runCommand({});
+    await run();
 
     expect(logs.join('\n')).toMatch(/fact check did not run: Claude returned no JSON/);
     expect(data.keywords[0].status).toBe('proposed');
-    expect(createPR).not.toHaveBeenCalled();
+    expect(createPRs).not.toHaveBeenCalled();
   });
 
   it('marks a keyword validation_failed after two failed attempts and opens no PR', async () => {
@@ -148,11 +186,11 @@ describe('run-pipeline', () => {
     validate.mockReset();
     validate.mockReturnValue({ ok: false, errors: ['Body too short'], warnings: [] });
 
-    await runCommand({});
+    await run();
 
     expect(generatePage).toHaveBeenCalledTimes(2);
     expect(data.keywords[0].status).toBe('validation_failed');
-    expect(createPR).not.toHaveBeenCalled();
+    expect(createPRs).not.toHaveBeenCalled();
     expect(track).toHaveBeenCalledTimes(1); // tracking still runs
   });
 
@@ -160,7 +198,7 @@ describe('run-pipeline', () => {
     CONFIG.weekly_cap = 4;
     try {
       discover.mockResolvedValue(manyKeywords(4));
-      createPR.mockResolvedValue('https://github.com/o/demo/pull/3');
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/3'));
       let active = 0;
       let maxActive = 0;
       generatePage.mockReset();
@@ -172,10 +210,10 @@ describe('run-pipeline', () => {
         return '---\nslug: x\n---\nbody';
       });
 
-      await runCommand({});
+      await run();
 
       expect(maxActive).toBeLessThanOrEqual(2);
-      expect(createPR.mock.calls[0][0].generatedPages).toHaveLength(4);
+      expect(createPRs.mock.calls[0][0].generatedPages).toHaveLength(4);
     } finally {
       CONFIG.weekly_cap = 2;
     }
@@ -185,12 +223,12 @@ describe('run-pipeline', () => {
     CONFIG.counterpart_locale = 'en';
     try {
       discover.mockResolvedValue(keywordsData());
-      createPR.mockResolvedValue('https://github.com/o/demo/pull/4');
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/4'));
       generateCounterpart.mockResolvedValue({ markdown: '---\nslug: wedding-planning\n---\nbody', slug: 'wedding-planning' });
 
-      await runCommand({});
+      await run();
 
-      const pages = createPR.mock.calls[0][0].generatedPages;
+      const pages = createPRs.mock.calls[0][0].generatedPages;
       expect(pages).toHaveLength(2);
 
       const dePage = pages.find(p => p.locale === 'de');
@@ -211,9 +249,9 @@ describe('run-pipeline', () => {
       discover.mockResolvedValue(data);
       generateCounterpart.mockRejectedValue(new Error('Counterpart generation failed: slug collides'));
 
-      await runCommand({});
+      await run();
 
-      expect(createPR).not.toHaveBeenCalled();
+      expect(createPRs).not.toHaveBeenCalled();
       expect(data.keywords[0].status).toBe('proposed');
       expect(logs.join('\n')).toMatch(/Counterpart skipped/);
       expect(logs.join('\n')).toMatch(/the pair ships together or not at all/);
@@ -224,12 +262,187 @@ describe('run-pipeline', () => {
 });
 
 describe('empty backlog', () => {
-  it('improves an existing page instead of generating a new one', async () => {
+  it('improves an existing page instead of generating a new one, as its own PR', async () => {
     discover.mockResolvedValue({ version: 1, keywords: [] });
+    const prepared = { slug: 'preise', files: [], record: {}, prTitle: 't', prBody: 'b' };
+    prepareImprove.mockResolvedValue(prepared);
+    publishImprove.mockResolvedValue('https://github.com/o/demo/pull/8');
 
-    await runCommand({});
+    await run();
 
-    expect(createPR).not.toHaveBeenCalled();
-    expect(improveCommand).toHaveBeenCalledTimes(1);
+    expect(createPRs).not.toHaveBeenCalled();
+    expect(publishImprove).toHaveBeenCalledWith(prepared, expect.objectContaining({ config: CONFIG, cwd: process.cwd() }));
+    expect(report()).toMatchObject({ status: 'prs_opened', prs: [{ url: 'https://github.com/o/demo/pull/8', kind: 'improve', slug: 'preise' }] });
+  });
+
+  it('is idle when no page qualifies for a rewrite', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue(null);
+
+    await run();
+
+    expect(publishImprove).not.toHaveBeenCalled();
+    expect(report()).toMatchObject({ status: 'idle', prs: [], errors: [] });
+  });
+
+  it('reports a skipped improve (branch exists) as a warning, not as an error', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue({ slug: 'preise' });
+    publishImprove.mockImplementation(async (_p, { warnings }) => { warnings.push('Improve skipped: branch exists'); return null; });
+
+    await run();
+
+    expect(report()).toMatchObject({ status: 'idle', warnings: ['Improve skipped: branch exists'], errors: [] });
+  });
+});
+
+describe('run-reconcile', () => {
+  const PR = (n) => `https://github.com/o/demo/pull/${n}`;
+  const kw = (keyword, n, extra = {}) => ({ keyword, status: 'pr_opened', score: 9, target_slug: keyword, pr_url: PR(n), sitemap_slugs: [`/${keyword}`], ...extra });
+
+  beforeEach(() => {
+    discover.mockImplementation(async () => loadKeywords(dir));
+    prepareImprove.mockResolvedValue(null);
+  });
+
+  it('publishes a merged keyword, rejects a closed one, leaves an open one, and queues sitemap slugs only for the merged one', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('merged', 1), kw('closed', 2), kw('open', 3)] });
+    getPR.mockImplementation(async ({ url }) => ({ state: { [PR(1)]: 'merged', [PR(2)]: 'closed', [PR(3)]: 'open' }[url], mergedAt: null }));
+
+    await run();
+
+    const status = Object.fromEntries(loadKeywords(dir).keywords.map(k => [k.keyword, k.status]));
+    expect(status).toEqual({ merged: 'published', closed: 'rejected', open: 'pr_opened' });
+    expect(loadSitemapPending(dir).slugs).toEqual(['/merged']);
+  });
+
+  it('deletes the branch of a keyword PR that was closed without merge, and only that one', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('closed', 2), kw('open', 3)] });
+    getPR.mockImplementation(async ({ url }) => (url === PR(2) ? { state: 'closed', headRef: 'seo/new/closed' } : { state: 'open', headRef: 'seo/new/open' }));
+
+    await run();
+
+    expect(deleteBranch).toHaveBeenCalledTimes(1);
+    expect(deleteBranch).toHaveBeenCalledWith({ repo: 'o/demo', branch: 'seo/new/closed' });
+  });
+
+  it('deletes the branch of an improvement PR that was closed without merge', async () => {
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'p', date: '2026-10-01', pr_url: PR(5) }] });
+    getPR.mockResolvedValue({ state: 'closed', headRef: 'seo/improve/p' });
+
+    await run();
+
+    expect(deleteBranch).toHaveBeenCalledWith({ repo: 'o/demo', branch: 'seo/improve/p' });
+  });
+
+  it('reconciles before discover reads the keywords', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('merged', 1)] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: null });
+    discover.mockImplementation(async () => { expect(loadKeywords(dir).keywords[0].status).toBe('published'); return { version: 1, keywords: [] }; });
+
+    await run();
+
+    expect(discover).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not touch a pr_opened keyword that has no stored PR url', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('legacy', 1, { pr_url: undefined })] });
+
+    await run();
+
+    expect(getPR).not.toHaveBeenCalled();
+    expect(loadKeywords(dir).keywords[0].status).toBe('pr_opened');
+  });
+
+  it('keeps the status and warns when a PR cannot be read', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('flaky', 1)] });
+    getPR.mockRejectedValue(new Error('GitHub 502'));
+
+    await run();
+
+    expect(loadKeywords(dir).keywords[0].status).toBe('pr_opened');
+    expect(report().warnings[0]).toMatch(/Could not read .*GitHub 502/);
+  });
+
+  it('drops the cooldown entry of a closed improvement PR and keeps a merged one with its merge date', async () => {
+    seedState('improvements.json', { version: 1, entries: [
+      { slug: 'closed-page', date: '2026-10-01', pr_url: PR(5) },
+      { slug: 'merged-page', date: '2026-10-01', pr_url: PR(6) },
+      { slug: 'open-page', date: '2026-10-01', pr_url: PR(7) },
+      { slug: 'old-page', date: '2026-08-01' },
+    ] });
+    getPR.mockImplementation(async ({ url }) => ({ state: { [PR(5)]: 'closed', [PR(6)]: 'merged', [PR(7)]: 'open' }[url], mergedAt: '2026-10-03T09:00:00Z' }));
+
+    await run();
+
+    const entries = loadImprovements(dir).entries;
+    expect(entries.map(e => e.slug)).toEqual(['merged-page', 'open-page', 'old-page']);
+    expect(entries[0].merged_at).toBe('2026-10-03T09:00:00Z');
+    expect(entries[1].merged_at).toBeUndefined();
+  });
+
+  it('does not ask GitHub again about an improvement that is already merged', async () => {
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'p', date: '2026-10-01', pr_url: PR(6), merged_at: '2026-10-02' }] });
+
+    await run();
+
+    expect(getPR).not.toHaveBeenCalled();
+  });
+});
+
+describe('run-report', () => {
+  it('reports the opened PRs, the budget and exits normally', async () => {
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+
+    await run();
+
+    expect(report()).toMatchObject({
+      status: 'prs_opened',
+      prs: [{ url: 'https://github.com/o/demo/pull/1', kind: 'new', slug: 'hochzeit-planen' }],
+      budget: { serpapi: { used: 0, limit: 60 }, anthropic: { usd: 0, limit_usd: 30 } },
+      warnings: [], errors: [],
+    });
+  });
+
+  it('ends with status budget_exceeded and does not throw', async () => {
+    discover.mockRejectedValue(new BudgetExceededError('Anthropic monthly budget exhausted'));
+
+    await expect(run()).resolves.toBeUndefined();
+
+    expect(report()).toMatchObject({ status: 'budget_exceeded', errors: ['Anthropic monthly budget exhausted'] });
+    expect(createPRs).not.toHaveBeenCalled();
+  });
+
+  it('still commits state and writes the report when the run fails, then rethrows', async () => {
+    discover.mockRejectedValue(new Error('GSC down'));
+
+    await expect(run()).rejects.toThrow('GSC down');
+
+    expect(commitState).toHaveBeenCalledTimes(1);
+    expect(commitState.mock.calls[0][0].reason).toMatch(/results/);
+    expect(report()).toMatchObject({ status: 'failed', errors: ['GSC down'] });
+  });
+
+  it('releases keywords marked for a PR that never got one when the state commit fails', async () => {
+    const data = keywordsData();
+    discover.mockResolvedValue(data);
+    commitState.mockRejectedValueOnce(new Error('GitHub 500')).mockResolvedValue([]);
+
+    await expect(run()).rejects.toThrow('GitHub 500');
+
+    expect(createPRs).not.toHaveBeenCalled();
+    expect(loadKeywords(dir).keywords[0].status).toBe('proposed');
+    expect(commitState).toHaveBeenCalledTimes(2);
+  });
+
+  it('survives a failing final state commit and reports it as a warning', async () => {
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+    commitState.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('GitHub 500'));
+
+    await run();
+
+    expect(report()).toMatchObject({ status: 'prs_opened', warnings: [expect.stringMatching(/State commit after the run failed: GitHub 500/)] });
   });
 });

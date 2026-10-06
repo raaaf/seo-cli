@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   KEYWORD_STATUS, SLUG_REGEX, isValidSlug,
-  loadKeywords, saveKeywords, upsertKeyword, getPending, saveLastPR,
-  KEYWORDS_FILE, LAST_PR_FILE,
+  loadKeywords, saveKeywords, upsertKeyword, getPending, releasePending,
+  loadSitemapPending, saveSitemapPending,
+  KEYWORDS_FILE,
 } from '../src/lib/keywords.js';
 
 describe('keywords-slug', () => {
@@ -13,6 +14,7 @@ describe('keywords-slug', () => {
     expect(KEYWORD_STATUS).toMatchObject({
       PROPOSED: 'proposed', DONE: 'done', SKIP: 'skip',
       PR_OPENED: 'pr_opened', VALIDATION_FAILED: 'validation_failed',
+      PUBLISHED: 'published', REJECTED: 'rejected',
     });
   });
 
@@ -72,10 +74,19 @@ describe('keywords-store', () => {
     expect(pending.map(k => k.keyword)).toEqual(['a']);
   });
 
-  it('saveLastPR records the PR url with a timestamp', () => {
-    saveLastPR('https://github.com/o/r/pull/1', dir);
-    const saved = JSON.parse(readFileSync(join(dir, LAST_PR_FILE), 'utf8'));
-    expect(saved.pr_url).toBe('https://github.com/o/r/pull/1');
-    expect(saved.created_at).toBeTruthy();
+  it('releasePending resets pr_opened keywords without a PR and leaves ones with a PR url', () => {
+    const kws = [
+      { keyword: 'a', status: 'pr_opened' },
+      { keyword: 'b', status: 'pr_opened', pr_url: 'https://github.com/o/r/pull/1' },
+      { keyword: 'c', status: 'validation_failed' },
+    ];
+    releasePending(kws);
+    expect(kws.map(k => k.status)).toEqual(['proposed', 'pr_opened', 'validation_failed']);
+  });
+
+  it('sitemap-pending round-trips and is empty when absent', () => {
+    expect(loadSitemapPending(dir)).toEqual({ updated: null, slugs: [] });
+    saveSitemapPending({ updated: null, slugs: ['/a'] }, dir);
+    expect(loadSitemapPending(dir).slugs).toEqual(['/a']);
   });
 });

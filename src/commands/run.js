@@ -1,16 +1,24 @@
-import { join } from 'path';
-import { existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as getLocaleLandingPath } from '../lib/config.js';
-import { saveKeywords, getPending, KEYWORD_STATUS, saveLastPR } from '../lib/keywords.js';
+import {
+  loadKeywords, saveKeywords, getPending, KEYWORD_STATUS, releasePending,
+  loadSitemapPending, saveSitemapPending,
+} from '../lib/keywords.js';
+import { loadImprovements, saveImprovements } from '../lib/improvements.js';
+import { getPR, deleteBranch } from '../lib/github.js';
+import { commitState } from '../lib/state.js';
+import { BudgetExceededError, loadBudget, budgetLimits } from '../lib/budget.js';
+import { isoWeek, format } from '../lib/date.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
 import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
-import { improveCommand } from './improve.js';
-import { createPR } from '../steps/pr.js';
+import { prepareImprove, publishImprove } from './improve.js';
+import { createPRs } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 
 function pLimit(concurrency) {
@@ -169,6 +177,92 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   return pages;
 }
 
+// PR state for the reconcile step. A PR that cannot be read stays as it is
+// (reported as a warning), so a GitHub hiccup never flips a status.
+async function readPR(repo, url, warnings) {
+  try {
+    return await getPR({ repo, url });
+  } catch (e) {
+    warnings.push(`Could not read ${url}: ${e.message}`);
+    return { state: 'open', mergedAt: null, headRef: null };
+  }
+}
+
+// Closed without merge: the branch is an orphan that would block a new PR under
+// the same name. A failure to delete it is only a warning.
+async function dropClosedBranch(repo, headRef, warnings) {
+  if (!headRef) return;
+  try {
+    await deleteBranch({ repo, branch: headRef });
+  } catch (e) {
+    warnings.push(`Could not delete branch ${headRef}: ${e.message}`);
+  }
+}
+
+/**
+ * Brings keyword and improvement status in line with the real PR state before
+ * anything new is proposed. Merged keyword PR: `published`, its slugs go to
+ * sitemap-pending.json. Closed without merge: `rejected` (never proposed
+ * again). Open: unchanged. A merged improvement keeps its cooldown, a closed one
+ * loses its entry so the page can be picked again.
+ */
+export async function reconcileState({ config, cwd, warnings }) {
+  const keywords = loadKeywords(cwd);
+  const sitemap = loadSitemapPending(cwd);
+  let keywordsChanged = false;
+  let sitemapChanged = false;
+
+  for (const kw of keywords.keywords) {
+    if (kw.status !== KEYWORD_STATUS.PR_OPENED || !kw.pr_url) continue;
+    const { state, headRef } = await readPR(config.repo, kw.pr_url, warnings);
+    if (state === 'merged') {
+      kw.status = KEYWORD_STATUS.PUBLISHED;
+      for (const slug of kw.sitemap_slugs ?? []) {
+        if (!sitemap.slugs.includes(slug)) { sitemap.slugs.push(slug); sitemapChanged = true; }
+      }
+      keywordsChanged = true;
+    } else if (state === 'closed') {
+      kw.status = KEYWORD_STATUS.REJECTED;
+      await dropClosedBranch(config.repo, headRef, warnings);
+      keywordsChanged = true;
+    }
+  }
+
+  const improvements = loadImprovements(cwd);
+  const kept = [];
+  for (const entry of improvements.entries) {
+    if (!entry.pr_url || entry.merged_at) { kept.push(entry); continue; }
+    const { state, mergedAt, headRef } = await readPR(config.repo, entry.pr_url, warnings);
+    if (state === 'closed') {
+      await dropClosedBranch(config.repo, headRef, warnings);
+      continue;
+    }
+    if (state === 'merged') entry.merged_at = mergedAt ?? format(new Date());
+    kept.push(entry);
+  }
+  const improvementsChanged = JSON.stringify(kept) !== JSON.stringify(improvements.entries);
+  improvements.entries = kept;
+
+  if (keywordsChanged) saveKeywords(keywords, cwd);
+  if (sitemapChanged) saveSitemapPending({ ...sitemap, updated: format(new Date()) }, cwd);
+  if (improvementsChanged) saveImprovements(improvements, cwd);
+}
+
+function writeReport(path, report) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(report, null, 2) + '\n', 'utf8');
+}
+
+function budgetSummary(cwd) {
+  const { month, serpapi, anthropic } = loadBudget(cwd);
+  const limits = budgetLimits(cwd);
+  return {
+    month,
+    serpapi: { used: serpapi.used, limit: limits.serpapi_per_month },
+    anthropic: { usd: Number(anthropic.usd.toFixed(4)), calls: anthropic.calls, limit_usd: limits.usd_per_month },
+  };
+}
+
 export async function runCommand(opts) {
   const missing = REQUIRED_ENV.filter(k => !process.env[k]);
   if (missing.length) {
@@ -185,69 +279,112 @@ export async function runCommand(opts) {
   if (dryRun) config.batch_generation = false;
   const locales = config.locales || [config.locale || 'de'];
   const defaultLocaleVal = getDefaultLocale(config);
+  const week = isoWeek();
 
   console.log(chalk.bold(`\nseo run — ${config.project} [${locales.join('+')}] ${dryRun ? '(dry run)' : ''}\n`));
 
-  // 1. Discover
-  const keywordsData = await discover(config, cwd);
+  const report = { status: 'idle', prs: [], budget: null, warnings: [], errors: [] };
+  const awaiting = new Set(); // keywords marked pr_opened before their PR exists
+  let keywordsData;
 
-  // 2. Generate
-  const pending = getPending(keywordsData, config.score_cutoff);
-  const toGenerate = pending.slice(0, config.weekly_cap);
+  // Machine state goes to main in the finally block too, so a run that fails
+  // half way still keeps its status changes and its budget count.
+  try {
+    // 1. Reconcile status with the real PR state
+    if (!dryRun) await reconcileState({ config, cwd, warnings: report.warnings });
 
-  if (toGenerate.length === 0) {
-    // An empty backlog is the normal state once a topic space is covered. The
-    // week is better spent on the pages that already rank and get no clicks
-    // than on a keyword invented to fill the slot.
-    console.log(chalk.gray('\nNo keywords to generate — switching to improving an existing page.'));
-    if (!dryRun) await improveCommand({ config, dryRun }, cwd);
-  } else {
-    console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
+    // 2. Discover
+    keywordsData = await discover(config, cwd);
 
+    // 3. Generate
+    const pending = getPending(keywordsData, config.score_cutoff);
+    const toGenerate = pending.slice(0, config.weekly_cap);
     const generatedPages = [];
-    const GENERATE_CONCURRENCY = 2;
-    const limit = pLimit(GENERATE_CONCURRENCY);
-    const generatedKeysAtomic = new Set();
-    const tasks = [];
-    for (const kw of toGenerate) {
-      for (const locale of locales) {
-        tasks.push(limit(async () => {
-          const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic);
-          for (const page of pages) {
-            generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
-            generatedPages.push(page);
-            if (kw.status !== KEYWORD_STATUS.PR_OPENED) kw.status = KEYWORD_STATUS.PR_OPENED;
-          }
-          return pages;
-        }));
-      }
-    }
-    await Promise.all(tasks);
+    let prepared = null;
 
-    if (!dryRun && generatedPages.length > 0) {
+    if (toGenerate.length === 0) {
+      // An empty backlog is the normal state once a topic space is covered. The
+      // week is better spent on the pages that already rank and get no clicks
+      // than on a keyword invented to fill the slot.
+      console.log(chalk.gray('\nNo keywords to generate — switching to improving an existing page.'));
+      if (!dryRun) prepared = await prepareImprove({ config, dryRun }, cwd);
+    } else {
+      console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
+
+      const GENERATE_CONCURRENCY = 2;
+      const limit = pLimit(GENERATE_CONCURRENCY);
+      const generatedKeysAtomic = new Set();
+      const tasks = [];
+      for (const kw of toGenerate) {
+        for (const locale of locales) {
+          tasks.push(limit(async () => {
+            const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic);
+            for (const page of pages) {
+              generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
+              generatedPages.push(page);
+              kw.status = KEYWORD_STATUS.PR_OPENED;
+              awaiting.add(kw);
+            }
+            return pages;
+          }));
+        }
+      }
+      await Promise.all(tasks);
+    }
+
+    if (!dryRun) {
+      // 4. State to main before the PRs, so the PR branches start from it
+      saveKeywords(keywordsData, cwd);
+      await commitState({ cwd, repo: config.repo, reason: `run ${week}` });
+
+      // 5. One PR per keyword, one per rewrite
+      if (generatedPages.length > 0) {
+        const created = await createPRs({ generatedPages, keywordsData, config });
+        report.prs.push(...created.prs.map(p => ({ url: p.url, kind: 'new', slug: p.slug })));
+        report.warnings.push(...created.warnings);
+        report.errors.push(...created.errors);
+      }
+      if (prepared) {
+        try {
+          const url = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
+          if (url) report.prs.push({ url, kind: 'improve', slug: prepared.slug });
+        } catch (e) {
+          console.error(chalk.red(`\nImprove PR failed: ${e.message}`));
+          report.errors.push(`Improve PR failed for ${prepared.slug}: ${e.message}`);
+        }
+      }
+
+      // 6. Track
+      console.log('');
+      await track(config, cwd);
+    }
+
+    if (report.prs.length > 0) report.status = 'prs_opened';
+    else if (report.errors.length > 0) report.status = 'failed';
+  } catch (e) {
+    if (e instanceof BudgetExceededError) {
+      report.status = 'budget_exceeded';
+      report.errors.push(e.message);
+      console.error(chalk.yellow(`\n${e.message}`));
+    } else {
+      report.status = 'failed';
+      report.errors.push(e.message);
+      throw e;
+    }
+  } finally {
+    if (!dryRun) {
       try {
-        saveKeywords(keywordsData, cwd);
-        const prUrl = await createPR({ generatedPages, keywordsJsonContent: keywordsData, config, cwd });
-        // Write PR URL so CI workflows can enable auto-merge
-        saveLastPR(prUrl, cwd);
-        console.log(chalk.bold(`\nDone. PR: ${prUrl}`));
+        releasePending([...awaiting]);
+        if (keywordsData) saveKeywords(keywordsData, cwd);
+        await commitState({ cwd, repo: config.repo, reason: `run ${week} results` });
       } catch (e) {
-        console.error(chalk.red(`\nPR creation failed: ${e.message}`));
-        // Reset status so keywords are retried next run
-        generatedPages.forEach(p => {
-          const kw = keywordsData.keywords.find(k => k.keyword === p.keyword);
-          if (kw) kw.status = KEYWORD_STATUS.PROPOSED;
-        });
-        saveKeywords(keywordsData, cwd);
+        report.warnings.push(`State commit after the run failed: ${e.message}`);
+        console.error(chalk.red(`\nState commit after the run failed: ${e.message}`));
       }
     }
+    try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
+    if (opts.report) writeReport(opts.report, report);
   }
 
-  // 3. Track
-  if (!dryRun) {
-    console.log('');
-    await track(config, cwd);
-  }
-
-  console.log(chalk.bold('\nAll done.\n'));
+  console.log(chalk.bold(`\nAll done (${report.status}).\n`));
 }

@@ -63,7 +63,7 @@ const GREENFIELD_SCHEMA = {
 export async function discover(config, cwd = process.cwd()) {
   console.log(chalk.blue('Discovering keywords...'));
   const quota = checkQuota();
-  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.used + quota.remaining} used this month`));
+  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.limit} used this month`));
   if (quota.remaining <= 0) {
     console.log(chalk.yellow('  SerpAPI quota exhausted — keywords will be scored/generated without SERP context (no PAA/related searches).'));
   }
