@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 node bin/seo.js init          # interactive setup, writes seo.config.yaml in cwd
 node bin/seo.js run           # full pipeline: reconcile, discover, generate, one PR per keyword (also commits state to main: git pull afterwards)
 node bin/seo.js run --dry-run # preview generated markdown, no state commit/PR
-node bin/seo.js run --report out.json  # also write the run report (status, prs, budget, warnings, errors)
+node bin/seo.js run --report out.json  # also write the run report (status, prs, budget, llm, warnings, errors)
 node bin/seo.js improve       # rewrite the existing page with the strongest case, from live GSC data
 node bin/seo.js improve --dry-run  # print the rewrite, no commit/PR
 node bin/seo.js dashboard     # cross-project overview (funnel, rankings, movers, suggestions)
@@ -64,10 +64,11 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 
 | File | Role |
 |---|---|
-| `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, up to 4 total attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. `complete({ batch: true })` submits a single-request Message Batch, polls, and falls back to an interactive call on error, non-success, or wait-cap timeout. The interactive call streams (`messages.stream(...).finalMessage()`); a response (batch or interactive) that ends at `stop_reason: max_tokens` throws instead of reaching `validate.js` truncated. |
+| `src/lib/claude.js` | Anthropic SDK wrapper. Singleton client, up to 4 total attempts on 502/503/529. System prompt uses `cache_control: ephemeral`. `complete({ batch: true })` submits a single-request Message Batch, polls, and falls back to an interactive call on error, non-success, or wait-cap timeout. The interactive call streams (`messages.stream(...).finalMessage()`); a response (batch or interactive) that ends at `stop_reason: max_tokens` throws instead of reaching `validate.js` truncated. With `CLAUDE_CODE_OAUTH_TOKEN` set, `complete()` goes through `claude-code.js` first (`SEO_LLM_BACKEND=api` or `backend: 'api'` force the API, batch is ignored there). An error repeats that call on the API; a limit without family, an auth error or a timeout switches all later calls to the API for good, an Opus/Sonnet limit only that family; after 60 minutes the process stays on the API with `batch: false`. `getLlmStats()` / `resetLlmState()` expose and clear the counters and fallbacks (`report.llm`). |
+| `src/lib/claude-code.js` | `completeViaClaudeCode` and `ClaudeCodeError` (`kind`: `limit`, `auth`, `timeout`, `error`; `family` on a model-family limit). Runs `claude -p` in an empty temp dir with an env allowlist (no `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `SERPAPI_KEY`), 8 minute timeout, prompt on stdin, schema via `--json-schema`. Claude Code is pinned to 2.1.292 in `seo-reusable.yml`, installed only when the token secret exists. Token: `claude setup-token`, valid one year, rotate by replacing the secret in every project repo. |
 | `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. Queries ask for the API ceiling of 25000 rows and warn when a response comes back at exactly that size: the old 500-row cap truncated silently and every aggregate built on it was a biased sample. |
 | `src/lib/serpapi.js` | SerpAPI wrapper. Searches are counted in `seo/budget.json` (per project and month, limit `budget.serpapi_per_month`, default 60); once per process the free `account.json` is read and its `total_searches_left` caps the remainder. |
-| `src/lib/budget.js` | `seo/budget.json`: SerpAPI count and Anthropic spend per month, limits from `budget:` in the config, `assertBudget` throws `BudgetExceededError` (run ends `budget_exceeded`, exit 0). |
+| `src/lib/budget.js` | `seo/budget.json`: SerpAPI count and Anthropic API spend per month plus `subscription: { calls, usd_equivalent }` (`addSubscriptionUsage`, never checked against a limit), limits from `budget:` in the config, `assertBudget` throws `BudgetExceededError` (run ends `budget_exceeded`, exit 0). |
 | `src/lib/state.js` | `STATE_FILES` and `commitState({ cwd, repo, reason })`: commits the state files that differ from `main` (Git blob SHA comparison) to `main` with `[skip ci]`, no commit when nothing differs. |
 | `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum, `SLUG_REGEX`/`isValidSlug`, and state-file path constants. |
 | `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`, merges `DEFAULTS`. Also `defaultLocale`/`localeLandingPath` helpers. |
@@ -111,7 +112,7 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo/improvements.json` | Which pages were rewritten when, with the queries that drove it, `pr_url`, `merged_at` | state commit to main |
 | `seo/index-status.json` | Last week's Google index coverage per sitemap URL, for the weekly diff | state commit to main |
-| `seo/budget.json` | SerpAPI searches and Anthropic spend of the month | state commit to main |
+| `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage of the month | state commit to main |
 
 ### Multi-locale support
 

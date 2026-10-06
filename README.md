@@ -129,6 +129,7 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       GSC_CREDENTIALS: ${{ secrets.GSC_CREDENTIALS }}
       GSC_TOKEN: ${{ secrets.GSC_TOKEN }}
 ```
@@ -138,8 +139,24 @@ jobs:
 |---|---|
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `SERPAPI_KEY` | SerpAPI key (free tier: 250/month) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Optional. Long-lived Claude subscription token from `claude setup-token`; LLM calls then run on the subscription instead of the API (see below) |
 | `GSC_CREDENTIALS` | Google OAuth2 credentials JSON |
 | `GSC_TOKEN` | GSC auth token JSON |
+
+### Claude subscription backend
+
+With `CLAUDE_CODE_OAUTH_TOKEN` set, `complete()` runs every call through `claude -p` (Claude Code headless) on the subscription instead of the Anthropic API. The workflow installs Claude Code (`@anthropic-ai/claude-code@2.1.292`) only when the secret is present. `ANTHROPIC_API_KEY` stays required: it is the fallback.
+
+- **API is used** when the token is unset, `claude` is not in `PATH`, `SEO_LLM_BACKEND=api` is set, or the call passes `backend: 'api'`.
+- **Fallback:** any error on the subscription path repeats that one call on the API. A session/weekly/spend limit, an auth error (expired or revoked token) or a timeout (8 minutes per call) switches all further calls of the process to the API. A limit of one model family (Opus or Sonnet) switches only that family. Other errors (max turns, truncated or refused output, bad JSON) fall back for that call only.
+- **60-minute window:** one hour after process start every call goes to the API, with batching off, so the job stays inside its 120-minute timeout.
+- **Visibility:** each fallback prints `::warning::seo-cli fell back to the API (<kind>)` and appears in `report.llm.fallbacks` and in the report warnings.
+- Subscription calls are booked in `seo/budget.json` under `subscription` and are not checked against `usd_per_month`; fallbacks are.
+- Batch generation is ignored on the subscription path.
+
+Setup: run `claude setup-token` locally (Pro or Max login), set the output as `CLAUDE_CODE_OAUTH_TOKEN` secret in every project repo and pass it through in the caller workflow as shown above. The token is valid for one year. To rotate it, run `claude setup-token` again and replace the secret in every repo.
+
+Local runs use the subscription only when `CLAUDE_CODE_OAUTH_TOKEN` is set in the environment; without it they use the API as before. Set `SEO_LLM_BACKEND=api` to force the API.
 
 ## seo.config.yaml
 
@@ -186,7 +203,7 @@ The machine state goes straight to `main` (commit message `seo: state (<reason>)
 | `seo/sitemap-pending.json` | Slugs queued for sitemap submission, added when a keyword's PR is merged | state commit to `main` |
 | `seo/improvements.json` | Which page was rewritten when, the queries behind it, its PR url and merge date | state commit to `main` |
 | `seo/index-status.json` | Last week's Google index coverage per sitemap URL | state commit to `main` |
-| `seo/budget.json` | SerpAPI searches and Anthropic spend of the current month | state commit to `main` |
+| `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage (`subscription: { calls, usd_equivalent }`) of the current month | state commit to `main` |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo.config.yaml` | Project config | commit |
 
@@ -210,7 +227,7 @@ A rewrite's cooldown entry is only written once its PR exists. A closed rewrite 
 
 ### Run report
 
-`seo run --report <path>` writes `{ status, prs: [{ url, kind: 'new'|'improve', slug }], budget, warnings, errors }`. `status` is `idle`, `prs_opened`, `failed` or `budget_exceeded` (exit code 0). The workflow gates every PR of the report and ends with a notify step that always runs and posts `{ repo, run_url, status, prs: [{ url, gate_status }], budget, warnings, errors }` to `SEO_NOTIFY_WEBHOOK`. `--dry-run` skips the reconcile, the state commits and the PRs, and still writes the report.
+`seo run --report <path>` writes `{ status, prs: [{ url, kind: 'new'|'improve', slug }], budget, llm, warnings, errors }`. `llm` is `{ subscription_calls, api_calls, usd_equivalent, fallbacks: [{ model, kind, reason }] }`; a non-empty `fallbacks` and a `usd_equivalent` above 25 USD (roughly 1 percent of the weekly Max limit) each add a warning. `status` is `idle`, `prs_opened`, `failed` or `budget_exceeded` (exit code 0). The workflow gates every PR of the report and ends with a notify step that always runs and posts `{ repo, run_url, status, prs: [{ url, gate_status }], budget, llm, warnings, errors }` to `SEO_NOTIFY_WEBHOOK`. `--dry-run` skips the reconcile, the state commits and the PRs, and still writes the report.
 
 ## Supported project types
 
@@ -223,7 +240,7 @@ Configure `landing_path` and `locale` in `seo.config.yaml` to match your project
 
 ## SerpAPI quota and budget
 
-SerpAPI searches and Anthropic spend are counted per project and calendar month in `seo/budget.json` and checked before every paid call. The limits come from `budget:` in `seo.config.yaml` (default 30 USD and 60 searches per month, so up to four projects stay under the shared 250/month free tier). Once per process the free `account.json` endpoint is read as well: with no searches left on the account the run stops, whatever the project budget says. Failed requests refund their reservation. A run that hits a limit ends with status `budget_exceeded` and exit code 0.
+SerpAPI searches and Anthropic spend are counted per project and calendar month in `seo/budget.json` and checked before every paid call. The limits come from `budget:` in `seo.config.yaml` (default 30 USD and 60 searches per month, so up to four projects stay under the shared 250/month free tier). Once per process the free `account.json` endpoint is read as well: with no searches left on the account the run stops, whatever the project budget says. Failed requests refund their reservation. Calls on the Claude subscription cost no API money: they are tallied under `subscription` (`calls`, `usd_equivalent`) and not checked against the limit, while API fallbacks are. A run that hits a limit ends with status `budget_exceeded` and exit code 0.
 
 ## License
 

@@ -19,6 +19,7 @@ const reviewPage = vi.fn();
 const commitState = vi.fn();
 const getPR = vi.fn();
 const deleteBranch = vi.fn();
+const getLlmStats = vi.fn();
 
 const CONFIG = {
   project: 'demo', locale: 'de', locales: ['de'], score_cutoff: 7,
@@ -46,6 +47,7 @@ vi.mock('../src/steps/review.js', () => ({
 vi.mock('../src/steps/pr.js', () => ({ createPRs: (...a) => createPRs(...a) }));
 vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a) }));
 vi.mock('../src/lib/github.js', () => ({ getPR: (...a) => getPR(...a), deleteBranch: (...a) => deleteBranch(...a) }));
+vi.mock('../src/lib/claude.js', () => ({ getLlmStats: () => getLlmStats() }));
 vi.mock('../src/steps/track.js', () => ({ track: (...a) => track(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
@@ -82,6 +84,8 @@ beforeEach(() => {
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
   reportPath = join(dir, 'report.json');
   for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
+  getLlmStats.mockReset();
+  getLlmStats.mockReturnValue({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] });
   commitState.mockResolvedValue([]);
   deleteBranch.mockResolvedValue();
   createPRs.mockResolvedValue({ prs: [], warnings: [], errors: [] });
@@ -478,6 +482,29 @@ describe('run-report', () => {
       budget: { serpapi: { used: 0, limit: 60 }, anthropic: { usd: 0, limit_usd: 30 } },
       warnings: [], errors: [],
     });
+  });
+
+  it('puts the LLM stats in the report without a warning when nothing fell back', async () => {
+    const llm = { subscription_calls: 4, api_calls: 0, usd_equivalent: 1.2, fallbacks: [] };
+    getLlmStats.mockReturnValue(llm);
+    discover.mockResolvedValue({ keywords: [] });
+    await run();
+    expect(report().llm).toEqual(llm);
+    expect(report().warnings).toEqual([]);
+  });
+
+  it('warns when a call fell back to the API', async () => {
+    getLlmStats.mockReturnValue({ subscription_calls: 1, api_calls: 1, usd_equivalent: 1, fallbacks: [{ model: 'm', kind: 'limit', reason: 'x' }] });
+    discover.mockResolvedValue({ keywords: [] });
+    await run();
+    expect(report().warnings).toEqual([expect.stringMatching(/fell back from the subscription to the API \(limit\)/)]);
+  });
+
+  it('warns when subscription usage is worth more than 25 USD', async () => {
+    getLlmStats.mockReturnValue({ subscription_calls: 30, api_calls: 0, usd_equivalent: 25.5, fallbacks: [] });
+    discover.mockResolvedValue({ keywords: [] });
+    await run();
+    expect(report().warnings).toEqual([expect.stringMatching(/25\.50 USD/)]);
   });
 
   it('ends with status budget_exceeded and does not throw', async () => {
