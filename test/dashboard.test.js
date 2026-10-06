@@ -20,6 +20,18 @@ function seedRankings(csv) {
 }
 
 describe('dashboard-summary', () => {
+  it('counts a published keyword as done and keeps rejected apart', async () => {
+    seedKeywords([
+      { keyword: 'k1', status: 'done', score: 9 },
+      { keyword: 'k2', status: 'published', score: 9 },
+      { keyword: 'k3', status: 'rejected', score: 9 },
+    ]);
+    const summary = await projectSummary({ path, dir: 'demo', name: 'Demo', config: { score_cutoff: 7 } }, { live: false });
+
+    expect(summary.counts.done).toBe(2);
+    expect(summary.counts.rejected).toBe(1);
+  });
+
   it('aggregates funnel counts, backlog, ranking snapshot, movers and suggestions', async () => {
     seedKeywords([
       { keyword: 'k1', status: 'proposed', score: 9 },

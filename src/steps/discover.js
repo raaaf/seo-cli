@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { querySearchAnalytics, queryPagePerformance } from '../lib/gsc.js';
 import { getSerp, checkQuota } from '../lib/serpapi.js';
 import { complete } from '../lib/claude.js';
+import { rethrowIfBudget } from '../lib/budget.js';
 import { loadKeywords, saveKeywords, upsertKeyword, getPending, KEYWORD_STATUS, isValidSlug } from '../lib/keywords.js';
 import { format } from '../lib/date.js';
 import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
@@ -63,7 +64,7 @@ const GREENFIELD_SCHEMA = {
 export async function discover(config, cwd = process.cwd()) {
   console.log(chalk.blue('Discovering keywords...'));
   const quota = checkQuota();
-  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.used + quota.remaining} used this month`));
+  console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.limit} used this month`));
   if (quota.remaining <= 0) {
     console.log(chalk.yellow('  SerpAPI quota exhausted — keywords will be scored/generated without SERP context (no PAA/related searches).'));
   }
@@ -222,6 +223,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
     try {
       serpData = await getSerp(row.keyword, { locale: config.locale });
     } catch (e) {
+      rethrowIfBudget(e);
       console.log(chalk.yellow(`  SerpAPI skip (${row.keyword}): ${e.message}`));
     }
 
@@ -230,6 +232,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
     try {
       result = await complete({ system: 'You are an SEO expert.', prompt, json: true, schema: SCORE_SCHEMA });
     } catch (e) {
+      rethrowIfBudget(e);
       console.log(chalk.yellow(`  Score skip (${row.keyword}): ${e.message}`));
       continue;
     }
@@ -295,6 +298,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
       schema: GREENFIELD_SCHEMA,
     });
   } catch (e) {
+    rethrowIfBudget(e);
     console.log(chalk.red(`  Greenfield failed: ${e.message}`));
     return;
   }
@@ -308,6 +312,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
       try {
         return await getSerp(kw.keyword, { locale: config.locale });
       } catch (e) {
+        rethrowIfBudget(e);
         console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
         return { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
       }

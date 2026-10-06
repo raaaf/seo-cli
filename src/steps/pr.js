@@ -1,58 +1,89 @@
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
 import chalk from 'chalk';
-import { createBranchAndCommit, openPR } from '../lib/github.js';
+import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { isoWeek, format } from '../lib/date.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
-import { KEYWORDS_FILE, SITEMAP_PENDING_FILE } from '../lib/keywords.js';
+import { KEYWORD_STATUS, releasePending } from '../lib/keywords.js';
 import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
-import { localeUrlPath } from '../lib/config.js';
+import { localeUrlPath, defaultLocale } from '../lib/config.js';
 
-export async function createPR({ generatedPages, keywordsJsonContent, config, cwd = process.cwd() }) {
-  const week = isoWeek();
-  const branch = `seo/${week}`;
+// Counterpart pages (config.counterpart_locale) share the bare /{slug} URL space
+// with the default locale by default (no locale prefix), or
+// `${counterpart_url_prefix}/{slug}` when the target site serves them under
+// their own path segment, unlike the hreflang multi-locale mode's
+// /{locale}/{slug} paths.
+function sitemapSlug(page, config) {
+  const isCounterpart = config.counterpart_locale && page.locale === config.counterpart_locale;
+  return isCounterpart ? `${config.counterpart_url_prefix || ''}/${page.slug}` : localeUrlPath(config, page.slug, page.locale);
+}
 
-  // Build sitemap pending list. Counterpart pages (config.counterpart_locale)
-  // share the bare /{slug} URL space with the default locale by default (no
-  // locale prefix), or `${counterpart_url_prefix}/{slug}` when the target
-  // site serves them under their own path segment — unlike the hreflang
-  // multi-locale mode's /{locale}/{slug} paths.
-  const sitemapPending = loadSitemapPending(cwd);
+const safeKeyword = (kw) => String(kw ?? '').replace(/\r?\n/g, ' ').slice(0, 200);
+
+/**
+ * One PR per keyword, on seo/new/<slug of the default-locale page>, carrying all
+ * locale files and the counterpart of that keyword. No state files: they go to
+ * main through commitState. Each PR's url and the sitemap slugs to queue once it
+ * merges are stored on the keyword entry.
+ *
+ * A failing PR never stops the others: its keyword goes back to `proposed`. An
+ * existing branch (open PR for the same keyword) is a warning, any other
+ * failure an error. Returns `{ prs: [{ url, keyword, slug }], warnings, errors }`.
+ */
+export async function createPRs({ generatedPages, keywordsData, config }) {
   const locales = config.locales || [config.locale || 'de'];
-  for (const page of generatedPages) {
-    const isCounterpart = config.counterpart_locale && page.locale === config.counterpart_locale;
-    const slug = isCounterpart ? `${config.counterpart_url_prefix || ''}/${page.slug}` : localeUrlPath(config, page.slug, page.locale);
-    if (!sitemapPending.slugs.includes(slug)) sitemapPending.slugs.push(slug);
+  // hreflang needs every locale of a slug, so it runs over the whole run
+  // before the pages are split up by keyword.
+  const enrichedPages = locales.length > 1 ? injectHreflang(generatedPages, config) : generatedPages;
+
+  const byKeyword = new Map();
+  for (const page of enrichedPages) {
+    if (!byKeyword.has(page.keyword)) byKeyword.set(page.keyword, []);
+    byKeyword.get(page.keyword).push(page);
   }
 
-  // Add hreflang frontmatter for multi-locale pages
-  const enrichedPages = locales.length > 1
-    ? injectHreflang(generatedPages, config)
-    : generatedPages;
+  const result = { prs: [], warnings: [], errors: [] };
+  for (const [keyword, pages] of byKeyword) {
+    const slug = (pages.find(p => p.locale === defaultLocale(config)) ?? pages[0]).slug;
+    const branch = `seo/new/${slug}`;
+    const kw = keywordsData.keywords.find(k => k.keyword === keyword);
+    const sitemapSlugs = [...new Set(pages.map(p => sitemapSlug(p, config)))];
 
-  const files = [
-    ...enrichedPages.map(p => ({ path: p.filePath, content: p.markdown })),
-    { path: KEYWORDS_FILE, content: JSON.stringify(keywordsJsonContent, null, 2) + '\n' },
-    { path: SITEMAP_PENDING_FILE, content: JSON.stringify(sitemapPending, null, 2) + '\n' },
-  ];
-
-  const safeKeyword = (kw) => String(kw ?? '').replace(/\r?\n/g, ' ').slice(0, 200);
-  const commitMsg = `seo: add landing pages for ${week}\n\n${generatedPages.map(p => `- ${safeKeyword(p.keyword)}`).join('\n')}`;
-
-  console.log(chalk.blue(`  Creating branch ${branch}, committing ${files.length} files...`));
-
-  await createBranchAndCommit({ files, message: commitMsg, cwd, repo: config.repo });
-
-  const prBody = buildPRBody(enrichedPages, sitemapPending, config);
-  const prUrl = await openPR({
-    repo: config.repo,
-    branch,
-    title: `SEO: landing pages ${week} (${generatedPages.length} pages)`,
-    body: prBody,
-  });
-
-  console.log(chalk.green(`  PR opened: ${prUrl}`));
-  return prUrl;
+    let branchCreated = false;
+    try {
+      console.log(chalk.blue(`  Creating branch ${branch}, committing ${pages.length} file(s)...`));
+      await createBranchAndCommit({
+        files: pages.map(p => ({ path: p.filePath, content: p.markdown })),
+        message: `seo: add landing page for ${safeKeyword(keyword)} (${isoWeek()})`,
+        repo: config.repo,
+        branch,
+      });
+      branchCreated = true;
+      const url = await openPR({
+        repo: config.repo,
+        branch,
+        title: `SEO: new page ${slug}`,
+        body: buildPRBody(pages, sitemapSlugs, config),
+      });
+      console.log(chalk.green(`  PR opened: ${url}`));
+      if (kw) Object.assign(kw, { status: KEYWORD_STATUS.PR_OPENED, pr_url: url, sitemap_slugs: sitemapSlugs });
+      result.prs.push({ url, keyword, slug });
+    } catch (e) {
+      if (branchCreated) await deleteBranch({ repo: config.repo, branch }).catch(err => {
+        const warning = `Could not delete orphan branch ${branch}: ${err.message}`;
+        console.log(chalk.yellow(`  ${warning}`));
+        result.warnings.push(warning);
+      }); // else the orphan blocks the keyword for good
+      if (kw) releasePending([kw]);
+      if (e.code === 'BRANCH_EXISTS') {
+        const warning = `PR skipped for "${keyword}": branch ${branch} already exists (open PR for the same keyword)`;
+        console.log(chalk.yellow(`  ${warning}`));
+        result.warnings.push(warning);
+      } else {
+        console.error(chalk.red(`\nPR creation failed for "${keyword}": ${e.message}`));
+        result.errors.push(`PR creation failed for "${keyword}": ${e.message}`);
+      }
+    }
+  }
+  return result;
 }
 
 function injectHreflang(pages, config) {
@@ -73,12 +104,6 @@ function injectHreflang(pages, config) {
     const markdown = p.markdown.replace(/^(---\n[\s\S]+?)\n---/, (_, fm) => `${fm}\n${hreflangBlock}\n---`);
     return { ...p, markdown };
   });
-}
-
-function loadSitemapPending(cwd) {
-  const path = join(cwd, SITEMAP_PENDING_FILE);
-  if (!existsSync(path)) return { updated: null, slugs: [] };
-  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return { updated: null, slugs: [] }; }
 }
 
 function mdCell(str) {
@@ -118,15 +143,15 @@ function seoCheck(page) {
   ].join('\n');
 }
 
-function buildPRBody(pages, sitemapPending, config) {
+function buildPRBody(pages, sitemapSlugs, config) {
   const rows = pages.map(p =>
     `| ${mdCell(p.keyword)} | \`${mdCell(p.slug)}\` | ${mdCell(p.locale || config.locale)} | ${mdCell(p.score)} | ${mdCell(p.type)} |`
   ).join('\n');
 
   const seoRows = pages.map(p => `### \`${p.slug}\`\n| Check | Status |\n|---|---|\n${seoCheck(p)}`).join('\n\n');
 
-  const sitemapNote = sitemapPending.slugs.length
-    ? `\n## Sitemap\n\nNew slugs queued in \`seo/sitemap-pending.json\` — Google will pick them up via the sitemap after deploy:\n${sitemapPending.slugs.map(s => `- \`${s}\``).join('\n')}`
+  const sitemapNote = sitemapSlugs.length
+    ? `\n## Sitemap\n\nQueued in \`seo/sitemap-pending.json\` once this PR is merged, Google picks them up via the sitemap after deploy:\n${sitemapSlugs.map(s => `- \`${s}\``).join('\n')}`
     : '';
 
   return `## New landing pages

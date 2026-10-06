@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 // `seo improve` orchestration: which branch the rewrite lands on and how many
-// attempts it gets. Both were regressions in the first scheduled improve run
+// attempts it gets, and when the cooldown entry is written. The first two were regressions in the first scheduled improve run
 // (PR opened against a branch that was never created, one-word validation
 // failure threw away a full Opus call).
 
@@ -14,8 +14,10 @@ const improvePage = vi.fn();
 const validate = vi.fn();
 const createBranchAndCommit = vi.fn();
 const openPR = vi.fn();
+const deleteBranch = vi.fn();
 const reviewPage = vi.fn();
 const complete = vi.fn();
+const commitState = vi.fn();
 
 const CONFIG = { project: 'demo', locale: 'de', locales: ['de'], landing_path: 'content/landing/de/', repo: 'o/demo' };
 
@@ -34,11 +36,13 @@ vi.mock('../src/steps/review.js', () => ({
 vi.mock('../src/lib/github.js', () => ({
   createBranchAndCommit: (...a) => createBranchAndCommit(...a),
   openPR: (...a) => openPR(...a),
+  deleteBranch: (...a) => deleteBranch(...a),
 }));
+vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
-const { improveCommand } = await import('../src/commands/improve.js');
-const { isoWeek } = await import('../src/lib/date.js');
+const { improveCommand, prepareImprove, publishImprove } = await import('../src/commands/improve.js');
+const { loadImprovements } = await import('../src/lib/improvements.js');
 
 const PAGE = {
   slug: 'preise', kind: 'snippet', reason: 'no clicks', impressions: 300, clicks: 0, bestPosition: 3,
@@ -51,13 +55,14 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-improve-cmd-'));
   cwd = process.cwd();
   process.chdir(dir);
-  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, reviewPage, complete]) fn.mockReset();
+  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, deleteBranch, reviewPage, complete, commitState]) fn.mockReset();
   reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   fetchPagePerformance.mockResolvedValue([]);
   selectPage.mockReturnValue({ ...PAGE });
   improvePage.mockResolvedValue({ slug: 'preise', filePath: 'content/landing/de/preise.md', markdown: '---\nslug: preise\n---\nbody' });
   validate.mockReturnValue({ ok: true, errors: [], warnings: [] });
   openPR.mockResolvedValue('https://github.com/o/demo/pull/9');
+  deleteBranch.mockResolvedValue();
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
@@ -68,12 +73,60 @@ afterEach(() => {
 });
 
 describe('improveCommand', () => {
-  it('commits to the same improve branch the PR is opened against', async () => {
+  it('commits to the same per-page improve branch the PR is opened against', async () => {
     await improveCommand({ config: CONFIG });
 
-    const branch = `seo/improve-${isoWeek()}`;
+    const branch = 'seo/improve/preise';
     expect(createBranchAndCommit).toHaveBeenCalledWith(expect.objectContaining({ branch }));
     expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ branch }));
+  });
+
+  it('puts no state file into the PR and syncs state to main before and after it', async () => {
+    const order = [];
+    commitState.mockImplementation(async () => { order.push('state'); return []; });
+    createBranchAndCommit.mockImplementation(async () => { order.push('pr'); });
+
+    await improveCommand({ config: CONFIG });
+
+    expect(order).toEqual(['state', 'pr', 'state']);
+    expect(createBranchAndCommit.mock.calls[0][0].files.map(f => f.path)).toEqual(['content/landing/de/preise.md']);
+  });
+
+  describe('improve-cooldown', () => {
+    it('is not recorded by prepareImprove', async () => {
+      const prepared = await prepareImprove({ config: CONFIG });
+
+      expect(prepared.slug).toBe('preise');
+      expect(loadImprovements(dir).entries).toEqual([]);
+    });
+
+    it('is recorded with the PR url after the PR was opened', async () => {
+      await improveCommand({ config: CONFIG });
+
+      expect(loadImprovements(dir).entries).toEqual([
+        expect.objectContaining({ slug: 'preise', pr_url: 'https://github.com/o/demo/pull/9' }),
+      ]);
+    });
+
+    it('is not recorded when the branch exists, which is reported as a warning', async () => {
+      createBranchAndCommit.mockRejectedValue(Object.assign(new Error('exists'), { code: 'BRANCH_EXISTS' }));
+      const warnings = [];
+
+      const url = await publishImprove(await prepareImprove({ config: CONFIG }), { config: CONFIG, warnings });
+
+      expect(url).toBeNull();
+      expect(openPR).not.toHaveBeenCalled();
+      expect(loadImprovements(dir).entries).toEqual([]);
+      expect(warnings[0]).toMatch(/seo\/improve\/preise already exists/);
+    });
+
+    it('is not recorded when opening the PR fails', async () => {
+      openPR.mockRejectedValue(new Error('GitHub 500'));
+
+      await expect(improveCommand({ config: CONFIG })).rejects.toThrow('GitHub 500');
+      expect(loadImprovements(dir).entries).toEqual([]);
+      expect(deleteBranch).toHaveBeenCalledWith({ repo: 'o/demo', branch: 'seo/improve/preise' });
+    });
   });
 
   it('retries once with the validator errors and keeps the second rewrite', async () => {

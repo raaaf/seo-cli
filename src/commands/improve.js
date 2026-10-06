@@ -2,9 +2,10 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
-import { createBranchAndCommit, openPR } from '../lib/github.js';
+import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
+import { commitState } from '../lib/state.js';
 import { isoWeek } from '../lib/date.js';
-import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown, IMPROVEMENTS_FILE } from '../lib/improvements.js';
+import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown } from '../lib/improvements.js';
 import { fetchPagePerformance, selectPage, improvePage, keywordFor } from '../steps/improve.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
@@ -13,13 +14,14 @@ import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 
 /**
- * Rewrite the one existing page with the strongest case for it, based on live
- * Search Console data. Runs standalone (`seo improve`) and as the fallback of
- * `seo run` when the keyword backlog is empty.
+ * Selects the one existing page with the strongest case, rewrites it, validates
+ * and fact-checks it. Commits nothing and records no cooldown: that happens in
+ * publishImprove, once the PR exists.
  *
- * Returns the PR url, or null when nothing qualified or the rewrite was dropped.
+ * Returns `{ slug, files, record, commitMessage, prTitle, prBody }`, or null when
+ * nothing qualified, the rewrite was dropped or this is a dry run.
  */
-export async function improveCommand(opts = {}, cwd = process.cwd()) {
+export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   const config = opts.config ?? loadConfig(cwd);
   const dryRun = opts.dryRun ?? false;
   // A dry run never waits on a batch that outlives the preview; force interactive.
@@ -35,8 +37,7 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     return null;
   }
 
-  const improvements = loadImprovements(cwd);
-  const page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(improvements) });
+  const page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)) });
 
   if (!page) {
     console.log(chalk.gray('  No page qualifies: not enough impressions, or everything eligible was rewritten recently.'));
@@ -90,37 +91,81 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     return null;
   }
 
-  recordImprovement(improvements, { slug: page.slug, queries: page.queries.map(q => q.query) });
-  saveImprovements(improvements, cwd);
-
   const week = isoWeek();
-  const branch = `seo/improve-${week}`;
-  const files = [
-    { path: filePath, content: finalMarkdown },
-    ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
-    { path: IMPROVEMENTS_FILE, content: JSON.stringify(improvements, null, 2) + '\n' },
-  ];
-
-  await createBranchAndCommit({
-    files,
-    message: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
-    cwd,
-    repo: config.repo,
-    branch,
-  });
-
-  const prUrl = await openPR({
-    repo: config.repo,
-    branch,
-    title: `SEO: improve ${page.slug} (${week})`,
-    body: buildBody(page, before, readMetaFrom(finalMarkdown), {
+  return {
+    slug: page.slug,
+    files: [
+      { path: filePath, content: finalMarkdown },
+      ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
+    ],
+    record: { slug: page.slug, queries: page.queries.map(q => q.query) },
+    commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
+    prTitle: `SEO: improve ${page.slug} (${week})`,
+    prBody: buildBody(page, before, readMetaFrom(finalMarkdown), {
       factCheckError,
       warnings: validate(finalMarkdown, keywordLike).warnings,
       counterpart,
     }),
-  });
+  };
+}
+
+/**
+ * Opens the rewrite as its own PR on seo/improve/<slug>. The cooldown entry,
+ * with the PR url, is written only after the PR exists: a rewrite that never
+ * reached a PR must not take the page off the list. An existing branch (an
+ * earlier PR for this page is still open) skips with a warning instead.
+ *
+ * Returns the PR url, or null when skipped.
+ */
+export async function publishImprove(prepared, { config, cwd = process.cwd(), warnings = [] }) {
+  const branch = `seo/improve/${prepared.slug}`;
+
+  try {
+    await createBranchAndCommit({ files: prepared.files, message: prepared.commitMessage, cwd, repo: config.repo, branch });
+  } catch (e) {
+    if (e.code !== 'BRANCH_EXISTS') throw e;
+    const warning = `Improve skipped: branch ${branch} already exists (an earlier PR for ${prepared.slug} is still open)`;
+    console.log(chalk.yellow(`  ${warning}`));
+    warnings.push(warning);
+    return null;
+  }
+
+  let prUrl;
+  try {
+    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody });
+  } catch (e) {
+    // Without a PR the branch is an orphan that would block this page for good.
+    await deleteBranch({ repo: config.repo, branch }).catch(err => {
+      const warning = `Could not delete orphan branch ${branch}: ${err.message}`;
+      console.log(chalk.yellow(`  ${warning}`));
+      warnings.push(warning);
+    });
+    throw e;
+  }
+
+  const improvements = loadImprovements(cwd);
+  recordImprovement(improvements, prepared.record);
+  improvements.entries.at(-1).pr_url = prUrl;
+  saveImprovements(improvements, cwd);
 
   console.log(chalk.green(`  PR opened: ${prUrl}`));
+  return prUrl;
+}
+
+/**
+ * `seo improve`: prepare, state to main, PR, state to main again. Returns the PR
+ * url, or null when nothing qualified, the rewrite was dropped or the PR skipped.
+ */
+export async function improveCommand(opts = {}, cwd = process.cwd()) {
+  const config = opts.config ?? loadConfig(cwd);
+  const prepared = await prepareImprove({ ...opts, config }, cwd);
+  if (!prepared) return null;
+
+  const syncState = (reason) => commitState({ cwd, repo: config.repo, reason });
+  const week = isoWeek();
+  await syncState(`improve ${week}`);
+  const prUrl = await publishImprove(prepared, { config, cwd });
+  await syncState(`improve ${week} results`);
   return prUrl;
 }
 

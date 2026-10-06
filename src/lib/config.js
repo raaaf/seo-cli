@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import yaml from 'js-yaml';
 
-const CONFIG_FILE = 'seo.config.yaml';
+export const CONFIG_FILE = 'seo.config.yaml';
 
 export function loadConfig(cwd = process.cwd()) {
   const path = join(cwd, CONFIG_FILE);
@@ -52,6 +52,10 @@ export const DEFAULTS = {
   // Page generation goes through the Message Batches API at half price.
   // Set false to force interactive calls (dry runs and debugging).
   batch_generation: true,
+  // Per project and calendar month. Checked before every paid SerpAPI search
+  // and Anthropic call, state in seo/budget.json. 60 SerpAPI searches per
+  // project keeps up to 4 projects under the shared 250/month free tier.
+  budget: { usd_per_month: 30, serpapi_per_month: 60 },
 };
 
 export function defaultLocale(config) {

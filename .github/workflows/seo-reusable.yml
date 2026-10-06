@@ -33,6 +33,11 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    # Two runs of one project must not interleave: both write state to main and
+    # open PRs from it. A second run waits for the first instead of cancelling it.
+    concurrency:
+      group: seo-${{ github.repository }}
+      cancel-in-progress: false
     # Batched generation waits up to 45 minutes per call.
     timeout-minutes: 120
     permissions:
@@ -105,7 +110,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
-        run: node .seo-cli/bin/seo.js run
+        run: node .seo-cli/bin/seo.js run --report "$RUNNER_TEMP/seo-report.json"
 
       # Weekly index-status snapshot, committed straight to main. Non-fatal: the
       # zeit incident (deindexed 2026-08-04, unnoticed for five weeks because a
@@ -113,201 +118,266 @@ jobs:
       # the reason this exists, but a Search Console hiccup here must not fail
       # the whole run.
       - name: Check index status
+        if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
-        run: node .seo-cli/bin/seo.js index-status --commit || echo "index-status check skipped/failed (non-fatal)."
+        run: |
+          if ! node .seo-cli/bin/seo.js index-status --commit; then
+            echo "::warning::index-status check failed (non-fatal)"
+            echo "index-status check failed" >> "$RUNNER_TEMP/seo-warnings.txt"
+          fi
 
-      - name: Gate — validate, auto-merge, notify
+      # One pass per PR from the run report. The state files are already on main
+      # (committed by `seo run`), so the PR branches contain pages only.
+      - name: Gate (validate, auto-merge)
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
           REQUIRE_REVIEW: ${{ inputs.require_review }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
         run: |
           set -uo pipefail
 
-          PR_URL=$(node -e "
-            try {
-              const fs = require('fs');
-              const f = JSON.parse(fs.readFileSync('./seo/last-pr.json', 'utf8'));
-              console.log(f.pr_url || '');
-            } catch { console.log(''); }
-          " 2>/dev/null || echo "")
+          REPORT_FILE="$RUNNER_TEMP/seo-report.json"
+          GATE_STATUS_FILE="$RUNNER_TEMP/gate-status.txt"
+          : > "$GATE_STATUS_FILE"
 
-          if [ -z "$PR_URL" ]; then
-            echo "No new PR this run — nothing to gate."
-            exit 0
-          fi
+          # Gates one PR. Ends with `return`, never `exit`, so the next PR still
+          # runs, always goes back to main, and appends "<url> <status>" to the
+          # status file that the notify step reads.
+          gate_pr() {
+            local PR_URL="$1"
+            local PR_NUM="${PR_URL##*/}"
+            local STATUS CHECKS_STATUS CHECK_EXIT
 
-          PR_NUM="${PR_URL##*/}"
-          if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
-            echo "Refusing to gate: PR number is not numeric ('$PR_NUM')."
-            exit 1
-          fi
-          echo "Gating PR #$PR_NUM ($PR_URL)"
+            if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
+              echo "Refusing to gate: PR number is not numeric ('$PR_NUM')."
+              echo "$PR_URL invalid_url" >> "$GATE_STATUS_FILE"
+              return 1
+            fi
+            echo "Gating PR #$PR_NUM ($PR_URL)"
 
-          # Changed markdown files in the PR
-          mapfile -t MD < <(gh pr view "$PR_NUM" --json files -q '.files[].path' | grep -E '\.md$' || true)
-          if [ ${#MD[@]} -eq 0 ]; then
-            echo "PR has no markdown pages — skipping gate."
-            exit 0
-          fi
+            # Changed markdown files in the PR
+            local MD
+            mapfile -t MD < <(gh pr view "$PR_NUM" --json files -q '.files[].path' | grep -E '\.md$' || true)
+            if [ ${#MD[@]} -eq 0 ]; then
+              echo "PR has no markdown pages: skipping gate."
+              echo "$PR_URL no_pages" >> "$GATE_STATUS_FILE"
+              return 0
+            fi
 
-          # `seo run` leaves tracked state files (seo/keywords.json,
-          # sitemap-pending.json, last-pr.json) modified in the working tree.
-          # They are already committed on the PR branch, so discard the local
-          # copies; otherwise the checkout below aborts with "local changes
-          # would be overwritten". (.seo-cli is untracked and is preserved.)
-          git checkout -- . 2>/dev/null || true
+            # `seo run` leaves tracked state files modified in the working tree
+            # and may leave new untracked ones (seo/budget.json on a first run).
+            # Both are already committed on main and so on the PR branch, so
+            # discard the local copies; otherwise the checkout below aborts with
+            # "local changes would be overwritten". (.seo-cli is untracked, lives
+            # outside seo/ and is preserved.)
+            git checkout -- . 2>/dev/null || true
+            git clean -fdq -- seo 2>/dev/null || true
 
-          # Check out the PR branch so its pages + seo/keywords.json are present
-          gh pr checkout "$PR_NUM"
+            # Check out the PR branch so its pages are present
+            if ! gh pr checkout "$PR_NUM"; then
+              echo "$PR_URL checkout_failed" >> "$GATE_STATUS_FILE"
+              git checkout main 2>/dev/null || true
+              return 1
+            fi
 
-          node .seo-cli/bin/seo.js check "${MD[@]}" | tee /tmp/seo-check.out
-          CHECK_EXIT=${PIPESTATUS[0]}
+            node .seo-cli/bin/seo.js check "${MD[@]}" | tee /tmp/seo-check.out
+            CHECK_EXIT=${PIPESTATUS[0]}
 
-          REPORT=$(grep -o 'SEO_CHECK_JSON=.*' /tmp/seo-check.out | sed 's/^SEO_CHECK_JSON=//' | tail -1)
-          [ -z "$REPORT" ] && REPORT='{}'
+            # Human review gate: skip the CI wait and the merge entirely. The
+            # notify path still runs so the needs_review mail goes out.
+            if [ "${REQUIRE_REVIEW}" = "true" ]; then
+              echo "require_review is set, leaving PR #$PR_NUM open for human review."
+            fi
 
-          # Human review gate: skip the CI wait and the merge entirely. The
-          # notify path still runs so the needs_review mail goes out.
-          if [ "${REQUIRE_REVIEW}" = "true" ]; then
-            echo "require_review is set — leaving PR #$PR_NUM open for human review."
-          fi
+            # Wait for the target repo's PR checks (e.g. Pest CI) before merging.
+            # No branch protection is available on private/free-plan repos, so the
+            # gate itself must not merge ahead of a slow test run.
+            CHECKS_STATUS=""
+            if [ "$CHECK_EXIT" -eq 0 ] && [ "${REQUIRE_REVIEW}" != "true" ]; then
+              POLL_INTERVAL=30
+              MAX_WAIT=1500
+              ELAPSED=0
 
-          # Wait for the target repo's PR checks (e.g. Pest CI) before merging.
-          # No branch protection is available on private/free-plan repos, so the
-          # gate itself must not merge ahead of a slow test run.
-          CHECKS_STATUS=""
-          if [ "$CHECK_EXIT" -eq 0 ] && [ "${REQUIRE_REVIEW}" != "true" ]; then
-            POLL_INTERVAL=30
-            MAX_WAIT=1500
-            ELAPSED=0
+              # An empty check rollup is ambiguous: the repo may have no PR CI at
+              # all, or its checks may simply not have registered yet. Waiting a
+              # fixed grace period guessed at the answer and guessed wrong: a
+              # page merged ungated in 2026-W31 and broke the target repo's test
+              # suite. Ask the repo instead: does any active workflow trigger on
+              # pull_request? If one does, an empty rollup means "not yet" and we
+              # keep waiting; if none does, there is nothing to wait for.
+              EXPECTS_CHECKS=unknown
+              if WF_PATHS=$(gh api "repos/${{ github.repository }}/actions/workflows" \
+                              --jq '.workflows[] | select(.state == "active") | .path' 2>/dev/null); then
+                EXPECTS_CHECKS=no
+                while read -r wf; do
+                  [ -z "$wf" ] && continue
+                  if gh api "repos/${{ github.repository }}/contents/${wf}?ref=${{ github.ref_name }}" \
+                       --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
+                       | grep -qE '^[[:space:]]*(on:.*pull_request|pull_request:|-[[:space:]]*pull_request)'; then
+                    EXPECTS_CHECKS=yes
+                    break
+                  fi
+                done <<< "$WF_PATHS"
+              fi
+              echo "Repo runs workflows on pull_request: $EXPECTS_CHECKS"
 
-            # An empty check rollup is ambiguous: the repo may have no PR CI at
-            # all, or its checks may simply not have registered yet. Waiting a
-            # fixed grace period guessed at the answer and guessed wrong — a
-            # page merged ungated in 2026-W31 and broke the target repo's test
-            # suite. Ask the repo instead: does any active workflow trigger on
-            # pull_request? If one does, an empty rollup means "not yet" and we
-            # keep waiting; if none does, there is nothing to wait for.
-            EXPECTS_CHECKS=unknown
-            if WF_PATHS=$(gh api "repos/${{ github.repository }}/actions/workflows" \
-                            --jq '.workflows[] | select(.state == "active") | .path' 2>/dev/null); then
-              EXPECTS_CHECKS=no
-              while read -r wf; do
-                [ -z "$wf" ] && continue
-                if gh api "repos/${{ github.repository }}/contents/${wf}?ref=${{ github.ref_name }}" \
-                     --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
-                     | grep -qE '^[[:space:]]*(on:.*pull_request|pull_request:|-[[:space:]]*pull_request)'; then
-                  EXPECTS_CHECKS=yes
+              # The listing call failing is not a licence to merge blind: fall
+              # back to the old behaviour of waiting a short grace period.
+              GRACE_PERIOD=90
+              [ "$EXPECTS_CHECKS" = "yes" ] && GRACE_PERIOD="$MAX_WAIT"
+
+              while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+                # Normalize both statusCheckRollup shapes (CheckRun: status/conclusion,
+                # StatusContext: state) into a flat list of terminal/pending states.
+                STATES_JSON=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '
+                  [.statusCheckRollup[] |
+                    if .__typename == "StatusContext" then .state
+                    else (if .status == "COMPLETED" then (.conclusion // "PENDING") else "PENDING" end)
+                    end
+                  ]
+                ' 2>/dev/null || echo "[]")
+                [ -z "$STATES_JSON" ] && STATES_JSON="[]"
+
+                NUM_CHECKS=$(echo "$STATES_JSON" | jq 'length')
+
+                if [ "$NUM_CHECKS" -eq 0 ]; then
+                  if [ "$ELAPSED" -lt "$GRACE_PERIOD" ]; then
+                    echo "No PR checks registered yet (${ELAPSED}s elapsed), waiting out grace period..."
+                    sleep "$POLL_INTERVAL"
+                    ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                    continue
+                  fi
+                  echo "No PR checks after ${GRACE_PERIOD}s and no pull_request workflow to wait for, proceeding without CI gating."
+                  CHECKS_STATUS=none
                   break
                 fi
-              done <<< "$WF_PATHS"
-            fi
-            echo "Repo runs workflows on pull_request: $EXPECTS_CHECKS"
 
-            # The listing call failing is not a licence to merge blind: fall
-            # back to the old behaviour of waiting a short grace period.
-            GRACE_PERIOD=90
-            [ "$EXPECTS_CHECKS" = "yes" ] && GRACE_PERIOD="$MAX_WAIT"
-
-            while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
-              # Normalize both statusCheckRollup shapes (CheckRun: status/conclusion,
-              # StatusContext: state) into a flat list of terminal/pending states.
-              STATES_JSON=$(gh pr view "$PR_NUM" --json statusCheckRollup --jq '
-                [.statusCheckRollup[] |
-                  if .__typename == "StatusContext" then .state
-                  else (if .status == "COMPLETED" then (.conclusion // "PENDING") else "PENDING" end)
-                  end
-                ]
-              ' 2>/dev/null || echo "[]")
-              [ -z "$STATES_JSON" ] && STATES_JSON="[]"
-
-              NUM_CHECKS=$(echo "$STATES_JSON" | jq 'length')
-
-              if [ "$NUM_CHECKS" -eq 0 ]; then
-                if [ "$ELAPSED" -lt "$GRACE_PERIOD" ]; then
-                  echo "No PR checks registered yet (${ELAPSED}s elapsed) — waiting out grace period..."
-                  sleep "$POLL_INTERVAL"
-                  ELAPSED=$((ELAPSED + POLL_INTERVAL))
-                  continue
+                FAILED=$(echo "$STATES_JSON" | jq '[.[] | select(. as $s | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"] | index($s))] | length')
+                if [ "$FAILED" -gt 0 ]; then
+                  echo "One or more PR checks failed."
+                  CHECKS_STATUS=failed
+                  break
                 fi
-                echo "No PR checks after ${GRACE_PERIOD}s and no pull_request workflow to wait for — proceeding without CI gating."
-                CHECKS_STATUS=none
-                break
+
+                PENDING=$(echo "$STATES_JSON" | jq '[.[] | select(. == "PENDING")] | length')
+                if [ "$PENDING" -eq 0 ]; then
+                  echo "All PR checks completed successfully."
+                  CHECKS_STATUS=success
+                  break
+                fi
+
+                echo "PR checks still pending (${ELAPSED}s elapsed), waiting ${POLL_INTERVAL}s..."
+                sleep "$POLL_INTERVAL"
+                ELAPSED=$((ELAPSED + POLL_INTERVAL))
+              done
+
+              if [ -z "$CHECKS_STATUS" ]; then
+                echo "Timed out after ${MAX_WAIT}s waiting for PR checks."
+                CHECKS_STATUS=timeout
               fi
-
-              FAILED=$(echo "$STATES_JSON" | jq '[.[] | select(. as $s | ["FAILURE","ERROR","CANCELLED","TIMED_OUT","ACTION_REQUIRED"] | index($s))] | length')
-              if [ "$FAILED" -gt 0 ]; then
-                echo "One or more PR checks failed."
-                CHECKS_STATUS=failed
-                break
-              fi
-
-              PENDING=$(echo "$STATES_JSON" | jq '[.[] | select(. == "PENDING")] | length')
-              if [ "$PENDING" -eq 0 ]; then
-                echo "All PR checks completed successfully."
-                CHECKS_STATUS=success
-                break
-              fi
-
-              echo "PR checks still pending (${ELAPSED}s elapsed) — waiting ${POLL_INTERVAL}s..."
-              sleep "$POLL_INTERVAL"
-              ELAPSED=$((ELAPSED + POLL_INTERVAL))
-            done
-
-            if [ -z "$CHECKS_STATUS" ]; then
-              echo "Timed out after ${MAX_WAIT}s waiting for PR checks."
-              CHECKS_STATUS=timeout
             fi
-          fi
 
-          if [ "${REQUIRE_REVIEW}" = "true" ]; then
-            STATUS=needs_review
-          elif [ "$CHECK_EXIT" -eq 0 ]; then
-            if [ "$CHECKS_STATUS" = "failed" ] || [ "$CHECKS_STATUS" = "timeout" ]; then
-              if [ "$CHECKS_STATUS" = "failed" ]; then
-                STATUS=checks_failed
+            if [ "${REQUIRE_REVIEW}" = "true" ]; then
+              STATUS=needs_review
+            elif [ "$CHECK_EXIT" -eq 0 ]; then
+              if [ "$CHECKS_STATUS" = "failed" ] || [ "$CHECKS_STATUS" = "timeout" ]; then
+                if [ "$CHECKS_STATUS" = "failed" ]; then
+                  STATUS=checks_failed
+                else
+                  STATUS=checks_timeout
+                fi
+                echo "Not merging PR #$PR_NUM: PR checks did not pass ($STATUS)."
+              elif gh pr merge "$PR_NUM" --squash --delete-branch; then
+                STATUS=merged
+                # A merge by GITHUB_TOKEN does not trigger other workflows (incl. deploy).
+                # Dispatch the deploy explicitly so the merged pages go live.
+                if gh workflow run deploy.yml --ref main; then
+                  echo "Deploy workflow dispatched."
+                else
+                  echo "Deploy dispatch skipped (no deploy.yml or no workflow_dispatch trigger)."
+                fi
+                # (Re)submit the sitemap so Google re-crawls the new pages. Non-fatal.
+                node .seo-cli/bin/seo.js submit-sitemap || echo "Sitemap submit skipped/failed (non-fatal)."
+                # Same for Bing, Yandex and friends via IndexNow. Non-fatal, and a no-op without indexnow_key.
+                node .seo-cli/bin/seo.js indexnow || echo "IndexNow submit skipped/failed (non-fatal)."
               else
-                STATUS=checks_timeout
+                STATUS=merge_failed
               fi
-              echo "Not merging PR #$PR_NUM: PR checks did not pass ($STATUS)."
-            elif gh pr merge "$PR_NUM" --squash --delete-branch; then
-              STATUS=merged
-              # A merge by GITHUB_TOKEN does not trigger other workflows (incl. deploy).
-              # Dispatch the deploy explicitly so the merged pages go live.
-              if gh workflow run deploy.yml --ref main; then
-                echo "Deploy workflow dispatched."
-              else
-                echo "Deploy dispatch skipped (no deploy.yml or no workflow_dispatch trigger)."
-              fi
-              # (Re)submit the sitemap so Google re-crawls the new pages. Non-fatal.
-              node .seo-cli/bin/seo.js submit-sitemap || echo "Sitemap submit skipped/failed (non-fatal)."
-              # Same for Bing, Yandex and friends via IndexNow. Non-fatal, and a no-op without indexnow_key.
-              node .seo-cli/bin/seo.js indexnow || echo "IndexNow submit skipped/failed (non-fatal)."
             else
-              STATUS=merge_failed
+              STATUS=needs_review
             fi
-          else
-            STATUS=needs_review
-          fi
-          echo "Gate result: $STATUS"
+            echo "Gate result: $STATUS"
 
-          if [ -n "${NOTIFY_WEBHOOK:-}" ]; then
-            jq -n \
-              --arg repo "${GITHUB_REPOSITORY}" \
-              --arg status "$STATUS" \
-              --arg pr_url "$PR_URL" \
-              --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-              --argjson report "$REPORT" \
-              '{repo:$repo, status:$status, pr_url:$pr_url, run_url:$run_url, files:($report.pages // [] | map(.file)), report:$report}' \
-              | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \
-              || echo "Notify webhook call failed (non-fatal)."
-          else
-            echo "No SEO_NOTIFY_WEBHOOK configured — skipping email notification."
+            echo "$PR_URL $STATUS" >> "$GATE_STATUS_FILE"
+            git checkout main 2>/dev/null || true
+          }
+
+          PR_URLS=()
+          if [ -f "$REPORT_FILE" ]; then
+            mapfile -t PR_URLS < <(jq -r '.prs[].url' "$REPORT_FILE")
           fi
+          if [ ${#PR_URLS[@]} -eq 0 ]; then
+            echo "No PR this run, nothing to gate."
+            exit 0
+          fi
+
+          GATE_FAILED=0
+          for url in "${PR_URLS[@]}"; do
+            gate_pr "$url" || GATE_FAILED=1
+          done
+          [ "$GATE_FAILED" -eq 0 ]
+
+      # Last step, runs even when an earlier one failed: every run reports, also
+      # when nothing happened. The webhook stays optional (not every caller
+      # passes it), a missing one is a visible warning instead of a failure.
+      - name: Notify
+        if: always()
+        env:
+          NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -uo pipefail
+
+          REPORT_FILE="$RUNNER_TEMP/seo-report.json"
+          GATE_STATUS_FILE="$RUNNER_TEMP/gate-status.txt"
+          WARNINGS_FILE="$RUNNER_TEMP/seo-warnings.txt"
+
+          if [ -z "${NOTIFY_WEBHOOK:-}" ]; then
+            echo "::warning::No SEO_NOTIFY_WEBHOOK configured, this run reports nowhere."
+            exit 0
+          fi
+
+          REPORT='{}'
+          [ -f "$REPORT_FILE" ] && REPORT=$(cat "$REPORT_FILE")
+          GATES='{}'
+          [ -s "$GATE_STATUS_FILE" ] && GATES=$(jq -Rn '[inputs | split(" ") | {key: .[0], value: .[1]}] | from_entries' < "$GATE_STATUS_FILE")
+          EXTRA_WARNINGS='[]'
+          [ -s "$WARNINGS_FILE" ] && EXTRA_WARNINGS=$(jq -Rn '[inputs]' < "$WARNINGS_FILE")
+
+          # A failed step wins over whatever the report says; no report means the run never got that far.
+          if [ "$JOB_STATUS" != "success" ] || [ ! -f "$REPORT_FILE" ]; then
+            STATUS=failed
+          else
+            STATUS=$(jq -r '.status // "failed"' <<< "$REPORT")
+          fi
+
+          jq -n \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg status "$STATUS" \
+            --argjson report "$REPORT" \
+            --argjson gates "$GATES" \
+            --argjson extra "$EXTRA_WARNINGS" \
+            '{repo:$repo, run_url:$run_url, status:$status,
+              prs: ($report.prs // [] | map({url, gate_status: ($gates[.url] // "unknown")})),
+              budget: ($report.budget // null),
+              warnings: (($report.warnings // []) + $extra),
+              errors: ($report.errors // [])}' \
+            | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \
+            || echo "::warning::Notify webhook call failed (non-fatal)."
 
       - name: Clean up credentials
         if: always()

@@ -229,7 +229,11 @@ async function liveSnapshot(gscProperty, baseUrl) {
 export async function projectSummary(project, { live = false } = {}) {
   const kw = loadKeywords(project.path);
   const counts = {};
-  for (const k of kw.keywords) counts[k.status] = (counts[k.status] || 0) + 1;
+  // A merged page (published) is a finished page: it counts as done.
+  for (const k of kw.keywords) {
+    const status = k.status === KEYWORD_STATUS.PUBLISHED ? KEYWORD_STATUS.DONE : k.status;
+    counts[status] = (counts[status] || 0) + 1;
+  }
 
   const cutoff = project.config.score_cutoff ?? 7;
   const backlog = kw.keywords.filter(k => k.status === KEYWORD_STATUS.PROPOSED && (k.score ?? 0) >= cutoff);

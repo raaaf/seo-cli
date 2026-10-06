@@ -7,6 +7,7 @@ const complete = vi.fn();
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { reviewPage, unresolvedSeverity } = await import('../src/steps/review.js');
+const { BudgetExceededError } = await import('../src/lib/budget.js');
 
 const config = { locale: 'de', landing_path: 'content/landing/de/', site_name: 'acme' };
 const keyword = { keyword: 'kleinunternehmer rechnung' };
@@ -68,6 +69,12 @@ describe('reviewPage', () => {
 
     expect(complete).toHaveBeenCalledTimes(2);
     expect(result).toEqual({ markdown: PAGE, findings: [], unchecked: true, error: 'Claude returned no JSON:' });
+  });
+
+  it('rethrows a spent budget instead of returning the page unchecked', async () => {
+    complete.mockRejectedValue(new BudgetExceededError('Anthropic monthly budget exhausted'));
+
+    await expect(reviewPage(PAGE, keyword, config, cwd)).rejects.toBeInstanceOf(BudgetExceededError);
   });
 
   it('returns unchecked without a retry on any other error', async () => {

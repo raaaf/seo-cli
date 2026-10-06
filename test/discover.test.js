@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 const querySearchAnalytics = vi.fn();
 const queryPagePerformance = vi.fn(() => Promise.resolve([]));
 const getSerp = vi.fn();
-const checkQuota = vi.fn(() => ({ used: 0, remaining: 240, month: '2026-06' }));
+const checkQuota = vi.fn(() => ({ used: 0, remaining: 60, limit: 60, month: '2026-06' }));
 const complete = vi.fn();
 
 vi.mock('../src/lib/gsc.js', () => ({
@@ -17,6 +17,7 @@ vi.mock('../src/lib/serpapi.js', () => ({ getSerp: (...a) => getSerp(...a), chec
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { discover } = await import('../src/steps/discover.js');
+const { BudgetExceededError } = await import('../src/lib/budget.js');
 
 const EMPTY_SERP = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
 const config = {
@@ -60,7 +61,7 @@ describe('discover-run', () => {
   });
 
   it('warns when the SerpAPI monthly quota is exhausted', async () => {
-    checkQuota.mockReturnValueOnce({ used: 240, remaining: 0, month: '2026-06' });
+    checkQuota.mockReturnValueOnce({ used: 60, remaining: 0, limit: 60, month: '2026-06' });
     querySearchAnalytics.mockResolvedValue([]); // greenfield path
     complete.mockResolvedValue([]); // no suggestions
     const logs = [];
@@ -169,6 +170,15 @@ describe('discover-run', () => {
     const data = await discover({ ...config, score_cutoff: 99 }, dir);
 
     expect(data.keywords.find(k => k.keyword === 'sommerfest firma planen')).toBeTruthy();
+  });
+
+  it('rethrows a spent budget from scoring instead of skipping the keyword', async () => {
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 },
+    ]);
+    complete.mockRejectedValue(new BudgetExceededError('Anthropic monthly budget exhausted'));
+
+    await expect(discover(config, dir)).rejects.toBeInstanceOf(BudgetExceededError);
   });
 
   it('skips a keyword the model reports as already covered', async () => {

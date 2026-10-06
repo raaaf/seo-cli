@@ -36,6 +36,7 @@ program
   .command('run')
   .description('Discover keywords, generate pages, open PR')
   .option('--dry-run', 'print generated markdown, do not commit or open PR')
+  .option('--report <path>', 'write the run report (status, PRs, budget, warnings, errors) as JSON')
   .action(runCommand);
 
 program

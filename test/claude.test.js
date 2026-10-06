@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 const stream = vi.fn();
 const betaStream = vi.fn();
@@ -33,13 +36,24 @@ function resultsOf(entries) {
   return { [Symbol.asyncIterator]: async function* () { for (const e of entries) yield e; } };
 }
 
+// complete() books into seo/budget.json under cwd, so cwd is a temp dir.
+let dir;
+const budgetOnDisk = () => JSON.parse(readFileSync(join(dir, 'seo', 'budget.json'), 'utf8')).anthropic;
+
 beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'claude-test-'));
+  vi.spyOn(process, 'cwd').mockReturnValue(dir);
   stream.mockReset();
   betaStream.mockReset();
   batchCreate.mockReset();
   batchRetrieve.mockReset();
   batchResults.mockReset();
   batchCancel.mockReset();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(dir, { recursive: true, force: true });
 });
 
 describe('claude-complete', () => {
@@ -235,5 +249,61 @@ describe('claude-complete', () => {
     expect(sentParams.fallbacks).toBeUndefined();
     expect(sentParams.betas).toBeUndefined();
     expect(sentParams.output_config).toEqual({ effort: 'high' });
+  });
+});
+
+describe('claude-budget', () => {
+  const sonnet = (usage, extra = {}) => ({ ...reply('ok'), model: 'claude-sonnet-5-5', usage, ...extra });
+  const month = new Date().toISOString().slice(0, 7);
+
+  it('books an interactive call at the model price, cache tokens included', async () => {
+    stream.mockReturnValue(streamsTo(sonnet({ input_tokens: 1_000_000, output_tokens: 100_000, cache_creation_input_tokens: 1_000_000, cache_read_input_tokens: 1_000_000 })));
+    await complete({ system: 's', prompt: 'p' });
+    // 2 + 1 (output) + 2.5 + 0.2
+    expect(budgetOnDisk().usd).toBeCloseTo(5.7, 6);
+    expect(budgetOnDisk().calls).toBe(1);
+  });
+
+  it('prices by the model the server reports, not the requested one', async () => {
+    betaStream.mockReturnValue(streamsTo(sonnet({ input_tokens: 1_000_000, output_tokens: 0 })));
+    await complete({ system: 's', prompt: 'p', model: MODELS.generate }); // requested Opus, served Sonnet
+    expect(budgetOnDisk().usd).toBeCloseTo(2, 6);
+  });
+
+  it('books every pause_turn continuation as its own response', async () => {
+    stream.mockReturnValueOnce(streamsTo(sonnet({ input_tokens: 1_000_000, output_tokens: 0 }, { stop_reason: 'pause_turn' })))
+      .mockReturnValueOnce(streamsTo(sonnet({ input_tokens: 1_000_000, output_tokens: 0 })));
+    await complete({ system: 's', prompt: 'p', webSearch: true });
+    expect(budgetOnDisk().usd).toBeCloseTo(4, 6);
+    expect(budgetOnDisk().calls).toBe(2);
+  });
+
+  it('books a batch response at half price', async () => {
+    batchCreate.mockResolvedValue({ id: 'b1', processing_status: 'ended' });
+    batchResults.mockResolvedValue(resultsOf([{ custom_id: 'seo-1', result: { type: 'succeeded', message: sonnet({ input_tokens: 1_000_000, output_tokens: 1_000_000 }) } }]));
+    await complete({ system: 's', prompt: 'p', batch: true });
+    expect(budgetOnDisk().usd).toBeCloseTo(6, 6); // (2 + 10) * 0.5
+  });
+
+  it('adds 0.01 USD per web_search request', async () => {
+    stream.mockReturnValue(streamsTo(sonnet({ input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 3 } })));
+    await complete({ system: 's', prompt: 'p', webSearch: true });
+    expect(budgetOnDisk().usd).toBeCloseTo(0.03, 6);
+  });
+
+  it('books an unknown model at the most expensive known price and warns', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    stream.mockReturnValue(streamsTo({ ...reply('ok'), model: 'claude-future-9', usage: { input_tokens: 1_000_000, output_tokens: 0 } }));
+    await complete({ system: 's', prompt: 'p' });
+    expect(budgetOnDisk().usd).toBeCloseTo(4, 6); // Opus input price
+    expect(log.mock.calls.flat().join(' ')).toMatch(/Unknown model "claude-future-9"/);
+  });
+
+  it('refuses before the API call once the limit is reached', async () => {
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo', 'budget.json'), JSON.stringify({ month, serpapi: { used: 0 }, anthropic: { usd: 30, calls: 9 } }));
+    await expect(complete({ system: 's', prompt: 'p' })).rejects.toThrow(/Anthropic monthly budget exhausted/);
+    expect(stream).not.toHaveBeenCalled();
+    expect(batchCreate).not.toHaveBeenCalled();
   });
 });
