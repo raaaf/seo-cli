@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { parseFrontmatter } from '../lib/frontmatter.js';
-import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
+import { SEO_THRESHOLDS, STRICT_THRESHOLDS } from '../lib/seo-thresholds.js';
+import { findDuplicateBlocks } from '../lib/overlap.js';
 
 const FABRICATED_PATTERNS = Object.freeze([
   /wir haben .{0,10}(kunden|paare|teams|nutzer|event)/i,
@@ -95,10 +96,50 @@ export function findTransliteratedUmlauts(text, skip = new Set()) {
   return [...hits.values()];
 }
 
+// A number carrying a unit that makes it a checkable claim: percent or money.
+const UNIT_NUMBER = /\d\s*(?:%|€|EUR\b|Euro\b)|(?:€|EUR\b)\s*\d/;
+const HAS_LINK = /\]\([^)]+\)|https?:\/\//;
+
+/** Sentences of `text` that state a percent or money figure, when `text` links nowhere. */
+function unsourcedNumberSentences(text) {
+  if (HAS_LINK.test(text)) return [];
+  return text.split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).filter(sentence => UNIT_NUMBER.test(sentence));
+}
+
+/**
+ * Strict-mode rules (`quality: strict`). Pure: the other pages' bodies come in
+ * through `otherPages` ([{ slug, body }]), already without the page's own slug
+ * and the pages being merged into it.
+ */
+function strictErrors({ parsed, body, otherPages }) {
+  const errors = [];
+
+  for (const hit of findDuplicateBlocks(body, otherPages)) {
+    errors.push(`Duplicate block: ${(hit.share * 100).toFixed(0)}% of a paragraph repeats ${hit.slug} ("${hit.excerpt}...")`);
+  }
+
+  const faqCount = Array.isArray(parsed.faq) ? parsed.faq.length : 0;
+  if (faqCount > STRICT_THRESHOLDS.faqMax) errors.push(`Too many FAQ entries (${faqCount}, max ${STRICT_THRESHOLDS.faqMax})`);
+
+  const hasSources = Array.isArray(parsed.sources) && parsed.sources.length > 0;
+  if (!hasSources) {
+    const paragraphsToCheck = [
+      ...body.split(/\n\s*\n/),
+      ...(parsed.tldr ? [String(parsed.tldr)] : []),
+      ...(Array.isArray(parsed.faq) ? parsed.faq.map(f => String(f?.a ?? '')) : []),
+    ];
+    for (const sentence of paragraphsToCheck.flatMap(unsourcedNumberSentences)) {
+      errors.push(`Unsourced number: add a link or a sources: entry for "${sentence.replace(/\s+/g, ' ').slice(0, 80)}"`);
+    }
+  }
+
+  return errors;
+}
+
 export function validate(markdown, keyword, opts = {}) {
   const errors = [];
   const warnings = [];
-  const { counterpart = false } = opts;
+  const { counterpart = false, strict = false, otherPages = [] } = opts;
 
   const { parsed, body, matched, error } = parseFrontmatter(markdown);
   if (!matched) {
@@ -189,9 +230,12 @@ export function validate(markdown, keyword, opts = {}) {
     if (tldrWords > SEO_THRESHOLDS.tldrWords.errorMax) errors.push(`tldr too long: ${tldrWords} words (need ${SEO_THRESHOLDS.tldrWords.errorMin}-${SEO_THRESHOLDS.tldrWords.errorMax})`);
   }
 
-  // Information density: >= 5 digits in body
+  // Information density: >= 5 digits in body. Not under strict: padding a page
+  // with numbers is what produced unsourced figures in the first place.
   const digitCount = (body.match(/\d/g) || []).length;
-  if (digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
+  if (!strict && digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
+
+  if (strict) errors.push(...strictErrors({ parsed, body, otherPages }));
 
   // Tonality: no em-dash, no double-hyphen separator, no emoji
   if (markdown.includes('—')) errors.push('Em-dash (—) found — use comma, colon or period');

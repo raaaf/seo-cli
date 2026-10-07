@@ -12,6 +12,7 @@ import {
 import { loadImprovements, saveImprovements } from '../lib/improvements.js';
 import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/changes.js';
 import { getPR, deleteBranch } from '../lib/github.js';
+import { strictValidateOpts } from '../lib/landings.js';
 import { commitState } from '../lib/state.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
 import { BudgetExceededError } from '../lib/budget.js';
@@ -98,10 +99,11 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   let markdown;
   let valid = false;
   let lastResult;
+  const validateOpts = strictValidateOpts(config, join(cwd, localeLandingPathStr), [kw.target_slug]);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null);
-    lastResult = validate(markdown, kw);
+    lastResult = validate(markdown, kw, validateOpts);
     if (lastResult.ok) { valid = true; break; }
   }
 
@@ -131,7 +133,7 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
       return [];
     }
     if (reviewed !== markdown) {
-      const afterFix = validate(reviewed, kw);
+      const afterFix = validate(reviewed, kw, validateOpts);
       if (afterFix.ok) {
         markdown = reviewed;
       } else {

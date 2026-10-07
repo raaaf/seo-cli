@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { defaultLocale, localeLandingPath, loadConfig, DEFAULTS } from '../src/lib/config.js';
+import { defaultLocale, localeLandingPath, loadConfig, isStrict, DEFAULTS } from '../src/lib/config.js';
 
 describe('config-locale: defaultLocale', () => {
   it('returns first entry from locales array', () => {
@@ -76,5 +76,20 @@ describe('config-load: loadConfig', () => {
   it('throws when config file is missing', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     expect(() => loadConfig(tmpDir)).toThrow('seo.config.yaml not found');
+  });
+});
+
+describe('config-quality', () => {
+  let dir;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+  const load = (extra) => {
+    dir = mkdtempSync(join(tmpdir(), 'seo-quality-'));
+    writeFileSync(join(dir, 'seo.config.yaml'), `project: x\nlanding_path: a/\n${extra}`);
+    return loadConfig(dir);
+  };
+
+  it('is standard unless the config says strict', () => {
+    expect(isStrict(load(''))).toBe(false);
+    expect(isStrict(load('quality: strict\n'))).toBe(true);
   });
 });

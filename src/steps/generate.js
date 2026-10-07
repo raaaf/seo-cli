@@ -7,9 +7,26 @@ import { getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { isValidSlug } from '../lib/keywords.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
+import { isStrict } from '../lib/config.js';
+import { STRICT_THRESHOLDS } from '../lib/seo-thresholds.js';
 
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
+
+// Strict mode (`quality: strict`): no fixed section or FAQ counts, every figure sourced.
+export const SOURCES_RULE = 'Every sentence with a percentage or an amount in euros needs a deep link to its source in the same paragraph, or the frontmatter needs a `sources:` entry (a list of `url` and `title`) that covers it. Do not state a figure you cannot source. Never add numbers to reach a count.';
+
+// What a standard project's prompt says today, so its rendered prompt does not change.
+const STANDARD_RULES = {
+  faq_count: '4–6',
+  h2_rule: 'Exactly 4–5 H2 sections',
+  numbers_rule: 'Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)',
+};
+const STRICT_RULES = {
+  faq_count: `3–${STRICT_THRESHOLDS.faqMax}, only as many as there are real questions`,
+  h2_rule: 'Only as many H2 sections as the topic needs, none added to reach a count',
+  numbers_rule: `${SOURCES_RULE} List every external source you used under \`sources:\` in the frontmatter.`,
+};
 
 let styleDocCache = null;
 let styleDocCacheKey = null;
@@ -40,6 +57,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     style,
     today: format(new Date()),
     validator_feedback: feedbackBlock,
+    ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
   };
 
   const prompt = fillTemplate(GENERATE_PROMPT, vars);
