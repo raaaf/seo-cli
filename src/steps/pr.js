@@ -64,7 +64,7 @@ export async function createPRs({ generatedPages, keywordsData, config }) {
         body: buildPRBody(pages, sitemapSlugs, config),
       });
       console.log(chalk.green(`  PR opened: ${url}`));
-      if (kw) Object.assign(kw, { status: KEYWORD_STATUS.PR_OPENED, pr_url: url, sitemap_slugs: sitemapSlugs });
+      if (kw) Object.assign(kw, { status: KEYWORD_STATUS.PR_OPENED, pr_url: url, pr_opened_at: format(new Date()), sitemap_slugs: sitemapSlugs });
       result.prs.push({ url, keyword, slug });
     } catch (e) {
       if (branchCreated) await deleteBranch({ repo: config.repo, branch }).catch(err => {

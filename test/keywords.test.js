@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   KEYWORD_STATUS, SLUG_REGEX, isValidSlug,
-  loadKeywords, saveKeywords, upsertKeyword, getPending, releasePending,
+  loadKeywords, saveKeywords, upsertKeyword, getPending, releasePending, newPagesThisMonth,
   loadSitemapPending, saveSitemapPending,
   KEYWORDS_FILE,
 } from '../src/lib/keywords.js';
@@ -88,5 +88,26 @@ describe('keywords-store', () => {
     expect(loadSitemapPending(dir)).toEqual({ updated: null, slugs: [] });
     saveSitemapPending({ updated: null, slugs: ['/a'] }, dir);
     expect(loadSitemapPending(dir).slugs).toEqual(['/a']);
+  });
+});
+
+describe('keywords-monthly-cap', () => {
+  const now = new Date('2026-10-15T12:00:00Z');
+  const kw = (status, pr_opened_at) => ({ keyword: 'k', status, pr_opened_at });
+
+  it('newPagesThisMonth counts open and merged PRs of the current month only', () => {
+    const data = { keywords: [
+      kw('pr_opened', '2026-10-01'),
+      kw('published', '2026-10-31'),
+      kw('pr_opened', '2026-09-30'),
+      kw('published', '2026-11-01'),
+      kw('pr_opened', '2025-10-10'),
+    ] };
+    expect(newPagesThisMonth(data, now)).toBe(2);
+  });
+
+  it('newPagesThisMonth ignores rejected keywords and keywords without a date', () => {
+    const data = { keywords: [kw('rejected', '2026-10-02'), kw('pr_opened', undefined), kw('proposed', '2026-10-03')] };
+    expect(newPagesThisMonth(data, now)).toBe(0);
   });
 });

@@ -31,6 +31,8 @@ export const DEFAULTS = {
   style_doc: null,
   score_cutoff: 7,
   weekly_cap: 2,
+  // New pages per project and calendar month, counted from the keyword log. Rewrites do not count.
+  max_new_pages_per_month: 4,
   min_impressions: 5,
   counterpart_locale: null,
   // Root-relative URL prefix for counterpart pages, e.g. '/en' when the

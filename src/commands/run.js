@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as getLocaleLandingPath } from '../lib/config.js';
 import {
-  loadKeywords, saveKeywords, getPending, KEYWORD_STATUS, releasePending,
+  loadKeywords, saveKeywords, getPending, newPagesThisMonth, KEYWORD_STATUS, releasePending,
   loadSitemapPending, saveSitemapPending,
 } from '../lib/keywords.js';
 import { loadImprovements, saveImprovements } from '../lib/improvements.js';
@@ -224,8 +224,13 @@ export async function reconcileState({ config, cwd, warnings }) {
   let sitemapChanged = false;
 
   for (const kw of keywords.keywords) {
-    if (kw.status !== KEYWORD_STATUS.PR_OPENED || !kw.pr_url) continue;
-    const { state, headRef } = await readPR(config.repo, kw.pr_url, warnings);
+    if (!kw.pr_url) continue;
+    const needsDate = !kw.pr_opened_at;
+    if (kw.status !== KEYWORD_STATUS.PR_OPENED && !needsDate) continue;
+    const { state, headRef, createdAt } = await readPR(config.repo, kw.pr_url, warnings);
+    // PRs opened before pr_opened_at existed: take the date from GitHub so the monthly cap counts them
+    if (needsDate && createdAt) { kw.pr_opened_at = createdAt.slice(0, 10); keywordsChanged = true; }
+    if (kw.status !== KEYWORD_STATUS.PR_OPENED) continue;
     if (state === 'merged') {
       kw.status = KEYWORD_STATUS.PUBLISHED;
       for (const slug of kw.sitemap_slugs ?? []) {
@@ -326,7 +331,15 @@ export async function runCommand(opts) {
 
     // 3. Generate
     const pending = getPending(keywordsData, config.score_cutoff);
-    const toGenerate = pending.slice(0, config.weekly_cap);
+    const remaining = Math.max(0, config.max_new_pages_per_month - newPagesThisMonth(keywordsData));
+    const toGenerate = pending.slice(0, Math.min(config.weekly_cap, remaining));
+    if (remaining < Math.min(config.weekly_cap, pending.length)) {
+      const used = config.max_new_pages_per_month - remaining;
+      const waiting = pending.length - toGenerate.length;
+      const warning = `Monthly new-page cap reached (${used} of ${config.max_new_pages_per_month}), ${waiting} keyword(s) wait for next month`;
+      console.log(chalk.yellow(`\n${warning}`));
+      report.warnings.push(warning);
+    }
     const generatedPages = [];
     let prepared = null;
 
