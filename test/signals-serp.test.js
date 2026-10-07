@@ -33,31 +33,54 @@ afterEach(() => {
 describe('extractFeatures', () => {
   it('detects the AI Overview and a citation of our own domain', async () => {
     const { serp } = await freshModule();
-    const f = serp.extractFeatures({
+    const f = serp.resolveFeatures(serp.extractFeatures({
       ai_overview: { text_blocks: [{}], references: [{ link: 'https://other.com/a' }, { link: 'https://blog.Example.de/x' }] },
       answer_box: { title: 't' }, local_results: { places: [1] }, shopping_results: [{}], inline_videos: [{}],
-    }, 'https://www.example.de');
+    }), 'https://www.example.de');
     expect(f).toEqual({ ai_overview: true, ai_overview_cites_us: true, answer_box: true, local_pack: true, shopping: true, videos: true });
   });
 
   it('matches the hostname, not a substring', async () => {
     const { serp } = await freshModule();
     const refs = [{ link: 'https://notexample.de/a' }, { link: 'https://other.com/example.de' }, { link: 'https://example.de.evil.com/' }];
-    expect(serp.extractFeatures({ ai_overview: { references: refs } }, 'https://example.de').ai_overview_cites_us).toBe(false);
+    const stored = serp.extractFeatures({ ai_overview: { references: refs } });
+    expect(serp.resolveFeatures(stored, 'https://example.de').ai_overview_cites_us).toBe(false);
   });
 
   it('is all false without ai_overview, and an errored overview does not count', async () => {
     const { serp } = await freshModule();
     const none = { ai_overview: false, ai_overview_cites_us: false, answer_box: false, local_pack: false, shopping: false, videos: false };
-    expect(serp.extractFeatures({ organic_results: [] }, 'https://example.de')).toEqual(none);
-    expect(serp.extractFeatures({ ai_overview: { error: 'x' }, shopping_results: [] }, 'https://example.de')).toEqual(none);
+    const resolve = d => serp.resolveFeatures(serp.extractFeatures(d), 'https://example.de');
+    expect(resolve({ organic_results: [] })).toEqual(none);
+    expect(resolve({ ai_overview: { error: 'x' }, shopping_results: [] })).toEqual(none);
   });
 
-  it('counts an overview that only carries a page_token, without citing us', async () => {
+  it('counts an overview that only carries a page_token, with cites_us unknown (null)', async () => {
     const { serp } = await freshModule();
-    const f = serp.extractFeatures({ ai_overview: { page_token: 't', serpapi_link: 'l' } }, 'https://example.de');
+    const f = serp.resolveFeatures(serp.extractFeatures({ ai_overview: { page_token: 't', serpapi_link: 'l' } }), 'https://example.de');
     expect(f.ai_overview).toBe(true);
-    expect(f.ai_overview_cites_us).toBe(false);
+    expect(f.ai_overview_cites_us).toBeNull();
+  });
+
+  it('keeps only lowercase hostnames, no links or text', async () => {
+    const { serp } = await freshModule();
+    const f = serp.extractFeatures({ ai_overview: { references: [{ link: 'https://WWW.Other.com/a?x=1', title: 'T' }, { link: 'https://other.com/b' }] } });
+    expect(f.ai_overview_hosts).toEqual(['other.com']);
+  });
+
+  it('is null without a base_url, as there is nothing to compare against', async () => {
+    const { serp } = await freshModule();
+    const stored = serp.extractFeatures({ ai_overview: { references: [{ link: 'https://example.de/a' }] } });
+    expect(serp.resolveFeatures(stored, null).ai_overview_cites_us).toBeNull();
+  });
+});
+
+describe('serpKey', () => {
+  it('trims, collapses whitespace and fills the default locale and gl', async () => {
+    const { serp } = await freshModule();
+    expect(serp.serpKey('  Foo   Bar ')).toBe('de:de:foo bar');
+    expect(serp.serpKey('foo bar', null, '')).toBe('de:de:foo bar');
+    expect(serp.serpKey('foo', 'en', 'us')).toBe('en:us:foo');
   });
 });
 
@@ -73,6 +96,17 @@ describe('getSerp cache', () => {
     expect(second).toEqual(first);
     expect(searchCalls(safeFetch)).toHaveLength(1);
     expect(readFileSync(cacheFile(), 'utf8')).not.toContain('SECRET TEXT');
+  });
+
+  it('applies the current base_url to a cached entry without a new search', async () => {
+    const { serpapi, safeFetch } = await freshModule();
+    safeFetch.mockResolvedValue(respond(body));
+    const wrong = await serpapi.getSerp('kw', { baseUrl: 'https://wrong.example' });
+    const right = await serpapi.getSerp('kw', { baseUrl: 'https://example.de' });
+    expect(wrong.features.ai_overview_cites_us).toBe(false);
+    expect(right.features.ai_overview_cites_us).toBe(true);
+    expect(searchCalls(safeFetch)).toHaveLength(1);
+    expect(readFileSync(cacheFile(), 'utf8')).not.toContain('ai_overview_cites_us');
   });
 
   it('serves a hit before the key, budget and account checks', async () => {

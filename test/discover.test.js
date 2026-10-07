@@ -63,7 +63,8 @@ describe('discover-run', () => {
     });
 
     const data = await discover({ ...config, base_url: 'https://acme.io' }, dir);
-    expect(data.keywords.find(k => k.keyword === 'hochzeit planen').serp_features).toEqual(features);
+    expect(data.keywords.find(k => k.keyword === 'hochzeit planen').serp_features)
+      .toEqual({ ...features, checked_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
     expect(getSerp).toHaveBeenCalledWith('hochzeit planen', expect.objectContaining({ baseUrl: 'https://acme.io' }));
     expect(complete.mock.calls[0][0].prompt).toContain('SERP features present: ai_overview, videos');
   });
@@ -97,6 +98,15 @@ describe('discover-run', () => {
     const data = await discover({ ...config, greenfield: true }, dir);
     const kw = data.keywords.find(k => k.keyword === 'standesamt deko');
     expect(kw).toMatchObject({ status: 'proposed', score: 8, source: 'greenfield' });
+  });
+
+  it('restricts the greenfield intent to the same enum as scoring', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    complete.mockResolvedValue([]);
+    await discover({ ...config, greenfield: true }, dir);
+    const schema = complete.mock.calls[0][0].schema;
+    expect(schema.properties.keywords.items.properties.intent.enum)
+      .toEqual(['informational', 'commercial', 'transactional', 'navigational', 'local']);
   });
 
   it('proposes nothing when GSC is empty and greenfield is off', async () => {

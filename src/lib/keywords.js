@@ -52,9 +52,17 @@ export function upsertKeyword(data, incoming) {
 // informational keyword whose SERP shows an AI Overview that does not cite us
 // (clicks drop there). The stored score stays untouched: AI Overviews come and
 // go, and a lowered score would push the keyword under the cutoff for good.
-export function serpPriority(keyword) {
+// Only a cites_us of exactly false counts (null means no evidence), and only a
+// snapshot younger than SERP_FEATURES_MAX_AGE_DAYS: features are not refreshed
+// after discovery, so an old one must not demote forever.
+const SERP_FEATURES_MAX_AGE_DAYS = 60;
+
+export function serpPriority(keyword, now = new Date()) {
   const f = keyword.serp_features;
-  const penalised = keyword.intent === 'informational' && f?.ai_overview && !f.ai_overview_cites_us;
+  const checked = Date.parse(f?.checked_at);
+  const fresh = !Number.isNaN(checked) && now.getTime() - checked < SERP_FEATURES_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const intent = String(keyword.intent ?? '').trim().toLowerCase();
+  const penalised = intent === 'informational' && fresh && f.ai_overview && f.ai_overview_cites_us === false;
   return keyword.score - (penalised ? 2 : 0);
 }
 

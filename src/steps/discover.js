@@ -49,7 +49,7 @@ const GREENFIELD_SCHEMA = {
           keyword: { type: 'string' },
           target_slug: { type: 'string' },
           type: { type: 'string', enum: KEYWORD_TYPES },
-          intent: { type: 'string' },
+          intent: { type: 'string', enum: KEYWORD_INTENTS },
           score: { type: 'integer' },
           expected_entities: { type: 'array', items: { type: 'string' } },
           content_gaps: { type: 'array', items: { type: 'string' } },
@@ -161,7 +161,7 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
     serp: { people_also_ask: serp.people_also_ask, related_searches: serp.related_searches },
     discovered_at: format(new Date()),
   };
-  if (serp.features) entry.serp_features = serp.features;
+  if (serp.features) entry.serp_features = { ...serp.features, checked_at: format(new Date()) };
   if (gsc) entry.gsc = gsc;
   return entry;
 }

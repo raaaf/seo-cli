@@ -63,6 +63,16 @@ describe('fetchSignal', () => {
     expect(existsSync(file())).toBe(true);
   });
 
+  it('still returns the fetched value when the cache write fails', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(dir);
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo', 'signals'), 'a file where the directory should be');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const adapter = { name: 'x', ttlDays: 30, validate: () => true, fetch: vi.fn().mockResolvedValue({ n: 1 }) };
+    expect(await fetchSignal(adapter, 'k')).toEqual({ n: 1 });
+    expect(warn).toHaveBeenCalled();
+  });
+
   it('throws adapter errors and caches nothing', async () => {
     vi.spyOn(process, 'cwd').mockReturnValue(dir);
     const adapter = { name: 'x', ttlDays: 30, validate: () => true, fetch: vi.fn().mockRejectedValue(new Error('boom')) };

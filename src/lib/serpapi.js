@@ -1,7 +1,7 @@
 import { format } from './date.js';
 import { safeFetch } from './safe-fetch.js';
 import { fetchSignal } from './signals/index.js';
-import { serpAdapter, serpKey, extractFeatures } from './signals/serp.js';
+import { serpAdapter, serpKey, extractFeatures, resolveFeatures } from './signals/serp.js';
 import { assertBudget, adjustSerpapi, loadBudget, budgetLimits, BudgetExceededError } from './budget.js';
 
 // Account-wide state, read once per process from the free account.json
@@ -38,14 +38,18 @@ export function checkQuota() {
 
 // Cache first (30 days): a hit costs no search and works with an empty quota.
 // `baseUrl` is the site's own URL, used to spot our domain among the AI
-// Overview references.
-export function getSerp(keyword, { locale = 'de', gl = 'de', baseUrl = null } = {}) {
-  return fetchSignal(serpAdapter, serpKey(keyword, locale, gl), {
-    fetchUncached: () => fetchSerpUncached(keyword, { locale, gl, baseUrl }),
+// Overview references. The cache holds the reference hostnames, not the
+// verdict, so a changed base_url is applied to an existing entry.
+export async function getSerp(keyword, { locale, gl, baseUrl = null } = {}) {
+  locale ||= 'de';
+  gl ||= 'de';
+  const serp = await fetchSignal(serpAdapter, serpKey(keyword, locale, gl), {
+    fetchUncached: () => fetchSerpUncached(keyword, { locale, gl }),
   });
+  return { ...serp, features: resolveFeatures(serp.features, baseUrl) };
 }
 
-async function fetchSerpUncached(keyword, { locale, gl, baseUrl }) {
+async function fetchSerpUncached(keyword, { locale, gl }) {
   if (!process.env.SERPAPI_KEY) throw new Error('SERPAPI_KEY not set');
 
   assertBudget('serpapi');
@@ -82,6 +86,6 @@ async function fetchSerpUncached(keyword, { locale, gl, baseUrl }) {
     top_snippets: results.map(r => r.snippet).filter(Boolean),
     related_searches: (data.related_searches || []).slice(0, 5).map(r => r.query),
     people_also_ask: (data.related_questions || []).slice(0, 4).map(r => r.question),
-    features: extractFeatures(data, baseUrl),
+    features: extractFeatures(data),
   };
 }
