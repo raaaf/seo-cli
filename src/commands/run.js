@@ -1,12 +1,16 @@
 import { join, dirname } from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import chalk from 'chalk';
-import { loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as getLocaleLandingPath } from '../lib/config.js';
+import {
+  loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as getLocaleLandingPath, localeUrlPath,
+} from '../lib/config.js';
+import { parseFrontmatter } from '../lib/frontmatter.js';
 import {
   loadKeywords, saveKeywords, getPending, newPagesThisMonth, KEYWORD_STATUS, releasePending,
   loadSitemapPending, saveSitemapPending,
 } from '../lib/keywords.js';
 import { loadImprovements, saveImprovements } from '../lib/improvements.js';
+import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/changes.js';
 import { getPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { BudgetExceededError, loadBudget, budgetLimits } from '../lib/budget.js';
@@ -21,6 +25,7 @@ import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { prepareImprove, publishImprove } from './improve.js';
 import { createPRs } from '../steps/pr.js';
 import { track } from '../steps/track.js';
+import { measure } from '../steps/measure.js';
 
 function pLimit(concurrency) {
   const queue = [];
@@ -210,6 +215,83 @@ async function dropClosedBranch(repo, headRef, warnings) {
   }
 }
 
+// Merged PRs older than this are not added to the ledger retroactively: their
+// baseline window is long gone from the picture and the readings would be stale.
+const BACKFILL_DAYS = 90;
+
+const withinBackfill = (date) => {
+  const t = Date.parse(date);
+  return Number.isNaN(t) || Date.now() - t <= BACKFILL_DAYS * 24 * 60 * 60 * 1000;
+};
+
+function ledgerEntry({ kind, slug, urls, prUrl, mergedAt }) {
+  return {
+    id: prUrl, kind, slug, urls, pr_url: prUrl, merged_at: mergedAt.slice(0, 10),
+    baseline: null, readings: { d28: null, d56: null }, revert_candidate: false,
+  };
+}
+
+const baseUrlOf = (config) => String(config.base_url || '').replace(/\/+$/, '');
+
+function newPageEntry(kw, mergedAt, config) {
+  const paths = kw.sitemap_slugs?.length ? kw.sitemap_slugs : [localeUrlPath(config, kw.target_slug, getDefaultLocale(config))];
+  return ledgerEntry({ kind: 'new', slug: kw.target_slug, urls: paths.map(p => baseUrlOf(config) + p), prUrl: kw.pr_url, mergedAt });
+}
+
+// The counterpart is named by the page's `alternate:` field, which is only on disk after the merge was pulled.
+function rewriteEntry(item, mergedAt, config, cwd) {
+  const base = baseUrlOf(config);
+  const urls = [base + localeUrlPath(config, item.slug, getDefaultLocale(config))];
+  try {
+    const file = join(cwd, getLocaleLandingPath(config, getDefaultLocale(config)), `${item.slug}.md`);
+    const alternate = config.counterpart_locale ? parseFrontmatter(readFileSync(file, 'utf8')).parsed?.alternate : null;
+    if (alternate) urls.push(`${base}${config.counterpart_url_prefix || ''}/${alternate}`);
+  } catch { /* page not on disk: measured without its counterpart */ }
+  return ledgerEntry({ kind: 'rewrite', slug: item.slug, urls, prUrl: item.pr_url, mergedAt });
+}
+
+// Merged PRs the ledger does not know yet: published keywords (the main loop skips
+// them) and rewrites merged before the ledger existed. A PR that cannot be read has
+// no entry and is tried again next run; one that was read but never qualifies (no real
+// merge date, merged more than 90 days ago) goes to `changes.skipped` and is not read
+// again. Rewrites already in the ledger without a counterpart pick it up once it is
+// on disk. Returns whether a keyword changed.
+async function backfillLedger({ config, cwd, changes, keywords, improvements, warnings }) {
+  const known = new Map(changes.entries.map(e => [e.id, e]));
+  const skipped = new Set(changes.skipped.map(s => s.id));
+  let keywordsChanged = false;
+
+  // Whether a merged PR is worth an entry; otherwise it is recorded and never read again.
+  const qualifies = (id, mergedAt) => {
+    const reason = !mergedAt ? 'no_merge_date' : !withinBackfill(mergedAt) ? 'too_old' : null;
+    if (reason) markSkipped(changes, id, reason);
+    return !reason;
+  };
+
+  for (const kw of keywords.keywords) {
+    if (kw.status !== KEYWORD_STATUS.PUBLISHED || !kw.pr_url || known.has(kw.pr_url) || skipped.has(kw.pr_url)) continue;
+    const { state, mergedAt } = await readPR(config.repo, kw.pr_url, warnings);
+    if (state !== 'merged' || !qualifies(kw.pr_url, mergedAt)) continue;
+    if (!kw.published_at) {
+      kw.published_at = mergedAt.slice(0, 10);
+      keywordsChanged = true;
+    }
+    upsertEntry(changes, newPageEntry(kw, mergedAt, config));
+  }
+
+  for (const item of improvements.entries) {
+    if (!item.pr_url || !item.merged_at || skipped.has(item.pr_url)) continue;
+    const entry = known.get(item.pr_url);
+    if (entry) {
+      if (entry.kind === 'rewrite' && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
+      continue;
+    }
+    const { state, mergedAt } = await readPR(config.repo, item.pr_url, warnings);
+    if (state === 'merged' && qualifies(item.pr_url, mergedAt)) upsertEntry(changes, rewriteEntry(item, mergedAt, config, cwd));
+  }
+  return keywordsChanged;
+}
+
 /**
  * Brings keyword and improvement status in line with the real PR state before
  * anything new is proposed. Merged keyword PR: `published`, its slugs go to
@@ -222,12 +304,19 @@ export async function reconcileState({ config, cwd, warnings }) {
   const sitemap = loadSitemapPending(cwd);
   let keywordsChanged = false;
   let sitemapChanged = false;
+  let changes = null;
+  try {
+    changes = loadChanges(cwd);
+  } catch (e) {
+    warnings.push(`Change ledger skipped: ${e.message}`);
+  }
+  const changesBefore = JSON.stringify(changes);
 
   for (const kw of keywords.keywords) {
     if (!kw.pr_url) continue;
     const needsDate = !kw.pr_opened_at;
     if (kw.status !== KEYWORD_STATUS.PR_OPENED && !needsDate) continue;
-    const { state, headRef, createdAt, unreadable } = await readPR(config.repo, kw.pr_url, warnings);
+    const { state, mergedAt, headRef, createdAt, unreadable } = await readPR(config.repo, kw.pr_url, warnings);
     // PRs opened before pr_opened_at existed: take the date from GitHub so the monthly cap counts them.
     // A PR that was read but has no creation date is marked 'unknown' (never counted) so GitHub is asked once.
     if (needsDate && createdAt) { kw.pr_opened_at = createdAt.slice(0, 10); keywordsChanged = true; }
@@ -237,6 +326,11 @@ export async function reconcileState({ config, cwd, warnings }) {
       kw.status = KEYWORD_STATUS.PUBLISHED;
       for (const slug of kw.sitemap_slugs ?? []) {
         if (!sitemap.slugs.includes(slug)) { sitemap.slugs.push(slug); sitemapChanged = true; }
+      }
+      // Only a real merge date makes a ledger entry; a merged PR without one goes through the backfill, which records it as skipped.
+      if (mergedAt) {
+        kw.published_at = mergedAt.slice(0, 10);
+        if (changes) upsertEntry(changes, newPageEntry(kw, mergedAt, config));
       }
       keywordsChanged = true;
     } else if (state === 'closed') {
@@ -257,14 +351,21 @@ export async function reconcileState({ config, cwd, warnings }) {
       improvementsChanged = true;
       continue;
     }
-    if (state === 'merged') { entry.merged_at = mergedAt ?? format(new Date()); improvementsChanged = true; }
+    if (state === 'merged') {
+      entry.merged_at = mergedAt ?? format(new Date());
+      if (mergedAt && changes) upsertEntry(changes, rewriteEntry(entry, mergedAt, config, cwd));
+      improvementsChanged = true;
+    }
     kept.push(entry);
   }
   improvements.entries = kept;
 
+  if (changes && await backfillLedger({ config, cwd, changes, keywords, improvements, warnings })) keywordsChanged = true;
+
   if (keywordsChanged) saveKeywords(keywords, cwd);
   if (sitemapChanged) saveSitemapPending({ ...sitemap, updated: format(new Date()) }, cwd);
   if (improvementsChanged) saveImprovements(improvements, cwd);
+  if (changes && JSON.stringify(changes) !== changesBefore) saveChanges(changes, cwd);
 }
 
 function writeReport(path, report) {
@@ -328,6 +429,13 @@ export async function runCommand(opts) {
   try {
     // 1. Reconcile status with the real PR state
     if (!dryRun) await reconcileState({ config, cwd, warnings: report.warnings });
+
+    // 1b. Measure merged changes that are due. Never stops the run.
+    try {
+      report.measurement = await measure({ config, cwd, dryRun, warnings: report.warnings });
+    } catch (e) {
+      report.warnings.push(`Measurement failed: ${e.message}`);
+    }
 
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
     const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));

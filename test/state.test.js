@@ -75,4 +75,10 @@ describe('state: commitState', () => {
     remoteTree({});
     expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual(['seo/budget.json']);
   });
+
+  it('treats the change ledger as state', async () => {
+    write('seo/changes.json', '{"entries":[]}\n');
+    remoteTree({});
+    expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual(['seo/changes.json']);
+  });
 });
