@@ -11,6 +11,11 @@ export function loadConfig(cwd = process.cwd()) {
   }
   const config = { ...DEFAULTS, ...(yaml.load(readFileSync(path, 'utf8')) || {}) };
   config.counterpart_url_prefix = normalizeUrlPrefix(config.counterpart_url_prefix);
+  const cap = config.max_new_pages_per_month;
+  if (typeof cap !== 'number' || !Number.isFinite(cap) || cap < 0) {
+    config.max_new_pages_per_month = DEFAULTS.max_new_pages_per_month;
+    config.config_warnings = [`max_new_pages_per_month must be a number, using ${DEFAULTS.max_new_pages_per_month}`];
+  }
   return config;
 }
 

@@ -110,4 +110,8 @@ describe('keywords-monthly-cap', () => {
     const data = { keywords: [kw('rejected', '2026-10-02'), kw('pr_opened', undefined), kw('proposed', '2026-10-03')] };
     expect(newPagesThisMonth(data, now)).toBe(0);
   });
+
+  it('newPagesThisMonth does not count an unknown PR date', () => {
+    expect(newPagesThisMonth({ keywords: [kw('pr_opened', 'unknown'), kw('published', 'unknown')] }, now)).toBe(0);
+  });
 });

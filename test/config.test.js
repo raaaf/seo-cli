@@ -65,6 +65,14 @@ describe('config-load: loadConfig', () => {
     expect(cfg.score_cutoff).toBe(9);
   });
 
+  it('falls back to the default and warns when max_new_pages_per_month is not a number', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'max_new_pages_per_month: "lots"\n', 'utf8');
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.max_new_pages_per_month).toBe(DEFAULTS.max_new_pages_per_month);
+    expect(cfg.config_warnings).toEqual([`max_new_pages_per_month must be a number, using ${DEFAULTS.max_new_pages_per_month}`]);
+  });
+
   it('throws when config file is missing', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     expect(() => loadConfig(tmpDir)).toThrow('seo.config.yaml not found');

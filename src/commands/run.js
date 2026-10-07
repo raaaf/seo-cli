@@ -195,7 +195,7 @@ async function readPR(repo, url, warnings) {
     return await getPR({ repo, url });
   } catch (e) {
     warnings.push(`Could not read ${url}: ${e.message}`);
-    return { state: 'open', mergedAt: null, headRef: null };
+    return { state: 'open', mergedAt: null, headRef: null, unreadable: true };
   }
 }
 
@@ -227,9 +227,11 @@ export async function reconcileState({ config, cwd, warnings }) {
     if (!kw.pr_url) continue;
     const needsDate = !kw.pr_opened_at;
     if (kw.status !== KEYWORD_STATUS.PR_OPENED && !needsDate) continue;
-    const { state, headRef, createdAt } = await readPR(config.repo, kw.pr_url, warnings);
-    // PRs opened before pr_opened_at existed: take the date from GitHub so the monthly cap counts them
+    const { state, headRef, createdAt, unreadable } = await readPR(config.repo, kw.pr_url, warnings);
+    // PRs opened before pr_opened_at existed: take the date from GitHub so the monthly cap counts them.
+    // A PR that was read but has no creation date is marked 'unknown' (never counted) so GitHub is asked once.
     if (needsDate && createdAt) { kw.pr_opened_at = createdAt.slice(0, 10); keywordsChanged = true; }
+    else if (needsDate && !unreadable) { kw.pr_opened_at = 'unknown'; keywordsChanged = true; }
     if (kw.status !== KEYWORD_STATUS.PR_OPENED) continue;
     if (state === 'merged') {
       kw.status = KEYWORD_STATUS.PUBLISHED;
@@ -319,6 +321,7 @@ export async function runCommand(opts) {
   const report = { status: 'idle', prs: [], budget: null, warnings: [], errors: [] };
   const awaiting = new Set(); // keywords marked pr_opened before their PR exists
   let keywordsData;
+  report.warnings.push(...(config.config_warnings ?? []));
 
   // Machine state goes to main in the finally block too, so a run that fails
   // half way still keeps its status changes and its budget count.
@@ -326,17 +329,17 @@ export async function runCommand(opts) {
     // 1. Reconcile status with the real PR state
     if (!dryRun) await reconcileState({ config, cwd, warnings: report.warnings });
 
-    // 2. Discover
-    keywordsData = await discover(config, cwd);
+    // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
+    const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));
+    const remaining = Math.max(0, config.max_new_pages_per_month - newPagesUsed);
+    keywordsData = remaining === 0 ? loadKeywords(cwd) : await discover(config, cwd);
 
     // 3. Generate
     const pending = getPending(keywordsData, config.score_cutoff);
-    const remaining = Math.max(0, config.max_new_pages_per_month - newPagesThisMonth(keywordsData));
     const toGenerate = pending.slice(0, Math.min(config.weekly_cap, remaining));
     if (remaining < Math.min(config.weekly_cap, pending.length)) {
-      const used = config.max_new_pages_per_month - remaining;
       const waiting = pending.length - toGenerate.length;
-      const warning = `Monthly new-page cap reached (${used} of ${config.max_new_pages_per_month}), ${waiting} keyword(s) wait for next month`;
+      const warning = `Monthly new-page cap reached (${newPagesUsed} of ${config.max_new_pages_per_month}), ${waiting} keyword(s) wait for next month`;
       console.log(chalk.yellow(`\n${warning}`));
       report.warnings.push(warning);
     }

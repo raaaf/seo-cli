@@ -371,10 +371,14 @@ describe('monthly new-page cap', () => {
   const today = format(new Date());
   const opened = (n) => Array.from({ length: n }, (_, i) => ({ keyword: `old ${i}`, status: 'pr_opened', score: 9, pr_url: `https://github.com/o/demo/pull/${i + 1}`, pr_opened_at: today }));
 
-  beforeEach(() => { prepareImprove.mockResolvedValue(null); });
+  beforeEach(() => {
+    prepareImprove.mockResolvedValue(null);
+    getPR.mockResolvedValue({ state: 'open', mergedAt: null, createdAt: today });
+  });
 
   it('limits the generated pages to what is left of the month and warns', async () => {
     CONFIG.max_new_pages_per_month = 4;
+    seedState('keywords.json', { version: 1, keywords: opened(3) });
     discover.mockResolvedValue({ keywords: [...opened(3), ...manyKeywords(2).keywords] });
 
     await run();
@@ -384,13 +388,32 @@ describe('monthly new-page cap', () => {
   });
 
   it('goes to the improve path when nothing is left of the month', async () => {
-    discover.mockResolvedValue({ keywords: [...opened(4), ...manyKeywords(2).keywords] });
+    seedState('keywords.json', { version: 1, keywords: [...opened(4), ...manyKeywords(2).keywords] });
 
     await run();
 
+    expect(discover).not.toHaveBeenCalled();
     expect(generatePage).not.toHaveBeenCalled();
     expect(prepareImprove).toHaveBeenCalledTimes(1);
     expect(report().warnings).toContain('Monthly new-page cap reached (4 of 4), 2 keyword(s) wait for next month');
+  });
+
+  it('reports the real count when more pages were counted than the cap allows', async () => {
+    CONFIG.max_new_pages_per_month = 4;
+    seedState('keywords.json', { version: 1, keywords: [...opened(6), ...manyKeywords(1).keywords] });
+
+    await run();
+
+    expect(report().warnings).toContain('Monthly new-page cap reached (6 of 4), 1 keyword(s) wait for next month');
+  });
+
+  it('passes config warnings (invalid cap) into the report', async () => {
+    CONFIG.config_warnings = ['max_new_pages_per_month must be a number, using 4'];
+    discover.mockResolvedValue({ keywords: [] });
+    prepareImprove.mockResolvedValue(null);
+    try { await run(); } finally { delete CONFIG.config_warnings; }
+
+    expect(report().warnings).toContain('max_new_pages_per_month must be a number, using 4');
   });
 
   it('does not warn while the cap leaves room for the whole run', async () => {
@@ -451,6 +474,26 @@ describe('run-reconcile', () => {
     const dates = Object.fromEntries(loadKeywords(dir).keywords.map(k => [k.keyword, k.pr_opened_at]));
     expect(dates).toEqual({ open: '2026-10-06', merged: '2026-10-06', closed: '2026-10-06', dated: '2026-10-02' });
     expect(getPR).toHaveBeenCalledTimes(3);
+  });
+
+  it('marks a PR without creation date as unknown once, never counts it, and does not ask GitHub again', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('legacy', 1, { status: 'published' })] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: null });
+
+    await run();
+    await run();
+
+    expect(loadKeywords(dir).keywords[0].pr_opened_at).toBe('unknown');
+    expect(getPR).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves pr_opened_at empty when the PR could not be read, so the next run asks again', async () => {
+    seedState('keywords.json', { version: 1, keywords: [kw('flaky', 1)] });
+    getPR.mockRejectedValue(new Error('GitHub 502'));
+
+    await run();
+
+    expect(loadKeywords(dir).keywords[0].pr_opened_at).toBeUndefined();
   });
 
   it('reconciles before discover reads the keywords', async () => {
