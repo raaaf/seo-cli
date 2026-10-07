@@ -13,6 +13,8 @@ import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
+import { prepareOverlay } from '../steps/overlay.js';
+import { loadCatalog, contractOptions } from '../lib/catalog.js';
 
 /**
  * Selects the one existing page with the strongest case, rewrites it, validates
@@ -38,10 +40,23 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     return null;
   }
 
+  // Shop projects: the catalog backs the page contract. Unreachable means no overlay and no product check.
+  let catalog = opts.catalog ?? null;
+  if (!catalog && config.catalog_url) {
+    try {
+      catalog = await loadCatalog(config);
+    } catch (e) {
+      console.log(chalk.yellow(`  ${e.message}`));
+    }
+  }
+  const validateOpts = contractOptions(config, catalog, cwd, defaultLocale(config));
+
   const page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)) });
 
   if (!page) {
     console.log(chalk.gray('  No page qualifies: not enough impressions, or everything eligible was rewritten recently.'));
+    // Nothing to rewrite on a landing page: an overlay (shop meta and intro) takes the slot.
+    if (config.overlays && !opts.skipOverlays) return prepareOverlay({ config, cwd, rows, catalog, dryRun });
     return null;
   }
 
@@ -52,8 +67,8 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   // single hard error (one word over the tldr limit) is not worth losing it.
   let filePath, markdown, result;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    ({ filePath, markdown } = await improvePage(page, config, cwd, attempt > 1 ? result : null));
-    result = validate(markdown, keywordLike);
+    ({ filePath, markdown } = await improvePage(page, config, cwd, attempt > 1 ? result : null, validateOpts));
+    result = validate(markdown, keywordLike, validateOpts);
     if (result.ok) break;
   }
 
@@ -73,7 +88,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       console.log(chalk.red(`  Improvement discarded: unresolved factual error in the rewrite of ${page.slug}`));
       return null;
     }
-    if (reviewed !== markdown && validate(reviewed, keywordLike).ok) finalMarkdown = reviewed;
+    if (reviewed !== markdown && validate(reviewed, keywordLike, validateOpts).ok) finalMarkdown = reviewed;
   }
 
   // The counterpart adapts the already-checked rewrite, so it is not fact-checked
@@ -104,7 +119,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     prTitle: `SEO: improve ${page.slug} (${week})`,
     prBody: buildBody(page, before, readMetaFrom(finalMarkdown), {
       factCheckError,
-      warnings: validate(finalMarkdown, keywordLike).warnings,
+      warnings: validate(finalMarkdown, keywordLike, validateOpts).warnings,
       counterpart,
     }),
   };
@@ -119,7 +134,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
  * Returns the PR url, or null when skipped.
  */
 export async function publishImprove(prepared, { config, cwd = process.cwd(), warnings = [] }) {
-  const branch = `seo/improve/${prepared.slug}`;
+  const branch = prepared.branch ?? `seo/improve/${prepared.slug}`;
 
   try {
     await createBranchAndCommit({ files: prepared.files, message: prepared.commitMessage, cwd, repo: config.repo, branch });

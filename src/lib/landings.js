@@ -45,9 +45,10 @@ export function getExistingPages(config, cwd = process.cwd(), locale) {
       try {
         const { parsed } = parseFrontmatter(readFileSync(join(dir, f), 'utf8'));
         const faq = Array.isArray(parsed.faq) ? parsed.faq.map(f => f?.a).filter(a => typeof a === 'string') : [];
-        return { slug, title: parsed.meta_title ?? parsed.hero?.headline ?? slug, tldr: parsed.tldr ?? null, faq, updated: parsed.updated ?? null };
+        const products = Array.isArray(parsed.products) ? parsed.products.filter(p => typeof p === 'string') : [];
+        return { slug, title: parsed.meta_title ?? parsed.hero?.headline ?? slug, tldr: parsed.tldr ?? null, faq, updated: parsed.updated ?? null, products };
       } catch {
-        return { slug, title: slug, tldr: null, faq: [], updated: null };
+        return { slug, title: slug, tldr: null, faq: [], updated: null, products: [] };
       }
     });
 }

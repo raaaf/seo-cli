@@ -4,6 +4,9 @@ import chalk from 'chalk';
 import { loadKeywords } from '../lib/keywords.js';
 import { validate } from '../steps/validate.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
+import { loadConfig, defaultLocale, CONFIG_FILE } from '../lib/config.js';
+import { loadCatalog, contractOptions } from '../lib/catalog.js';
+import { overlayKeyOfFile, parseOverlay, validateOverlay } from '../steps/overlay.js';
 
 function slugFromPath(filePath) {
   return basename(filePath).replace(/\.md$/i, '');
@@ -34,6 +37,19 @@ export async function checkCommand(files) {
     process.exit(2);
   }
 
+  // Projects with a page contract or overlays keep their rules in seo.config.yaml; others have no config here.
+  const config = existsSync(join(cwd, CONFIG_FILE)) ? loadConfig(cwd) : null;
+  let catalog = null;
+  if (config?.catalog_url) {
+    try {
+      catalog = await loadCatalog(config);
+    } catch (e) {
+      console.error(chalk.red(`seo check: ${e.message}`));
+      process.exit(1);
+    }
+  }
+  const validateOpts = config ? contractOptions(config, catalog, cwd, defaultLocale(config)) : {};
+
   const results = [];
   for (const file of targets) {
     const abs = join(cwd, file);
@@ -42,11 +58,23 @@ export async function checkCommand(files) {
       continue;
     }
     const markdown = readFileSync(abs, 'utf8');
+    const overlay = config?.overlays ? overlayKeyOfFile(config, file) : null;
+    if (overlay) {
+      console.log(chalk.bold(`\nChecking ${file} (overlay ${overlay})`));
+      const { fields, error } = parseOverlay(markdown);
+      const { errors, warnings } = error
+        ? { errors: [error], warnings: [] }
+        : validateOverlay(fields, { key: overlay, contract: config.page_contract, catalog });
+      errors.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
+      warnings.forEach(w => console.log(chalk.yellow(`    ⚠ ${w}`)));
+      results.push({ file, ok: errors.length === 0, errors, warnings });
+      continue;
+    }
     const slug = slugFromPath(file);
     const { parsed } = parseFrontmatter(markdown);
     const keyword = keywordFor(slug, keywordsData, parsed);
     console.log(chalk.bold(`\nChecking ${file} (keyword: "${keyword.keyword}")`));
-    const { ok, errors, warnings } = validate(markdown, keyword);
+    const { ok, errors, warnings } = validate(markdown, keyword, validateOpts);
     results.push({ file, ok, errors, warnings });
   }
 

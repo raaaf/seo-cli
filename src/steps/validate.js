@@ -98,7 +98,7 @@ export function findTransliteratedUmlauts(text, skip = new Set()) {
 export function validate(markdown, keyword, opts = {}) {
   const errors = [];
   const warnings = [];
-  const { counterpart = false } = opts;
+  const { counterpart = false, contract = null, catalog = null, existingPages = [], reservedSlugs = [] } = opts;
 
   const { parsed, body, matched, error } = parseFrontmatter(markdown);
   if (!matched) {
@@ -111,15 +111,25 @@ export function validate(markdown, keyword, opts = {}) {
   }
 
   // Required frontmatter fields
-  for (const field of ['slug', 'meta_title', 'meta_description', 'hero', 'tldr', 'faq']) {
+  const requiredFields = ['slug', 'meta_title', 'meta_description', 'hero', 'tldr', 'faq'];
+  for (const field of contract?.require ?? []) {
+    if (!requiredFields.includes(field)) requiredFields.push(field);
+  }
+  for (const field of requiredFields) {
     if (!(field in parsed)) errors.push(`Missing frontmatter field: ${field}`);
   }
+  for (const field of contract?.forbid ?? []) {
+    if (field in parsed) errors.push(`Forbidden frontmatter field (page contract): ${field}`);
+  }
+  if (reservedSlugs.includes(parsed.slug)) errors.push(`Slug "${parsed.slug}" is a reserved path of the site`);
 
   // meta_title length
   if (parsed.meta_title != null) {
     const len = String(parsed.meta_title).length;
     if (len < SEO_THRESHOLDS.metaTitle.shortWarn) warnings.push(`meta_title short (${len} chars, aim 50–60)`);
-    if (len > SEO_THRESHOLDS.metaTitle.errorMax) errors.push(`meta_title too long (${len} chars, max 65)`);
+    // The site appends its brand to every title, so the contract shortens the limit by that suffix.
+    const titleMax = SEO_THRESHOLDS.metaTitle.errorMax - (contract?.meta_title_suffix?.length ?? 0);
+    if (len > titleMax) errors.push(`meta_title too long (${len} chars, max ${titleMax})`);
   }
 
   // meta_description length
@@ -147,8 +157,14 @@ export function validate(markdown, keyword, opts = {}) {
 
   // Body word count — min 800 words (thin-content guard)
   const wordCount = body.split(/\s+/).filter(Boolean).length;
-  if (wordCount < SEO_THRESHOLDS.bodyWords.errorMin) errors.push(`Body too short: ${wordCount} words (min 800)`);
-  if (wordCount > SEO_THRESHOLDS.bodyWords.longWarn) warnings.push(`Body very long: ${wordCount} words (aim 800–1200)`);
+  if (contract?.body_words) {
+    const [minWords, maxWords] = contract.body_words;
+    if (wordCount < minWords) errors.push(`Body too short: ${wordCount} words (min ${minWords})`);
+    if (wordCount > maxWords) errors.push(`Body too long: ${wordCount} words (max ${maxWords})`);
+  } else {
+    if (wordCount < SEO_THRESHOLDS.bodyWords.errorMin) errors.push(`Body too short: ${wordCount} words (min 800)`);
+    if (wordCount > SEO_THRESHOLDS.bodyWords.longWarn) warnings.push(`Body very long: ${wordCount} words (aim 800–1200)`);
+  }
 
   // No steps/FAQ/checklist sections in body (those belong in frontmatter)
   if (body.match(/^#{1,3}\s.*(FAQ|Häufige|Checklist|Schritt|Step)/im)) {
@@ -193,10 +209,7 @@ export function validate(markdown, keyword, opts = {}) {
   const digitCount = (body.match(/\d/g) || []).length;
   if (digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
 
-  // Tonality: no em-dash, no double-hyphen separator, no emoji
-  if (markdown.includes('—')) errors.push('Em-dash (—) found — use comma, colon or period');
-  if (/(?<![-])\s--\s(?![-])/.test(markdown)) errors.push('Double-hyphen separator found — use em-dash alternative');
-  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(markdown)) errors.push('Emoji found — remove all emoji');
+  errors.push(...tonalityErrors(markdown));
 
   // No fabricated claims
   for (const pattern of FABRICATED_PATTERNS) {
@@ -249,6 +262,8 @@ export function validate(markdown, keyword, opts = {}) {
     warnings.push(`Homepage-only citation (link deep or drop it): ${cite}`);
   }
 
+  if (contract) errors.push(...checkContract({ contract, parsed, body, catalog, existingPages }));
+
   const ok = errors.length === 0;
 
   if (!ok) {
@@ -259,6 +274,94 @@ export function validate(markdown, keyword, opts = {}) {
   if (ok) console.log(chalk.green(`  Validation passed (${wordCount} body words, ${faqCount} FAQ, ${warnings.length} warnings)`));
 
   return { ok, errors, warnings };
+}
+
+/** Em-dash, double-hyphen separator and emoji in `text`. Shared by pages and overlays. */
+export function tonalityErrors(text) {
+  const errors = [];
+  if (text.includes('—')) errors.push('Em-dash (—) found — use comma, colon or period');
+  if (/(?<![-])\s--\s(?![-])/.test(text)) errors.push('Double-hyphen separator found — use em-dash alternative');
+  if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(text)) errors.push('Emoji found — remove all emoji');
+  return errors;
+}
+
+/** Error for the named text fields (`{ name: text }`) that contain uppercase letters. */
+export function lowercaseErrors(texts) {
+  const upper = Object.entries(texts).filter(([, v]) => typeof v === 'string' && /[A-ZÄÖÜ]/.test(v)).map(([k]) => k);
+  return upper.length ? [`Uppercase letters (page contract is lowercase): ${upper.join(', ')}`] : [];
+}
+
+/**
+ * Matches of the fact denylist in `text` that the catalog does not state word
+ * for word. One error per pattern; an invalid pattern is an error, not a crash.
+ */
+export function unbackedClaimErrors(text, patterns, catalog) {
+  const errors = [];
+  const catalogText = catalog ? JSON.stringify(catalog).toLowerCase() : '';
+  for (const pattern of patterns) {
+    let re;
+    try {
+      re = new RegExp(pattern, 'gi');
+    } catch {
+      errors.push(`Invalid facts_denylist pattern: ${pattern}`);
+      continue;
+    }
+    const bad = [...new Set([...text.matchAll(re)].map(m => m[0].trim()).filter(m => !catalogText.includes(m.toLowerCase())))];
+    if (bad.length) errors.push(`Claim not backed by the catalog: ${bad.map(m => `"${m}"`).join(', ')}`);
+  }
+  return errors;
+}
+
+/**
+ * Page-contract rules that need the catalog or the other pages: product list
+ * (count, existence, overlap), lowercase, fact denylist. Returns error strings.
+ */
+function checkContract({ contract, parsed, body, catalog, existingPages }) {
+  const errors = [];
+
+  if (contract.products && 'products' in parsed) {
+    const { min = 1, max = Infinity, max_overlap: maxOverlap } = contract.products;
+    if (!Array.isArray(parsed.products) || !parsed.products.every(p => typeof p === 'string')) {
+      errors.push('products must be a list of catalog product slugs');
+    } else {
+      const products = [...new Set(parsed.products)];
+      if (products.length < min) errors.push(`Too few products: ${products.length} (min ${min})`);
+      if (products.length > max) errors.push(`Too many products: ${products.length} (max ${max})`);
+      if (catalog) {
+        const known = new Set(catalog.products.map(p => p.slug));
+        const unknown = products.filter(p => !known.has(p));
+        if (unknown.length) errors.push(`Products not in the catalog: ${unknown.join(', ')}`);
+      }
+      if (maxOverlap != null && products.length) {
+        for (const page of existingPages) {
+          if (page.slug === parsed.slug || !Array.isArray(page.products)) continue;
+          const shared = products.filter(p => page.products.includes(p)).length;
+          if (shared / products.length > maxOverlap) {
+            errors.push(`Product overlap with "${page.slug}": ${shared} of ${products.length} products (max ${Math.round(maxOverlap * 100)} percent)`);
+          }
+        }
+      }
+    }
+  }
+
+  if (contract.lowercase) {
+    const faq = Array.isArray(parsed.faq) ? parsed.faq : [];
+    const texts = {
+      meta_title: parsed.meta_title,
+      meta_description: parsed.meta_description,
+      tldr: parsed.tldr,
+      ...Object.fromEntries(Object.entries(parsed.hero ?? {}).filter(([, v]) => typeof v === 'string').map(([k, v]) => [`hero.${k}`, v])),
+      ...Object.fromEntries(faq.flatMap((f, i) => [[`faq[${i}].q`, f?.q], [`faq[${i}].a`, f?.a]])),
+      ...Object.fromEntries((body.match(/^#{1,6}\s.*$/gm) || []).map((h, i) => [`heading ${i + 1}`, h])),
+    };
+    errors.push(...lowercaseErrors(texts));
+  }
+
+  if (contract.facts_denylist?.length) {
+    errors.push(...unbackedClaimErrors(JSON.stringify(parsed) + '\n' + body, contract.facts_denylist, catalog));
+  }
+
+  return errors;
 }
 
 function escapeRegex(str) {

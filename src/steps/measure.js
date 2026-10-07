@@ -4,6 +4,7 @@ import { getExistingSlugs } from '../lib/landings.js';
 import { loadChanges, saveChanges } from '../lib/changes.js';
 import { queryPageTotals } from '../lib/gsc.js';
 import { format } from '../lib/date.js';
+import { parseOverlayKey } from '../lib/improvements.js';
 import {
   windowsFor, isDue, normalizeUrl, urlToSlug, aggregatePages, sumMetrics, selectControls,
   verdictFor, isOverlap, isRevertCandidate,
@@ -72,8 +73,10 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     const touched = new Set(changes.entries
       .filter(e => e.merged_at >= windows.baseline.startDate && e.merged_at <= windows.d56.endDate)
       .flatMap(e => e.urls.map(normalizeUrl)));
+    // Overlays are compared with overlays, landing pages with landing pages.
+    const isOverlay = parseOverlayKey(entry.slug) !== null;
     const candidates = [...baselinePages]
-      .filter(([url, page]) => page.locale === def && !touched.has(url))
+      .filter(([url, page]) => page.locale === def && !touched.has(url) && Boolean(page.overlay) === isOverlay)
       .map(([url, page]) => ({ key: url, impressions: page.impressions }));
     const controls = selectControls(entry.baseline.impressions, candidates)
       .map(c => ({ before: baselinePages.get(c.key), after: afterPages.get(c.key) ?? NONE }));

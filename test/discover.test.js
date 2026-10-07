@@ -18,6 +18,7 @@ vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { discover } = await import('../src/steps/discover.js');
 const { BudgetExceededError } = await import('../src/lib/budget.js');
+const { makeCatalog } = await import('./helpers/catalog.js');
 
 const EMPTY_SERP = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
 const config = {
@@ -191,5 +192,68 @@ describe('discover-run', () => {
     const kw = data.keywords.find(k => k.keyword === 'trauung im freien');
     expect(kw).toMatchObject({ status: 'skip', score: 0 });
     expect(kw.note).toMatch(/hochzeit-planen/);
+  });
+
+  describe('shop mode', () => {
+    const shopRow = { keyword: 'nachteule shirt', impressions: 40, clicks: 0, ctr: 0, position: 12 };
+    const SHOP_PAGES = [{ keys: ['https://shop.test/shop/nachteule', 'nachteule shirt'], impressions: 40, position: 12 }];
+    const scored = (slug) => ({
+      score: 9, type: 'guide', intent: 'informational', target_slug: slug, expected_entities: [], content_gaps: [], covered_by: null, reason: '',
+    });
+
+    it('drops queries that only a /shop page answers when overlays are configured', async () => {
+      querySearchAnalytics.mockResolvedValue([shopRow]);
+      queryPagePerformance.mockResolvedValue(SHOP_PAGES);
+      const data = await discover({ ...config, overlays: { products: 'content/seo/products' } }, dir);
+      expect(data.keywords.find(k => k.keyword === 'nachteule shirt')).toBeUndefined();
+      expect(complete).not.toHaveBeenCalled();
+    });
+
+    it('keeps a query that a non-shop page also answers', async () => {
+      querySearchAnalytics.mockResolvedValue([shopRow]);
+      queryPagePerformance.mockResolvedValue([
+        ...SHOP_PAGES,
+        { keys: ['https://shop.test/geschenke', 'nachteule shirt'], impressions: 5, position: 30 },
+      ]);
+      complete.mockResolvedValue(scored('nachteule-shirt'));
+      const data = await discover({ ...config, overlays: { products: 'content/seo/products' } }, dir);
+      expect(data.keywords.find(k => k.keyword === 'nachteule shirt')).toMatchObject({ status: 'proposed' });
+    });
+
+    it('keeps shop queries without overlays configured', async () => {
+      querySearchAnalytics.mockResolvedValue([shopRow]);
+      queryPagePerformance.mockResolvedValue(SHOP_PAGES);
+      complete.mockResolvedValue(scored('nachteule-shirt'));
+      const data = await discover(config, dir);
+      expect(data.keywords.find(k => k.keyword === 'nachteule shirt')).toMatchObject({ status: 'proposed' });
+    });
+
+    it('skips a slug that is a reserved shop path', async () => {
+      querySearchAnalytics.mockResolvedValue([{ ...shopRow, keyword: 'warenkorb hilfe' }]);
+      complete.mockResolvedValue(scored('cart'));
+      const data = await discover({ ...config, reserved_slugs: ['cart', 'admin'] }, dir);
+      expect(data.keywords.find(k => k.target_slug === 'cart')).toBeUndefined();
+    });
+
+    it('gives greenfield the catalog and the contract rules', async () => {
+      querySearchAnalytics.mockResolvedValue([]);
+      complete.mockResolvedValue([]);
+      await discover(
+        { ...config, greenfield: true, page_contract: { products: { min: 3, max: 8 } } },
+        dir,
+        { catalog: makeCatalog() },
+      );
+      const prompt = complete.mock.calls[0][0].prompt;
+      expect(prompt).toContain('- nachteule: nachteule');
+      expect(prompt).toContain('3 to 8 product slugs');
+      expect(prompt).toContain('saying and meaning of the designs');
+    });
+
+    it('leaves the greenfield prompt free of contract text without configuration', async () => {
+      querySearchAnalytics.mockResolvedValue([]);
+      complete.mockResolvedValue([]);
+      await discover({ ...config, greenfield: true }, dir);
+      expect(complete.mock.calls[0][0].prompt).not.toContain('Page contract');
+    });
   });
 });

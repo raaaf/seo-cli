@@ -281,3 +281,116 @@ describe('watch-step: diagnosis and resubmit', () => {
     expect(report.alerts.updated).toEqual([]);
   });
 });
+
+describe('watch-step: deploy checks', () => {
+  const NEW_PR = { number: 1, headRef: 'seo/new/neu', mergedAt: '2026-10-01T09:00:00Z', files: ['content/de/neu.md'] };
+  const OVERLAY_PR = { number: 2, headRef: 'seo/improve/product-nachteule', mergedAt: '2026-10-01T09:00:00Z', files: ['content/seo/products/nachteule.md'] };
+  const ON = { ...CONFIG, repo: 'o/r', watch: { check_deploy: true }, overlays: { products: 'content/seo/products' } };
+  const seedOverlay = (title) => {
+    mkdirSync(join(dir, 'content/seo/products'), { recursive: true });
+    writeFileSync(join(dir, 'content/seo/products/nachteule.md'), `---\nmeta_title: ${title}\n---\n`);
+  };
+  // Day of October 2026 at noon UTC, as the watcher's clock.
+  const at = (day) => Date.parse(`2026-10-${String(day).padStart(2, '0')}T12:00:00Z`);
+  // The GitHub call is the only mock besides the page fetch.
+  const prs = (...list) => vi.fn(async () => list);
+  // fetchPage answers by URL: { status, html }.
+  const pages = (answers) => async (u, { method }) => {
+    const a = answers[u];
+    if (a instanceof Error) throw a;
+    return { status: a.status, html: method === 'GET' ? (a.html ?? '') : '' };
+  };
+  const check = (day, extra) => go(`2026-10-${String(day).padStart(2, '0')}`, { config: ON, now: at(day), ...extra });
+
+  it('does nothing without watch.check_deploy', async () => {
+    const listPRs = vi.fn();
+    await go('2026-10-08', { listPRs });
+    expect(listPRs).not.toHaveBeenCalled();
+  });
+
+  it('asks GitHub for seo PRs of the configured repo from 14 days back', async () => {
+    const listPRs = prs();
+    await check(8, { listPRs, fetchPage: pages({}) });
+    expect(listPRs).toHaveBeenCalledWith('o/r', new Date(at(8) - 14 * 86400000).toISOString());
+  });
+
+  it('opens not_deployed for a merged page that is 404 on two days in a row, and not before', async () => {
+    const extra = { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 404 } }) };
+    expect((await check(8, extra)).alerts.opened).toEqual([]);
+    const second = await check(9, extra);
+    expect(second.status).toBe('alert');
+    expect(second.alerts.opened.map(a => a.id)).toEqual(['not_deployed:neu']);
+  });
+
+  it('resolves the alert once the page answers', async () => {
+    const down = { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 404 } }) };
+    await check(8, down);
+    await check(9, down);
+    const report = await check(10, { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 200 } }) });
+    expect(report.status).toBe('resolved');
+    expect(alertsFile().open).toEqual([]);
+  });
+
+  it('skips a PR merged less than 24 hours ago', async () => {
+    const fresh = { ...NEW_PR, mergedAt: new Date(at(8) - 23 * 3600000).toISOString() };
+    const old = { ...NEW_PR, files: ['content/de/alt.md'], mergedAt: new Date(at(8) - 25 * 3600000).toISOString() };
+    const fetchPage = vi.fn(async () => ({ status: 200, html: '' }));
+    await check(8, { listPRs: prs(fresh, old), fetchPage });
+    expect(fetchPage.mock.calls.map(c => c[0])).toEqual([url('alt')]);
+  });
+
+  it('maps a landing file to its page URL and an overlay file to its overlay URL, and ignores other files', async () => {
+    seedOverlay('titel');
+    const other = { ...NEW_PR, number: 3, files: ['README.md', 'content/de/sub/x.md', 'content/en/neu-en.md'] };
+    const rewrite = { ...NEW_PR, number: 4, headRef: 'seo/improve/preise', files: ['content/de/preise.md'] };
+    const fetchPage = vi.fn(async () => ({ status: 200, html: '<title>titel</title>' }));
+    await check(8, { listPRs: prs(NEW_PR, OVERLAY_PR, other, rewrite), fetchPage });
+    expect(fetchPage.mock.calls.map(c => [c[0], c[1].method])).toEqual([
+      [url('neu'), 'HEAD'],
+      ['https://a.de/shop/nachteule', 'GET'],
+    ]);
+  });
+
+  it('counts a server error as undecided, not as not deployed', async () => {
+    const extra = { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 503 } }) };
+    await check(8, extra);
+    expect((await check(9, extra)).alerts.opened).toEqual([]);
+  });
+
+  it('turns a failing fetch into a warning', async () => {
+    const report = await check(8, { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: new Error('timeout') }) });
+    expect(report.warnings).toContain(`Deploy check of ${url('neu')} failed: timeout`);
+    expect(report.errors).toEqual([]);
+  });
+
+  it('turns a GitHub error into a warning and leaves open alerts as they are', async () => {
+    const down = { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 404 } }) };
+    await check(8, down);
+    await check(9, down);
+    const report = await check(10, { listPRs: vi.fn(async () => { throw new Error('GitHub 502'); }), fetchPage: pages({}) });
+    expect(report.warnings).toContain('Deploy check failed: GitHub 502');
+    expect(report.status).toBe('watch_ok');
+    expect(alertsFile().open.map(a => a.id)).toEqual(['not_deployed:neu']);
+  });
+
+  it('compares an overlay with the live title, entities decoded and the brand suffix ignored', async () => {
+    seedOverlay('"nachteule" & shirt');
+    const extra = { listPRs: prs(OVERLAY_PR), fetchPage: pages({ 'https://a.de/shop/nachteule': { status: 200, html: '<title>&quot;nachteule&quot; &amp; shirt . punkt und pause</title>' } }) };
+    await check(8, extra);
+    expect((await check(9, extra)).alerts.opened).toEqual([]);
+  });
+
+  it('opens not_deployed for an overlay whose live title still has the old text', async () => {
+    seedOverlay('neuer titel');
+    const extra = { listPRs: prs(OVERLAY_PR), fetchPage: pages({ 'https://a.de/shop/nachteule': { status: 200, html: '<title>alter titel . punkt und pause</title>' } }) };
+    await check(8, extra);
+    const report = await check(9, extra);
+    expect(report.alerts.opened.map(a => a.id)).toEqual(['not_deployed:product:nachteule']);
+  });
+
+  it('skips an overlay whose file is not on disk', async () => {
+    const fetchPage = vi.fn();
+    await check(8, { listPRs: prs(OVERLAY_PR), fetchPage });
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+});

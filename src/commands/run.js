@@ -9,7 +9,8 @@ import {
   loadKeywords, saveKeywords, getPending, newPagesThisMonth, KEYWORD_STATUS, releasePending,
   loadSitemapPending, saveSitemapPending,
 } from '../lib/keywords.js';
-import { loadImprovements, saveImprovements } from '../lib/improvements.js';
+import { loadImprovements, saveImprovements, parseOverlayKey } from '../lib/improvements.js';
+import { overlayUrl } from '../lib/measure.js';
 import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/changes.js';
 import { getPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
@@ -21,6 +22,7 @@ import { generatePage } from '../steps/generate.js';
 import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { validate } from '../steps/validate.js';
+import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { prepareImprove, publishImprove } from './improve.js';
 import { createPRs } from '../steps/pr.js';
@@ -80,7 +82,7 @@ async function generateCounterpartPage(kw, sourceMarkdown, config, cwd, dryRun, 
 // Generates the default-locale page for `kw`, then (when config.counterpart_locale
 // is set) its reciprocal counterpart page. Returns an array of 0-2 page objects
 // ({ keyword, slug, score, type, locale, filePath, markdown }).
-async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys) {
+async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys, catalog) {
   const localeLandingPathStr = getLocaleLandingPath(config, locale);
   const localeConfig = { ...config, locale, landing_path: localeLandingPathStr };
   const label = (config.locales?.length ?? 1) > 1 ? ` [${locale}]` : '';
@@ -99,10 +101,11 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   let markdown;
   let valid = false;
   let lastResult;
+  const validateOpts = contractOptions(localeConfig, catalog, cwd, locale);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
-    markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null);
-    lastResult = validate(markdown, kw);
+    markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null, { catalog });
+    lastResult = validate(markdown, kw, validateOpts);
     if (lastResult.ok) { valid = true; break; }
   }
 
@@ -132,7 +135,7 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
       return [];
     }
     if (reviewed !== markdown) {
-      const afterFix = validate(reviewed, kw);
+      const afterFix = validate(reviewed, kw, validateOpts);
       if (afterFix.ok) {
         markdown = reviewed;
       } else {
@@ -242,6 +245,9 @@ function newPageEntry(kw, mergedAt, config) {
 // The counterpart is named by the page's `alternate:` field, which is only on disk after the merge was pulled.
 function rewriteEntry(item, mergedAt, config, cwd) {
   const base = baseUrlOf(config);
+  if (parseOverlayKey(item.slug)) {
+    return ledgerEntry({ kind: 'rewrite', slug: item.slug, urls: [overlayUrl(config, item.slug)], prUrl: item.pr_url, mergedAt });
+  }
   const urls = [base + localeUrlPath(config, item.slug, getDefaultLocale(config))];
   try {
     const file = join(cwd, getLocaleLandingPath(config, getDefaultLocale(config)), `${item.slug}.md`);
@@ -415,14 +421,27 @@ export async function runCommand(opts) {
       report.warnings.push(`Assessment failed: ${e.message}`);
     }
 
+    // 1d. Product catalog (fact source of a page contract). While the shop is unreachable
+    // (maintenance during a deploy) no new page is discovered or generated.
+    let catalog = null;
+    let catalogDown = false;
+    try {
+      catalog = await loadCatalog(config);
+    } catch (e) {
+      catalogDown = true;
+      const warning = `${e.message}. Skipping discover and generate this run`;
+      console.log(chalk.yellow(`\n${warning}`));
+      report.warnings.push(warning);
+    }
+
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
     const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));
     const remaining = Math.max(0, config.max_new_pages_per_month - newPagesUsed);
-    keywordsData = remaining === 0 ? loadKeywords(cwd) : await discover(config, cwd);
+    keywordsData = remaining === 0 || catalogDown ? loadKeywords(cwd) : await discover(config, cwd, { catalog });
 
     // 3. Generate
     const pending = getPending(keywordsData, config.score_cutoff);
-    const toGenerate = pending.slice(0, Math.min(config.weekly_cap, remaining));
+    const toGenerate = catalogDown ? [] : pending.slice(0, Math.min(config.weekly_cap, remaining));
     if (remaining < Math.min(config.weekly_cap, pending.length)) {
       const waiting = pending.length - toGenerate.length;
       const warning = `Monthly new-page cap reached (${newPagesUsed} of ${config.max_new_pages_per_month}), ${waiting} keyword(s) wait for next month`;
@@ -437,7 +456,7 @@ export async function runCommand(opts) {
       // week is better spent on the pages that already rank and get no clicks
       // than on a keyword invented to fill the slot.
       console.log(chalk.gray('\nNo keywords to generate — switching to improving an existing page.'));
-      if (!dryRun) prepared = await prepareImprove({ config, dryRun }, cwd);
+      if (!dryRun) prepared = await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd);
     } else {
       console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
 
@@ -448,7 +467,7 @@ export async function runCommand(opts) {
       for (const kw of toGenerate) {
         for (const locale of locales) {
           tasks.push(limit(async () => {
-            const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic);
+            const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic, catalog);
             for (const page of pages) {
               generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
               generatedPages.push(page);

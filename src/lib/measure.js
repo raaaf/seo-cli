@@ -1,4 +1,5 @@
 import { defaultLocale } from './config.js';
+import { overlayKey, parseOverlayKey } from './improvements.js';
 
 // Pure rules of the measurement: windows, URL mapping, control group, verdict.
 // No I/O, GSC access lives in steps/measure.js.
@@ -38,7 +39,26 @@ export function isDue(window, today) {
 }
 
 export function normalizeUrl(url) {
-  return String(url || '').replace(/[?#].*$/, '').replace(/\/+$/, '');
+  const raw = String(url || '');
+  // The one query string that names a page: a shop category (/shop?category=<key>).
+  const category = raw.match(/\/shop\/?\?(?:[^#]*&)?category=([^&#]+)/)?.[1];
+  const clean = raw.replace(/[?#].*$/, '').replace(/\/+$/, '');
+  return category ? `${clean}?category=${category}` : clean;
+}
+
+/** Public URL of an overlay key, on `base_url`. */
+export function overlayUrl(config, key) {
+  const { type, id } = parseOverlayKey(key);
+  const base = String(config.base_url || '').replace(/\/+$/, '');
+  return type === 'product' ? `${base}/shop/${id}` : `${base}/shop?category=${id}`;
+}
+
+// Overlay key of a site path, only for the kinds the project configured.
+function pathToOverlayKey(path, overlays) {
+  const product = overlays.products && path.match(/^\/shop\/([^/?]+)$/);
+  if (product) return overlayKey('product', product[1]);
+  const category = overlays.categories && path.match(/^\/shop\?category=([^&]+)$/);
+  return category ? overlayKey('category', category[1]) : null;
 }
 
 /**
@@ -52,6 +72,8 @@ export function urlToSlug(url, config, slugsByLocale) {
   if (!base || !clean.startsWith(`${base}/`)) return null;
   const path = clean.slice(base.length);
   const def = defaultLocale(config);
+  const overlay = config.overlays ? pathToOverlayKey(path, config.overlays) : null;
+  if (overlay) return { slug: overlay, locale: def, overlay: true };
   const counterpart = config.counterpart_locale && config.counterpart_locale !== def ? config.counterpart_locale : null;
   const prefix = config.counterpart_url_prefix || '';
 

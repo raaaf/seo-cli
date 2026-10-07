@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validate, findTransliteratedUmlauts } from '../src/steps/validate.js';
+import { makeCatalog } from './helpers/catalog.js';
 import { TLDR_50, FAQ_BLOCK, makeBody, makeValidPage as makeValid } from './helpers/valid-page.js';
 
 const KW = { keyword: 'Webdesign Berlin', expected_entities: [] };
@@ -269,5 +270,125 @@ describe('transliterated umlauts', () => {
 
   it('reports each offender once', () => {
     expect(findTransliteratedUmlauts('fuer und fuer und FUER')).toEqual(['fuer']);
+  });
+});
+
+describe('validate-page: page contract', () => {
+  const CONTRACT = {
+    body_words: [300, 600],
+    require: ['products'],
+    forbid: ['steps', 'checklist'],
+    products: { min: 3, max: 8, max_overlap: 0.6 },
+    lowercase: true,
+    meta_title_suffix: ' . punkt und pause',
+    facts_denylist: ['\\d+([,.]\\d+)?\\s*(€|eur|euro)', '\\d+\\s*(bis|-)?\\s*\\d*\\s*(werktage|tage|wochen)', '(bio|organic|nachhaltig\\w*)'],
+  };
+  const catalog = makeCatalog();
+  const filler = 'moderne shirts brauchen klare motive und gute passform fuer jeden tag im alltag. ';
+  const body = (words = 400) => filler.repeat(Math.ceil(words / 13)).split(' ').slice(0, words).join(' ') + ' 10 20 30 40 50';
+
+  // The shared FAQ fixture names prices, which the denylist rightly rejects.
+  const FAQ_PLAIN = `faq:
+  - q: passt die groesse?
+    a: die shirts fallen normal aus.
+  - q: wie wasche ich sie?
+    a: bei dreissig grad im schonwaschgang.
+  - q: kann ich tauschen?
+    a: ja, schreib uns einfach kurz.`;
+
+  // A lowercase page that satisfies CONTRACT; `fm` adds frontmatter lines, `from`/`to` patch the markdown.
+  function page({ products = ['tanz-mit-mir', 'nachteule', 'kaffee-first'], fm = '', bodyText = body(), title = 'geschenke fuer nachteulen und kaffeefans' } = {}) {
+    const list = products === null ? '' : `products: [${products.join(', ')}]\n`;
+    return makeValid({ body: bodyText, tldr: TLDR_50.toLowerCase() })
+      .toLowerCase()
+      .replace(/^meta_title: .*$/m, `meta_title: ${title}`)
+      .replace(/faq:[\s\S]*?(?=\n---)/, FAQ_PLAIN)
+      .replace('hero:', `${list}${fm}hero:`);
+  }
+  const run = (md, extra = {}) => validate(md, KW, { contract: CONTRACT, catalog, ...extra });
+
+  it('passes a page that satisfies the contract', () => {
+    const { ok, errors } = run(page());
+    expect(errors).toEqual([]);
+    expect(ok).toBe(true);
+  });
+
+  it('uses the contract word range instead of 800 to 1400', () => {
+    expect(run(page({ bodyText: body(200) })).errors.some(e => /Body too short: \d+ words \(min 300\)/.test(e))).toBe(true);
+    expect(run(page({ bodyText: body(700) })).errors.some(e => /Body too long: \d+ words \(max 600\)/.test(e))).toBe(true);
+  });
+
+  it('requires the configured fields', () => {
+    expect(run(page({ products: null })).errors).toContain('Missing frontmatter field: products');
+  });
+
+  it('rejects forbidden fields', () => {
+    const { errors } = run(page({ fm: 'steps: [a]\n' }));
+    expect(errors).toContain('Forbidden frontmatter field (page contract): steps');
+  });
+
+  it('enforces the product count range', () => {
+    expect(run(page({ products: ['nachteule', 'sonntag'] })).errors.some(e => e.startsWith('Too few products: 2'))).toBe(true);
+    const nine = Array.from({ length: 9 }, (_, i) => `p${i}`);
+    expect(validate(page({ products: nine }), KW, { contract: CONTRACT }).errors.some(e => e.startsWith('Too many products: 9'))).toBe(true);
+  });
+
+  it('rejects product slugs missing from the catalog', () => {
+    const { errors } = run(page({ products: ['nachteule', 'sonntag', 'gibt-es-nicht'] }));
+    expect(errors).toContain('Products not in the catalog: gibt-es-nicht');
+  });
+
+  it('rejects too much product overlap with an existing page', () => {
+    const existingPages = [{ slug: 'andere-seite', products: ['tanz-mit-mir', 'nachteule', 'kaffee-first'] }];
+    expect(run(page(), { existingPages }).errors.some(e => e.startsWith('Product overlap with "andere-seite"'))).toBe(true);
+  });
+
+  it('accepts overlap within the limit and ignores the page itself', () => {
+    const within = [{ slug: 'andere-seite', products: ['tanz-mit-mir', 'regenbogen'] }];
+    expect(run(page(), { existingPages: within }).ok).toBe(true);
+    const itself = [{ slug: 'webdesign-berlin', products: ['tanz-mit-mir', 'nachteule', 'kaffee-first'] }];
+    expect(run(page(), { existingPages: itself }).ok).toBe(true);
+  });
+
+  it('rejects uppercase letters and names the fields', () => {
+    const md = page().replace('geschenke fuer nachteulen', 'Geschenke fuer nachteulen').replace('moderne shirts', 'Moderne shirts');
+    const { errors } = run(md);
+    const msg = errors.find(e => e.startsWith('Uppercase letters'));
+    expect(msg).toContain('meta_title');
+  });
+
+  it('checks body headings for lowercase', () => {
+    const { errors } = run(page({ bodyText: `## ein titel\n\n${body()}` }).replace('## ein titel', '## Ein Titel'));
+    expect(errors.find(e => e.startsWith('Uppercase letters'))).toContain('heading 1');
+  });
+
+  it('lowers the meta_title limit by the brand suffix', () => {
+    const title = 'geschenke fuer nachteulen und kaffeefans heute'; // 46 chars, fine without suffix
+    expect(run(page({ title: title + 'xx' })).errors.some(e => /meta_title too long \(48 chars, max 47\)/.test(e))).toBe(true);
+    expect(run(page({ title })).errors).toEqual([]);
+  });
+
+  it('fails a claim the catalog does not back', () => {
+    const { errors } = run(page({ bodyText: `${body()} kostet nur 19,99 euro.` }));
+    expect(errors.some(e => e.startsWith('Claim not backed by the catalog') && e.includes('19,99 eur'))).toBe(true);
+  });
+
+  it('allows a denylisted phrase that stands word for word in the catalog', () => {
+    expect(run(page({ bodyText: `${body()} die lieferung dauert 5 bis 10 werktage.` })).errors).toEqual([]);
+  });
+
+  it('reports an invalid denylist pattern instead of crashing', () => {
+    const { errors } = validate(page(), KW, { contract: { facts_denylist: ['('] } });
+    expect(errors).toContain('Invalid facts_denylist pattern: (');
+  });
+
+  it('rejects a reserved slug', () => {
+    const md = page().replace('slug: webdesign-berlin', 'slug: admin');
+    expect(run(md, { reservedSlugs: ['admin', 'up'] }).errors).toContain('Slug "admin" is a reserved path of the site');
+  });
+
+  it('applies no contract rules without a contract', () => {
+    const { errors } = validate(makeValid().replace('hero:', 'steps: [a]\nhero:'), KW);
+    expect(errors).toEqual([]);
   });
 });

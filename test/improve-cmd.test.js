@@ -41,6 +41,8 @@ vi.mock('../src/lib/github.js', () => ({
   openPR: (...a) => openPR(...a),
   deleteBranch: (...a) => deleteBranch(...a),
 }));
+const prepareOverlay = vi.fn();
+vi.mock('../src/steps/overlay.js', () => ({ prepareOverlay: (...a) => prepareOverlay(...a) }));
 vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
@@ -59,7 +61,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-improve-cmd-'));
   cwd = process.cwd();
   process.chdir(dir);
-  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, deleteBranch, reviewPage, complete, commitState]) fn.mockReset();
+  for (const fn of [prepareOverlay, fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, deleteBranch, reviewPage, complete, commitState]) fn.mockReset();
   reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   fetchPagePerformance.mockResolvedValue([]);
   selectPage.mockReturnValue({ ...PAGE });
@@ -161,6 +163,44 @@ describe('improveCommand', () => {
       await expect(improveCommand({ config: CONFIG })).rejects.toThrow('GitHub 500');
       expect(loadImprovements(dir).entries).toEqual([]);
       expect(deleteBranch).toHaveBeenCalledWith({ repo: 'o/demo', branch: 'seo/improve/preise' });
+    });
+  });
+
+  describe('overlay fallback', () => {
+    const OVERLAY_CONFIG = { ...CONFIG, overlays: { products: 'content/seo/products' } };
+    const OVERLAY_PREPARED = {
+      slug: 'product:nachteule', branch: 'seo/improve/product-nachteule', files: [{ path: 'content/seo/products/nachteule.md', content: 'x' }],
+      record: { slug: 'product:nachteule', queries: [] }, commitMessage: 'm', prTitle: 't', prBody: 'b',
+    };
+
+    it('hands the slot to an overlay when no landing page qualifies and overlays are configured', async () => {
+      selectPage.mockReturnValue(null);
+      prepareOverlay.mockResolvedValue(OVERLAY_PREPARED);
+
+      const prepared = await prepareImprove({ config: OVERLAY_CONFIG });
+
+      expect(prepared).toBe(OVERLAY_PREPARED);
+      expect(prepareOverlay).toHaveBeenCalledWith(expect.objectContaining({ config: OVERLAY_CONFIG, dryRun: false }));
+    });
+
+    it('leaves the slot empty without the overlays key, and when the caller skips overlays', async () => {
+      selectPage.mockReturnValue(null);
+      expect(await prepareImprove({ config: CONFIG })).toBeNull();
+      expect(await prepareImprove({ config: OVERLAY_CONFIG, skipOverlays: true })).toBeNull();
+      expect(prepareOverlay).not.toHaveBeenCalled();
+    });
+
+    it('prefers the landing page rewrite over an overlay', async () => {
+      await prepareImprove({ config: OVERLAY_CONFIG });
+      expect(prepareOverlay).not.toHaveBeenCalled();
+    });
+
+    it('opens the overlay PR on its own branch and records the namespaced key', async () => {
+      await publishImprove(OVERLAY_PREPARED, { config: CONFIG });
+
+      expect(createBranchAndCommit).toHaveBeenCalledWith(expect.objectContaining({ branch: 'seo/improve/product-nachteule' }));
+      expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ branch: 'seo/improve/product-nachteule' }));
+      expect(loadImprovements(dir).entries[0]).toMatchObject({ slug: 'product:nachteule', pr_url: 'https://github.com/o/demo/pull/9' });
     });
   });
 

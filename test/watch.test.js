@@ -177,3 +177,62 @@ describe('watch: blind counter', () => {
     expect(failed.resolved).toEqual([]);
   });
 });
+
+describe('watch: not_deployed alert', () => {
+  const live = (ok, key = 'page', url = 'https://a.de/page') => [{ key, url, ok }];
+  const day = (state, liveChecks, today) => run(state, { liveChecks }, today);
+
+  it('opens only on the second consecutive day a page is missing live', () => {
+    const day1 = day(emptyAlerts(), live(false), '2026-10-07');
+    expect(day1.opened).toEqual([]);
+    expect(day1.state.deploy_pending).toEqual({ page: { count: 1, date: '2026-10-07' } });
+    const day2 = day(day1.state, live(false), '2026-10-08');
+    expect(day2.opened).toMatchObject([{ id: 'not_deployed:page', kind: 'not_deployed', detail: 'https://a.de/page' }]);
+    expect(day2.state.deploy_pending).toBeUndefined();
+  });
+
+  it('counts a day only once and restarts after a gap or a live day', () => {
+    const a = day(emptyAlerts(), live(false), '2026-10-07');
+    expect(day(a.state, live(false), '2026-10-07').opened).toEqual([]);
+    expect(day(a.state, live(false), '2026-10-09').opened).toEqual([]);
+    const fixed = day(a.state, live(true), '2026-10-08');
+    expect(fixed.state.deploy_pending).toBeUndefined();
+    expect(day(fixed.state, live(false), '2026-10-09').opened).toEqual([]);
+  });
+
+  it('does not reopen an open alert and resolves it when the page is live', () => {
+    const open = day(day(emptyAlerts(), live(false), '2026-10-07').state, live(false), '2026-10-08').state;
+    expect(day(open, live(false), '2026-10-09').opened).toEqual([]);
+    const fixed = day(open, live(true), '2026-10-09');
+    expect(fixed.resolved.map(a => a.id)).toEqual(['not_deployed:page']);
+    expect(fixed.state.open).toEqual([]);
+  });
+
+  it('lets an undecided check change nothing', () => {
+    const pending = day(emptyAlerts(), live(false), '2026-10-07').state;
+    const unknown = day(pending, live(null), '2026-10-08');
+    expect(unknown.opened).toEqual([]);
+    expect(unknown.state.deploy_pending).toEqual(pending.deploy_pending);
+    const open = day(pending, live(false), '2026-10-08').state;
+    expect(day(open, live(null), '2026-10-09').resolved).toEqual([]);
+  });
+
+  it('resolves an alert whose page left the check window, with a reason, and drops stale pending state', () => {
+    const open = day(day(emptyAlerts(), live(false), '2026-10-07').state, live(false), '2026-10-08').state;
+    const gone = day(open, [], '2026-10-09');
+    expect(gone.resolved).toMatchObject([{ id: 'not_deployed:page', reason: 'no_longer_checked' }]);
+    const pending = day(emptyAlerts(), live(false), '2026-10-07').state;
+    expect(day(pending, [], '2026-10-08').state.deploy_pending).toBeUndefined();
+  });
+
+  it('keeps alerts and pending state as they are when deploy checks are off', () => {
+    const open = day(day(emptyAlerts(), live(false), '2026-10-07').state, live(false), '2026-10-08').state;
+    const off = day(open, null, '2026-10-09');
+    expect(off.state.open.map(a => a.id)).toEqual(['not_deployed:page']);
+    expect(off.resolved).toEqual([]);
+  });
+
+  it('adds no state key without deploy checks', () => {
+    expect(run(emptyAlerts(), {}).state).toEqual(emptyAlerts());
+  });
+});
