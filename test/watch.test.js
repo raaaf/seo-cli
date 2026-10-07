@@ -58,6 +58,47 @@ describe('watch: deindex alert', () => {
   });
 });
 
+describe('watch: site not indexed alert', () => {
+  const urls = (n, indexed, state = GONE) => Array.from({ length: n }, (_, i) => IDX(`u${i}`, i < indexed ? OK : state));
+
+  it('opens on the first snapshot of a site with no indexed URL', () => {
+    const first = run(emptyAlerts(), { entries: urls(14, 0) });
+    expect(first.opened).toMatchObject([{ id: 'site_not_indexed', kind: 'site_not_indexed', detail: { indexed: 0, total: 14 } }]);
+  });
+
+  it('is not considered below 5 judged URLs', () => {
+    expect(run(emptyAlerts(), { entries: urls(4, 0) }).opened).toEqual([]);
+  });
+
+  it('does not reopen the next day', () => {
+    const day1 = run(emptyAlerts(), { entries: urls(14, 0) });
+    const day2 = run(day1.state, { entries: urls(14, 0) }, '2026-10-08');
+    expect(day2.opened).toEqual([]);
+    expect(day2.state.open).toHaveLength(1);
+  });
+
+  it('stays open between 20 and 50 percent and resolves from 50 percent', () => {
+    const open = run(emptyAlerts(), { entries: urls(10, 0) }).state;
+    const mid = run(open, { entries: urls(10, 3) }, '2026-10-08');
+    expect(mid.resolved).toEqual([]);
+    expect(mid.state.open).toHaveLength(1);
+
+    const back = run(mid.state, { entries: urls(10, 6) }, '2026-10-09');
+    expect(back.resolved.map(a => a.id)).toEqual(['site_not_indexed']);
+    expect(back.state.open).toEqual([]);
+  });
+
+  it('stays closed between 20 and 50 percent', () => {
+    expect(run(emptyAlerts(), { entries: urls(10, 3) }).opened).toEqual([]);
+  });
+
+  it('leaves unknown entries out of the count', () => {
+    const entries = [...urls(4, 0), IDX('q1', 'unknown'), IDX('q2', 'unknown')];
+    expect(run(emptyAlerts(), { entries }).opened).toEqual([]);
+    expect(run(emptyAlerts(), { entries: [...entries, IDX('x', GONE)] }).opened).toMatchObject([{ detail: { indexed: 0, total: 5 } }]);
+  });
+});
+
 describe('watch: sitemap removal', () => {
   it('prunes known_indexed to the current sitemap and resolves a deindex alert of a removed URL with its reason', () => {
     const open = run(run(emptyAlerts(), { entries: [IDX('a', OK), IDX('b', OK)] }).state, { entries: [IDX('a', GONE), IDX('b', OK)] }, '2026-10-08').state;

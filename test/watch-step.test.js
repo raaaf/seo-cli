@@ -71,6 +71,14 @@ describe('watch-step', () => {
     expect(second.alerts).toEqual({ opened: [], resolved: [] });
   });
 
+  it('lists a site that is not indexed at all in alerts.opened on the first run', async () => {
+    nextIndex.entries = ['a', 'b', 'c', 'd', 'e'].map(slug => entry(slug, GONE));
+
+    const report = await go('2026-10-07');
+    expect(report.status).toBe('alert');
+    expect(report.alerts.opened.map(a => a.id)).toEqual(['site_not_indexed']);
+  });
+
   it('reports resolved when the page is indexed again', async () => {
     await go('2026-10-07');
     nextIndex.entries = [entry('page', GONE)];
