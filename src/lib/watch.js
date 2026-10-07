@@ -16,6 +16,10 @@ const OPEN_AFTER_DAYS = 2;
 const BLIND_AFTER_FAILURES = 2;
 // GSC data lags by about three days.
 const GSC_LAG_DAYS = 3;
+// Site level: judged only with enough verdicts, opens below 20 percent indexed, resolves from 50 percent.
+const SITE_MIN_URLS = 5;
+const SITE_OPEN_BELOW = 0.2;
+const SITE_RESOLVE_FROM = 0.5;
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
@@ -89,6 +93,15 @@ export function evaluateWatch(state, { today, entries, traffic }) {
     for (const url of dropped) open(`deindexed:${url}`, 'deindexed', url);
     for (const alert of next.open.filter(a => a.kind === 'deindexed' && !dropped.includes(a.detail))) {
       close(alert.id, inSitemap.has(alert.detail) ? undefined : 'removed_from_sitemap');
+    }
+
+    // Independent of known_indexed: a site that was never indexed has nothing to lose per URL.
+    const judged = entries.filter(e => e.coverageState !== 'unknown');
+    if (judged.length >= SITE_MIN_URLS) {
+      const indexed = judged.filter(e => isIndexed(e.coverageState)).length;
+      const share = indexed / judged.length;
+      if (share < SITE_OPEN_BELOW) open('site_not_indexed', 'site_not_indexed', { indexed, total: judged.length });
+      else if (share >= SITE_RESOLVE_FROM) close('site_not_indexed');
     }
   }
 
