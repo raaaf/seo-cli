@@ -203,6 +203,7 @@ The machine state goes straight to `main` (commit message `seo: state (<reason>)
 | `seo/keywords.json` | Keyword backlog and status | state commit to `main` |
 | `seo/sitemap-pending.json` | Slugs queued for sitemap submission, added when a keyword's PR is merged | state commit to `main` |
 | `seo/improvements.json` | Which page was rewritten when, the queries behind it, its PR url and merge date | state commit to `main` |
+| `seo/changes.json` | Change ledger: every merged seo PR (new page or rewrite) with its merge date, baseline and the 28 and 56 day readings | state commit to `main` |
 | `seo/index-status.json` | Last week's Google index coverage per sitemap URL | state commit to `main` |
 | `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage (`subscription: { calls, usd_equivalent }`) of the current month | state commit to `main` |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
@@ -226,9 +227,21 @@ Every keyword is its own PR on `seo/new/<slug>` (all locale files and the counte
 
 A rewrite's cooldown entry is only written once its PR exists. A closed rewrite PR removes the entry, a merged one keeps it.
 
+### Measurement
+
+Every merged seo PR becomes an entry in `seo/changes.json` (`id` = PR url, `kind` `new` or `rewrite`, `urls` including a rewrite's counterpart). Only a real merge date from GitHub creates an entry; merged PRs from the last 90 days that have none yet are added retroactively, and a PR that cannot be read is retried on the next run. `seo run` then computes every due reading right after the reconcile (GSC queries only, no LLM, nothing is written on `--dry-run`).
+
+- Windows (merge = merge date): baseline `merge-28` to `merge-1`, reading `d28` `merge+8` to `merge+35`, reading `d56` `merge+36` to `merge+63`. A reading is due once its window ended 3 days ago (GSC lag).
+- Metrics per landing page: clicks, impressions, CTR, impression-weighted position. Only known landing pages count (homepage, pricing, blog are ignored); the counterpart prefix is stripped.
+- New pages get their absolute values, no verdict (there is no before).
+- Rewrites get a verdict `positive | neutral | negative | insufficient_data` against unchanged pages of the same language (no entry merged in `merge-28` to `merge+63`, counterparts included). Controls are pages between half and double the target's baseline impressions; with fewer than 12 of those, every page with at least 50. Per page `r = (after + 1) / (before + 1)` on clicks (target with at least 20 baseline clicks) or impressions. `positive` needs `r` above the controls' 90th percentile and at least 1.3 times their median, `negative` the mirror (10th percentile, at most 0.7 times).
+- `insufficient_data` carries a reason: `volume` (target under 100 impressions before or after), `control` (fewer than 12 controls), `dispersion` (90th over 10th percentile above 4, e.g. a Google update), `overlap` (another change to the same page inside baseline or reading window; clusters are not detected).
+- Two `negative` readings with an effect (`r` over the controls' median) of at most 0.7 in `d56` set `revert_candidate: true` and add a warning. Nothing is reverted automatically.
+- The verdict is a hint, not proof: `improve` picks pages with an outlier in the data, so part of any later movement is regression to the mean. Small sites will see many `insufficient_data`.
+
 ### Run report
 
-`seo run --report <path>` writes `{ status, prs: [{ url, kind: 'new'|'improve', slug }], budget, llm, warnings, errors }`. `llm` is `{ subscription_calls, api_calls, usd_equivalent, fallbacks: [{ model, kind, reason }] }`; a non-empty `fallbacks` and a `usd_equivalent` above 25 USD (roughly 1 percent of the weekly Max limit) each add a warning. `status` is `idle`, `prs_opened`, `failed` or `budget_exceeded` (exit code 0). The workflow gates every PR of the report and ends with a notify step that always runs and posts `{ repo, run_url, status, prs: [{ url, gate_status }], budget, llm, warnings, errors }` to `SEO_NOTIFY_WEBHOOK`. `--dry-run` skips the reconcile, the state commits and the PRs, and still writes the report.
+`seo run --report <path>` writes `{ status, prs: [{ url, kind: 'new'|'improve', slug }], measurement, budget, llm, warnings, errors }`. `measurement` is `{ entries, due, measured, verdicts, insufficient_by_reason, revert_candidates: [slug], changed: [{ slug, kind, reading, verdict }] }`: counts over the whole ledger and the readings computed in this run, not the ledger itself. `llm` is `{ subscription_calls, api_calls, usd_equivalent, fallbacks: [{ model, kind, reason }] }`; a non-empty `fallbacks` and a `usd_equivalent` above 25 USD (roughly 1 percent of the weekly Max limit) each add a warning. `status` is `idle`, `prs_opened`, `failed` or `budget_exceeded` (exit code 0). The workflow gates every PR of the report and ends with a notify step that always runs and posts `{ repo, run_url, status, prs: [{ url, gate_status }], budget, llm, warnings, errors }` to `SEO_NOTIFY_WEBHOOK`. `--dry-run` skips the reconcile, the state commits and the PRs, and still writes the report.
 
 ## Supported project types
 

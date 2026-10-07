@@ -5,10 +5,11 @@ import { KEYWORDS_FILE, SITEMAP_PENDING_FILE } from './keywords.js';
 import { IMPROVEMENTS_FILE } from './improvements.js';
 import { INDEX_STATUS_FILE } from './index-status.js';
 import { BUDGET_FILE } from './budget.js';
+import { CHANGES_FILE } from './changes.js';
 import { commitToBranch, getBlobShas } from './github.js';
 
 // Machine state that goes straight to main, never into a content PR.
-export const STATE_FILES = [KEYWORDS_FILE, SITEMAP_PENDING_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE];
+export const STATE_FILES = [KEYWORDS_FILE, SITEMAP_PENDING_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE];
 
 // Git object id of a file: sha1("blob <bytes>\0<content>").
 export function gitBlobSha(content) {

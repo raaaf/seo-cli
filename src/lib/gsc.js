@@ -149,24 +149,25 @@ export function buildRequestBody({ startDate, endDate, dimensions, rowLimit, pag
   return body;
 }
 
-async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit = 200, pageFilter = null } = {}) {
-  const cacheKey = JSON.stringify({ gscProperty, dimensions, days, lag, rowLimit, pageFilter });
-  if (gscCache.has(cacheKey)) return gscCache.get(cacheKey);
+async function fetchRows(gscProperty, requestBody) {
   const auth = await getAuth();
   const sc = google.searchconsole({ version: 'v1', auth });
-  const endDate = format(subDays(new Date(), lag));
-  const startDate = format(subDays(new Date(), lag + days));
-  let res;
   try {
-    res = await sc.searchanalytics.query({
-      siteUrl: gscProperty,
-      requestBody: buildRequestBody({ startDate, endDate, dimensions, rowLimit, pageFilter }),
-    });
+    const res = await sc.searchanalytics.query({ siteUrl: gscProperty, requestBody });
+    return res.data.rows || [];
   } catch (e) {
     rethrowWithAuthHint(e);
   }
-  gscCache.set(cacheKey, res.data.rows || []);
-  return gscCache.get(cacheKey);
+}
+
+async function gscQuery(gscProperty, dimensions, { days = 28, lag = 7, rowLimit = 200, pageFilter = null } = {}) {
+  const cacheKey = JSON.stringify({ gscProperty, dimensions, days, lag, rowLimit, pageFilter });
+  if (gscCache.has(cacheKey)) return gscCache.get(cacheKey);
+  const endDate = format(subDays(new Date(), lag));
+  const startDate = format(subDays(new Date(), lag + days));
+  const rows = await fetchRows(gscProperty, buildRequestBody({ startDate, endDate, dimensions, rowLimit, pageFilter }));
+  gscCache.set(cacheKey, rows);
+  return rows;
 }
 
 // The API's own ceiling per request. Page+query rows are what every ranking and
@@ -203,6 +204,21 @@ export async function queryPagePerformance(gscProperty, { days = 28, lag = 7, pa
   const rows = await gscQuery(gscProperty, ['page', 'query'], { days, lag, rowLimit: GSC_MAX_ROWS, pageFilter });
   warnIfTruncated(rows, 'page/query');
   return rows;
+}
+
+// Per-page totals for an absolute window. The relative cache above cannot serve
+// these: the measurement step asks for windows around a merge date, and the same
+// window comes back for several entries within one run.
+const windowCache = new Map();
+
+export async function queryPageTotals(gscProperty, { startDate, endDate, pageFilter = null }) {
+  const cacheKey = JSON.stringify({ gscProperty, startDate, endDate, pageFilter });
+  if (!windowCache.has(cacheKey)) {
+    const rows = await fetchRows(gscProperty, buildRequestBody({ startDate, endDate, dimensions: ['page'], rowLimit: GSC_MAX_ROWS, pageFilter }));
+    warnIfTruncated(rows, 'page');
+    windowCache.set(cacheKey, rows.map(r => ({ url: r.keys[0], clicks: r.clicks, impressions: r.impressions, position: r.position })));
+  }
+  return windowCache.get(cacheKey);
 }
 
 // (Re)submit a sitemap to Google Search Console. Needs the full webmasters scope

@@ -34,7 +34,7 @@ This is a personal CLI that automates SEO landing page creation. It runs in the 
 discover → generate → validate (up to 2 attempts) → fact-check → pr → track
 ```
 
-All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`: reconcile (keyword and improvement status against the real PR state via `getPR`), discover, generate, `commitState` to main, one PR per keyword plus the rewrite PR, track. A `finally` block releases keywords that never got a PR, commits state again and writes the report, so a failed run keeps its status changes and budget count.
+All steps live in `src/steps/`. Orchestration is in `src/commands/run.js`: reconcile (keyword and improvement status against the real PR state via `getPR`), measure, discover, generate, `commitState` to main, one PR per keyword plus the rewrite PR, track. A `finally` block releases keywords that never got a PR, commits state again and writes the report, so a failed run keeps its status changes and budget count.
 
 **discover** (`src/steps/discover.js`): Pulls the last 28 days of Search Console data (positions 8-25, filtered by `min_impressions`). Scores each candidate keyword via Claude + SerpAPI. Saves results to `seo/keywords.json` in the target project.
 
@@ -60,6 +60,8 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 
 **conversational** (`src/lib/conversational.js`, `src/commands/conversational.js`): A reading instrument, not a pipeline step. Google folds AI Mode and AI Overview activity into the ordinary web search type and counts every follow-up turn as its own query, so conversation fragments, full natural-language prompts and AI-visibility-tracker probes land in the query table. The classifier is deterministic pattern matching into `artefact`, `tracker_probe`, `conversational` and `keyword`. Deliberately not wired into `discover`: making it an input is a separate decision.
 
+**measure** (`src/steps/measure.js`, pure rules in `src/lib/measure.js`, ledger in `src/lib/changes.js`): runs right after the reconcile. `reconcileState` adds a `seo/changes.json` entry per merged PR (only with a real `mergedAt`; a separate backfill pass covers merged PRs of the last 90 days without an entry and retries unreadable ones). Each due reading (`d28` = merge+8..+35, `d56` = merge+36..+63, baseline merge-28..-1, due 3 days after the window ends) costs up to three `queryPageTotals` calls, no LLM. New pages get absolute values; rewrites a verdict against control pages (same language, no ledger entry merged in merge-28..merge+63), strict rules: 90th/10th percentile of `r` plus 1.3x/0.7x the median, at least 12 controls, `insufficient_data` reasons `volume`/`control`/`dispersion`/`overlap`. Two negative readings with effect <= 0.7 set `revert_candidate` and warn (acting on it is Etappe C). A window without any landing page impressions is an error: warning, nothing saved. Errors never stop the run, `--dry-run` writes nothing. Result in `report.measurement` (counts and this run's changes only).
+
 **track** (`src/steps/track.js`): Appends GSC page/query performance to `seo/rankings/YYYY-WW.csv`. Gitignored in target projects.
 
 ### Key lib files
@@ -71,6 +73,7 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 | `src/lib/gsc.js` | Google Search Console via `googleapis`. Supports both service account and OAuth2 desktop app. Token cached at `~/.seo-cli-token.json`. Queries ask for the API ceiling of 25000 rows and warn when a response comes back at exactly that size: the old 500-row cap truncated silently and every aggregate built on it was a biased sample. |
 | `src/lib/serpapi.js` | SerpAPI wrapper. Searches are counted in `seo/budget.json` (per project and month, limit `budget.serpapi_per_month`, default 60); once per process the free `account.json` is read and its `total_searches_left` caps the remainder. |
 | `src/lib/budget.js` | `seo/budget.json`: SerpAPI count and Anthropic API spend per month plus `subscription: { calls, usd_equivalent }` (`addSubscriptionUsage`, never checked against a limit), limits from `budget:` in the config, `assertBudget` throws `BudgetExceededError` (run ends `budget_exceeded`, exit 0). |
+| `src/lib/changes.js` / `src/lib/measure.js` | Change ledger load/save/`upsertEntry` (a corrupt file throws, never reads as empty) and the pure measurement rules (windows, URL-to-slug, control selection, verdict, overlap, revert candidate). |
 | `src/lib/state.js` | `STATE_FILES` and `commitState({ cwd, repo, reason })`: commits the state files that differ from `main` (Git blob SHA comparison) to `main` with `[skip ci]`, no commit when nothing differs. |
 | `src/lib/keywords.js` | Load/save/upsert `seo/keywords.json`. Defines `KEYWORD_STATUS` enum, `SLUG_REGEX`/`isValidSlug`, and state-file path constants. |
 | `src/lib/config.js` | Loads `seo.config.yaml` from cwd via `js-yaml`, merges `DEFAULTS`. Also `defaultLocale`/`localeLandingPath` helpers. |
@@ -113,6 +116,7 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 | `seo/sitemap-pending.json` | Slugs queued for sitemap, added when the keyword's PR is merged | state commit to main |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo/improvements.json` | Which pages were rewritten when, with the queries that drove it, `pr_url`, `merged_at` | state commit to main |
+| `seo/changes.json` | Change ledger: one entry per merged seo PR (`kind` new/rewrite, `urls`, `merged_at`, `baseline`, readings `d28`/`d56`, `revert_candidate`) | state commit to main |
 | `seo/index-status.json` | Last week's Google index coverage per sitemap URL, for the weekly diff | state commit to main |
 | `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage of the month | state commit to main |
 

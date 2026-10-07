@@ -117,3 +117,44 @@ describe('queryPagePerformance row limit', () => {
     warn.mockRestore();
   });
 });
+
+describe('queryPageTotals', () => {
+  const queryFn = vi.fn();
+
+  beforeEach(async () => {
+    vi.resetModules();
+    queryFn.mockReset();
+    queryFn.mockResolvedValue({ data: { rows: [{ keys: ['https://a.de/x'], clicks: 3, impressions: 40, position: 7.5 }] } });
+    vi.doMock('googleapis', () => ({
+      google: {
+        auth: { JWT: class { constructor() {} } },
+        searchconsole: () => ({ searchanalytics: { query: queryFn } }),
+      },
+    }));
+    const credentials = join(tmpdir(), `gsc-cred-${Date.now()}.json`);
+    writeFileSync(credentials, JSON.stringify({ type: 'service_account', client_email: 'a@b.c', private_key: 'k' }));
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = credentials;
+  });
+
+  it('asks for the absolute window by page, with the filter and the full row limit', async () => {
+    const { queryPageTotals } = await import('../src/lib/gsc.js');
+
+    const rows = await queryPageTotals('sc-domain:a.de', { startDate: '2026-08-01', endDate: '2026-08-28', pageFilter: 'https://a.de' });
+
+    const body = queryFn.mock.calls[0][0].requestBody;
+    expect(body).toMatchObject({ startDate: '2026-08-01', endDate: '2026-08-28', dimensions: ['page'], rowLimit: 25000 });
+    expect(body.dimensionFilterGroups[0].filters[0]).toMatchObject({ dimension: 'page', expression: 'https://a.de' });
+    expect(rows).toEqual([{ url: 'https://a.de/x', clicks: 3, impressions: 40, position: 7.5 }]);
+  });
+
+  it('serves the same window from the cache but fetches a different one', async () => {
+    const { queryPageTotals } = await import('../src/lib/gsc.js');
+    const w = { startDate: '2026-08-01', endDate: '2026-08-28' };
+
+    await queryPageTotals('sc-domain:a.de', w);
+    await queryPageTotals('sc-domain:a.de', w);
+    await queryPageTotals('sc-domain:a.de', { ...w, endDate: '2026-08-29' });
+
+    expect(queryFn).toHaveBeenCalledTimes(2);
+  });
+});

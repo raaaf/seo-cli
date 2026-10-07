@@ -15,6 +15,7 @@ const createPRs = vi.fn();
 const prepareImprove = vi.fn();
 const publishImprove = vi.fn();
 const track = vi.fn();
+const measure = vi.fn();
 const reviewPage = vi.fn();
 const commitState = vi.fn();
 const getPR = vi.fn();
@@ -49,6 +50,7 @@ vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a)
 vi.mock('../src/lib/github.js', () => ({ getPR: (...a) => getPR(...a), deleteBranch: (...a) => deleteBranch(...a) }));
 vi.mock('../src/lib/claude.js', () => ({ getLlmStats: () => getLlmStats() }));
 vi.mock('../src/steps/track.js', () => ({ track: (...a) => track(...a) }));
+vi.mock('../src/steps/measure.js', () => ({ measure: (...a) => measure(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
 const { runCommand } = await import('../src/commands/run.js');
@@ -84,10 +86,11 @@ beforeEach(() => {
   saved = {};
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
   reportPath = join(dir, 'report.json');
-  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
+  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, measure, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
   getLlmStats.mockReset();
   getLlmStats.mockReturnValue({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] });
   commitState.mockResolvedValue([]);
+  measure.mockResolvedValue({ entries: 0, due: 0, measured: 0, changed: [] });
   deleteBranch.mockResolvedValue();
   createPRs.mockResolvedValue({ prs: [], warnings: [], errors: [] });
   reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
@@ -105,6 +108,32 @@ afterEach(() => {
 });
 
 describe('run-pipeline', () => {
+  it('measures after the reconcile and before discover, and puts the result in the report', async () => {
+    const order = [];
+    getPR.mockImplementation(async () => { order.push('reconcile'); return { state: 'open' }; });
+    seedState('keywords.json', { keywords: [{ keyword: 'a', status: 'pr_opened', pr_url: 'https://github.com/o/demo/pull/9', pr_opened_at: '2026-10-01' }] });
+    measure.mockImplementation(async () => { order.push('measure'); return { entries: 3, due: 1, measured: 1, changed: [] }; });
+    discover.mockImplementation(async () => { order.push('discover'); return { keywords: [] }; });
+
+    await run();
+
+    expect(order).toEqual(['reconcile', 'measure', 'discover']);
+    expect(measure.mock.calls[0][0]).toMatchObject({ dryRun: false });
+    expect(report().measurement).toMatchObject({ entries: 3, measured: 1 });
+  });
+
+  it('turns a failing measurement into a warning and carries on', async () => {
+    measure.mockRejectedValue(new Error('ledger corrupt'));
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+
+    await run();
+
+    expect(report().status).toBe('prs_opened');
+    expect(report().warnings).toContain('Measurement failed: ledger corrupt');
+    expect(report().measurement).toBeUndefined();
+  });
+
   it('runs discover → generate → state → PRs → state → track', async () => {
     discover.mockResolvedValue(keywordsData());
     const order = [];
@@ -429,6 +458,8 @@ describe('monthly new-page cap', () => {
 describe('run-reconcile', () => {
   const PR = (n) => `https://github.com/o/demo/pull/${n}`;
   const kw = (keyword, n, extra = {}) => ({ keyword, status: 'pr_opened', score: 9, target_slug: keyword, pr_url: PR(n), sitemap_slugs: [`/${keyword}`], ...extra });
+  // Merged PRs the change ledger already knows are not read again by the backfill.
+  const ledgerKnows = (...ns) => seedState('changes.json', { entries: ns.map(n => ({ id: PR(n) })) });
 
   beforeEach(() => {
     discover.mockImplementation(async () => loadKeywords(dir));
@@ -467,6 +498,7 @@ describe('run-reconcile', () => {
 
   it('backfills pr_opened_at from the PR creation date for open, merged and closed PRs', async () => {
     seedState('keywords.json', { version: 1, keywords: [kw('open', 1), kw('merged', 2, { status: 'published' }), kw('closed', 3, { status: 'rejected' }), kw('dated', 4, { status: 'published', pr_opened_at: '2026-10-02' })] });
+    ledgerKnows(2, 4);
     getPR.mockResolvedValue({ state: 'open', mergedAt: null, createdAt: '2026-10-06T08:00:00Z' });
 
     await run();
@@ -478,6 +510,7 @@ describe('run-reconcile', () => {
 
   it('marks a PR without creation date as unknown once, never counts it, and does not ask GitHub again', async () => {
     seedState('keywords.json', { version: 1, keywords: [kw('legacy', 1, { status: 'published' })] });
+    ledgerKnows(1);
     getPR.mockResolvedValue({ state: 'merged', mergedAt: null });
 
     await run();
@@ -553,6 +586,7 @@ describe('run-reconcile', () => {
 
   it('does not ask GitHub again about an improvement that is already merged', async () => {
     seedState('improvements.json', { version: 1, entries: [{ slug: 'p', date: '2026-10-01', pr_url: PR(6), merged_at: '2026-10-02' }] });
+    ledgerKnows(6);
 
     await run();
 
