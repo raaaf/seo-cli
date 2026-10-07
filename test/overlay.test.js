@@ -10,7 +10,7 @@ const {
   overlayFilePath, overlayKeyOfFile, renderOverlay, parseOverlay, validateOverlay,
   selectOverlayPage, isStartMode, pickStartTarget, prepareOverlay,
 } = await import('../src/steps/overlay.js');
-const { overlayKey, parseOverlayKey } = await import('../src/lib/improvements.js');
+const { overlayKey, parseOverlayKey, loadImprovements, slugsInCooldown } = await import('../src/lib/improvements.js');
 const { makeCatalog } = await import('./helpers/catalog.js');
 
 const CONFIG = {
@@ -145,6 +145,11 @@ describe('overlay: selection', () => {
     expect(page.slug).toBe('category:shirts');
   });
 
+  it('skips targets the catalog does not know', () => {
+    const page = selectOverlayPage({ rows: [row('https://shop.test/shop/weg', 'weg shirt', 500), rows[0]], config: CONFIG, catalog });
+    expect(page.slug).toBe('product:nachteule');
+  });
+
   it('returns null when nothing is above the impression floor', () => {
     expect(selectOverlayPage({ rows: [rows[4]], config: CONFIG })).toBeNull();
   });
@@ -209,6 +214,14 @@ describe('overlay: start target and prepareOverlay', () => {
     complete.mockResolvedValue({ ...GOOD, intro: words(5) });
     expect(await prepareOverlay({ config: CONFIG, cwd: dir, rows: [], catalog })).toBeNull();
     expect(complete).toHaveBeenCalledTimes(2);
+  });
+
+  it('puts a target that fails twice into the cooldown with a failed note', async () => {
+    complete.mockResolvedValue({ ...GOOD, intro: words(5) });
+    await prepareOverlay({ config: CONFIG, cwd: dir, rows: [], catalog });
+    const { entries } = loadImprovements(dir);
+    expect(entries).toEqual([expect.objectContaining({ slug: 'product:tanz-mit-mir', failed: true })]);
+    expect(slugsInCooldown({ entries }).has('product:tanz-mit-mir')).toBe(true);
   });
 
   it('rewrites the shop page with the strongest case once GSC has shop rows', async () => {

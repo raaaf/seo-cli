@@ -98,10 +98,11 @@ jobs:
           GSC_CREDENTIALS: ${{ env.SHARED_VAULT == 'true' && format('op://{0}/seo-cli/GSC_CREDENTIALS', inputs.op_vault) || '' }}
           GSC_TOKEN: ${{ env.SHARED_VAULT == 'true' && format('op://{0}/seo-cli/GSC_TOKEN', inputs.op_vault) || '' }}
 
-      # Separate and non-fatal: a field that is not in the item yet (the Claude
-      # token is added later) must not stop the run. Without it the run uses the
-      # API key, without the webhook it reports nowhere (visible warning).
-      - name: Load optional secrets from 1Password
+      # Separate and non-fatal, one step per field: a field that is not in the item
+      # yet (the Claude token is added later) must neither stop the run nor drop the
+      # other field. Without the token the run uses the API key, without the webhook
+      # it reports nowhere (visible warning).
+      - name: Load notify webhook from 1Password
         if: env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
         continue-on-error: true
         uses: 1password/load-secrets-action@v4
@@ -110,7 +111,16 @@ jobs:
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           SEO_NOTIFY_WEBHOOK: ${{ format('op://{0}/seo-cli/SEO_NOTIFY_WEBHOOK', inputs.op_vault) }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.mode != 'watch' && format('op://{0}/seo-cli/CLAUDE_CODE_OAUTH_TOKEN', inputs.op_vault) || '' }}
+
+      - name: Load Claude Code token from 1Password
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v4
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ format('op://{0}/seo-cli/CLAUDE_CODE_OAUTH_TOKEN', inputs.op_vault) }}
 
       - name: Use direct secrets (no 1Password)
         if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN != 'true'

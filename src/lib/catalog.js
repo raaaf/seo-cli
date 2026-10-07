@@ -115,10 +115,12 @@ export function pageRulesSection(contract, catalog) {
 /**
  * The extra `validate()` options of a project with a page contract: contract,
  * catalog, the products of the pages on disk (for the overlap rule) and the
- * reserved paths. Empty object without the keys, so validate stays unchanged.
+ * reserved paths. A configured `catalog_url` always passes the catalog through
+ * (the improve prompt reads it from here). Empty object without any of the keys,
+ * so validate stays unchanged.
  */
 export function contractOptions(config, catalog, cwd, locale) {
-  if (!config.page_contract && !config.reserved_slugs?.length) return {};
+  if (!config.page_contract && !config.reserved_slugs?.length && !(config.catalog_url && catalog)) return {};
   return {
     contract: config.page_contract ?? null,
     catalog,

@@ -131,6 +131,12 @@ describe('catalog: pageRulesSection and contractOptions', () => {
       expect(opts.existingPages).toEqual([expect.objectContaining({ slug: 'a', products: ['p1', 'p2'] })]);
     });
 
+    it('passes the catalog through with catalog_url alone, so the improve prompt gets it', () => {
+      const catalog = makeCatalog();
+      expect(contractOptions({ landing_path: 'x/', catalog_url: 'https://shop.test/c.json' }, catalog, '/nowhere', 'de').catalog).toBe(catalog);
+      expect(contractOptions({ landing_path: 'x/', catalog_url: 'https://shop.test/c.json' }, null, '/nowhere', 'de')).toEqual({});
+    });
+
     it('reads no pages for a project with reserved slugs only', () => {
       expect(contractOptions({ landing_path: 'x/', reserved_slugs: ['admin'] }, null, '/nowhere', 'de'))
         .toEqual({ contract: null, catalog: null, existingPages: [], reservedSlugs: ['admin'] });

@@ -9,7 +9,7 @@ import { format, isoWeek } from '../lib/date.js';
 import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { loadCatalog, formatShipping } from '../lib/catalog.js';
-import { loadImprovements, slugsInCooldown, overlayKey, parseOverlayKey } from '../lib/improvements.js';
+import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown, overlayKey, parseOverlayKey } from '../lib/improvements.js';
 import { urlToSlug } from '../lib/measure.js';
 import { scorePage } from './improve.js';
 import { loadStyleDoc } from './generate.js';
@@ -76,7 +76,7 @@ export function parseOverlay(markdown) {
 export function validateOverlay(fields, { key, contract = null, catalog = null }) {
   const errors = [];
   const warnings = [];
-  const { type, id } = parseOverlayKey(key);
+  const { type } = parseOverlayKey(key);
 
   for (const f of FIELDS) {
     if (typeof fields[f] !== 'string' || !fields[f].trim()) errors.push(`Missing overlay field: ${f}`);
@@ -108,23 +108,28 @@ export function validateOverlay(fields, { key, contract = null, catalog = null }
   if (contract?.facts_denylist?.length) errors.push(...unbackedClaimErrors(all, contract.facts_denylist, catalog));
 
   if (catalog) {
-    const known = type === 'product' ? catalog.products.some(p => p.slug === id) : catalog.categories.some(c => c.key === id);
-    if (!known) errors.push(`Overlay target not in the catalog: ${key}`);
+    if (!inCatalog(key, catalog)) errors.push(`Overlay target not in the catalog: ${key}`);
   }
 
   return { ok: errors.length === 0, errors, warnings };
 }
 
+const inCatalog = (key, catalog) => {
+  const { type, id } = parseOverlayKey(key);
+  return type === 'product' ? catalog.products.some(p => p.slug === id) : catalog.categories.some(c => c.key === id);
+};
+
 /**
  * The overlay page with the strongest case in the GSC rows (`/shop/<slug>` and
  * `/shop?category=<key>`), scored like a landing page. Null when none qualifies.
- * `cooldown` holds overlay keys rewritten recently.
+ * `cooldown` holds overlay keys rewritten recently; with a `catalog`, targets
+ * the catalog does not know (renamed or removed by the Printify sync) are skipped.
  */
-export function selectOverlayPage({ rows, config, cooldown = new Set() }) {
+export function selectOverlayPage({ rows, config, cooldown = new Set(), catalog = null }) {
   const byKey = new Map();
   for (const row of rows) {
     const page = urlToSlug(row.url, config, {});
-    if (!page?.overlay || cooldown.has(page.slug)) continue;
+    if (!page?.overlay || cooldown.has(page.slug) || (catalog && !inCatalog(page.slug, catalog))) continue;
     const key = page.slug;
     const entry = byKey.get(key) ?? { slug: key, impressions: 0, clicks: 0, bestPosition: Infinity, queries: [] };
     entry.impressions += row.impressions;
@@ -268,7 +273,7 @@ export async function prepareOverlay({ config, cwd = process.cwd(), rows, catalo
   const startMode = isStartMode(rows);
   const target = startMode
     ? pickStartTarget({ config, catalog, cwd, cooldown })
-    : selectOverlayPage({ rows, config, cooldown });
+    : selectOverlayPage({ rows, config, cooldown, catalog });
   if (!target) {
     console.log(chalk.gray(`  No overlay to write (${startMode ? 'every product has one' : 'no shop page qualifies'}).`));
     return null;
@@ -291,6 +296,12 @@ export async function prepareOverlay({ config, cwd = process.cwd(), rows, catalo
   if (!result.ok) {
     console.log(chalk.red(`  Overlay discarded: ${target.slug} does not validate after 2 attempts`));
     result.errors.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
+    // The normal cooldown, so a target that cannot be written does not win every week.
+    if (!dryRun) {
+      const improvements = recordImprovement(loadImprovements(cwd), { slug: target.slug, queries: target.queries.map(q => q.query) });
+      improvements.entries.at(-1).failed = true;
+      saveImprovements(improvements, cwd);
+    }
     return null;
   }
 

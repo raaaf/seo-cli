@@ -373,6 +373,12 @@ describe('validate-page: page contract', () => {
     expect(errors.some(e => e.startsWith('Claim not backed by the catalog') && e.includes('19,99 eur'))).toBe(true);
   });
 
+  it('checks prices against human-readable catalog facts, not cents', () => {
+    expect(run(page({ bodyText: `${body()} versand ab 5,99 € versand.` })).errors).toEqual([]);
+    expect(run(page({ bodyText: `${body()} versand ab 5.99 Euro.` })).errors).toEqual([]);
+    expect(run(page({ bodyText: `${body()} versand ab 4,90 €.` })).errors.some(e => e.startsWith('Claim not backed'))).toBe(true);
+  });
+
   it('allows a denylisted phrase that stands word for word in the catalog', () => {
     expect(run(page({ bodyText: `${body()} die lieferung dauert 5 bis 10 werktage.` })).errors).toEqual([]);
   });

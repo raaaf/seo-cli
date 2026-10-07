@@ -174,4 +174,18 @@ describe('github-list-merged-seo-prs', () => {
     ]);
     expect(pulls.list).toHaveBeenCalledWith(expect.objectContaining({ owner: 'o', repo: 'r', state: 'closed' }));
   });
+
+  it('reads the next page while PRs are not older than the cutoff, and stops at the first older one', async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ({ ...pr(100 + i, 'feature/x', null), updated_at: '2026-10-06T00:00:00Z' }));
+    pulls.list
+      .mockResolvedValueOnce({ data: full })
+      .mockResolvedValueOnce({ data: [{ ...pr(7, 'seo/new/late', '2026-10-03T10:00:00Z'), updated_at: '2026-10-03T10:00:00Z' }, { ...pr(8, 'feature/y', null), updated_at: '2026-09-01T00:00:00Z' }] });
+    pulls.listFiles.mockResolvedValue({ data: [{ filename: 'x.md' }] });
+
+    const result = await listRecentlyMergedSeoPRs('o/r', '2026-09-25T00:00:00.000Z');
+
+    expect(result.map(p => p.number)).toEqual([7]);
+    expect(pulls.list).toHaveBeenCalledTimes(2);
+    expect(pulls.list.mock.calls[1][0]).toMatchObject({ page: 2 });
+  });
 });

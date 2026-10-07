@@ -33,12 +33,33 @@ function normalizeShopKeys(config) {
       config[key] = DEFAULTS[key];
     }
   }
+  if (config.page_contract) assertPageContractShape(config.page_contract);
   if (!Array.isArray(config.reserved_slugs)) {
     if (config.reserved_slugs != null) warn('reserved_slugs must be a list, ignoring it');
     config.reserved_slugs = [];
   }
   if (typeof config.catalog_url !== 'string' || !config.catalog_url.trim()) config.catalog_url = null;
   config.watch = { ...DEFAULTS.watch, ...(isPlainObject(config.watch) ? config.watch : {}) };
+}
+
+const isStringList = v => Array.isArray(v) && v.every(x => typeof x === 'string');
+const isNumber = v => typeof v === 'number' && Number.isFinite(v);
+
+// A contract with a wrong shape would crash validate halfway or silently never fire, so it stops the load.
+const CONTRACT_SHAPES = {
+  body_words: [v => Array.isArray(v) && v.length === 2 && v.every(isNumber), 'a list of two numbers [min, max]'],
+  require: [isStringList, 'a list of strings'],
+  forbid: [isStringList, 'a list of strings'],
+  products: [v => isPlainObject(v) && ['min', 'max', 'max_overlap'].every(k => v[k] == null || isNumber(v[k])), 'a mapping with numeric min, max, max_overlap'],
+  lowercase: [v => typeof v === 'boolean', 'true or false'],
+  facts_denylist: [isStringList, 'a list of regex strings'],
+  meta_title_suffix: [v => typeof v === 'string', 'a string'],
+};
+
+function assertPageContractShape(contract) {
+  for (const [key, [valid, expected]] of Object.entries(CONTRACT_SHAPES)) {
+    if (contract[key] != null && !valid(contract[key])) throw new Error(`${CONFIG_FILE}: page_contract.${key} must be ${expected}`);
+  }
 }
 
 function normalizeUrlPrefix(prefix) {

@@ -291,13 +291,25 @@ export function lowercaseErrors(texts) {
   return upper.length ? [`Uppercase letters (page contract is lowercase): ${upper.join(', ')}`] : [];
 }
 
+const normalizeFact = (text) => String(text).toLowerCase().replace(/\s+/g, ' ');
+
+// The catalog as people write it: the shipping price in its common spellings (5,99 €, 5.99 euro),
+// the delivery text, every product's material and sizes. Not JSON, where a price is 599.
+function catalogFactText(catalog) {
+  if (!catalog) return '';
+  const euros = (catalog.shipping.cents / 100).toFixed(2);
+  const prices = [euros, euros.replace('.', ',')].flatMap(n => ['€', 'eur', 'euro'].flatMap(u => [`${n} ${u}`, `${n}${u}`]));
+  const facts = [...prices, catalog.shipping.delivery, ...catalog.products.flatMap(p => [p.material, ...p.sizes])];
+  return normalizeFact(facts.filter(Boolean).join('\n'));
+}
+
 /**
- * Matches of the fact denylist in `text` that the catalog does not state word
- * for word. One error per pattern; an invalid pattern is an error, not a crash.
+ * Matches of the fact denylist in `text` that the catalog does not state (see
+ * `catalogFactText`). One error per pattern; an invalid pattern is an error, not a crash.
  */
 export function unbackedClaimErrors(text, patterns, catalog) {
   const errors = [];
-  const catalogText = catalog ? JSON.stringify(catalog).toLowerCase() : '';
+  const catalogText = catalogFactText(catalog);
   for (const pattern of patterns) {
     let re;
     try {
@@ -306,7 +318,7 @@ export function unbackedClaimErrors(text, patterns, catalog) {
       errors.push(`Invalid facts_denylist pattern: ${pattern}`);
       continue;
     }
-    const bad = [...new Set([...text.matchAll(re)].map(m => m[0].trim()).filter(m => !catalogText.includes(m.toLowerCase())))];
+    const bad = [...new Set([...text.matchAll(re)].map(m => m[0].trim()).filter(m => !catalogText.includes(normalizeFact(m))))];
     if (bad.length) errors.push(`Claim not backed by the catalog: ${bad.map(m => `"${m}"`).join(', ')}`);
   }
   return errors;

@@ -98,8 +98,9 @@ export function deindexedUrls(entries, knownIndexed) {
  *
  * `liveChecks` is `[{ key, url, ok }]` for merged pages and overlays that should be live, or
  * null when deploy checks are off (alerts left alone). `ok: null` means the check could not
- * decide (server error, fetch failure) and changes nothing. A key that is no longer listed
- * resolves its alert. State: `deploy_pending[key]`, present only while a check is pending.
+ * decide (server error, fetch failure) and changes nothing; `removed: true` (the file left the
+ * repo) resolves the alert with reason `removed`. An open alert stays open until a check
+ * succeeds, so the caller keeps listing it after its PR left the check window. State: `deploy_pending[key]`, present only while a check is pending.
  */
 export function evaluateWatch(state, { today, entries, traffic, liveChecks = null }) {
   const next = { ...emptyAlerts(), ...state, open: [...(state.open ?? [])] };
@@ -159,8 +160,13 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
   if (liveChecks) {
     const pending = { ...(next.deploy_pending ?? {}) };
     const listed = new Set(liveChecks.map(c => c.key));
-    for (const { key, url, ok } of liveChecks) {
+    for (const { key, url, ok, removed } of liveChecks) {
       const id = `not_deployed:${key}`;
+      if (removed) {
+        delete pending[key];
+        close(id, 'removed');
+        continue;
+      }
       if (ok === null) continue;
       if (ok) {
         delete pending[key];
@@ -174,9 +180,6 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
       }
     }
     for (const key of Object.keys(pending).filter(k => !listed.has(k))) delete pending[key];
-    for (const alert of next.open.filter(a => a.kind === 'not_deployed' && !listed.has(a.id.slice('not_deployed:'.length)))) {
-      close(alert.id, 'no_longer_checked');
-    }
     if (Object.keys(pending).length) next.deploy_pending = pending;
     else delete next.deploy_pending;
   }

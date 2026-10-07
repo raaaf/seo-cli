@@ -772,6 +772,25 @@ describe('shop mode', () => {
     expect(validate.mock.calls[0][2]).toMatchObject({ contract: { lowercase: true }, catalog, reservedSlugs: ['admin'] });
   });
 
+  it('rejects a page whose products overlap a page accepted earlier in the same run', async () => {
+    const real = await vi.importActual('../src/steps/validate.js');
+    // Only the overlap rule is under test: the fixture pages are not full landing pages.
+    validate.mockImplementation((md, kw, opts) => {
+      const errors = real.validate(md, kw, opts).errors.filter(e => e.startsWith('Product overlap'));
+      return { ok: errors.length === 0, errors, warnings: [] };
+    });
+    CONFIG.page_contract = { products: { max_overlap: 0.6 } };
+    loadCatalog.mockResolvedValue(makeCatalog());
+    discover.mockResolvedValue(manyKeywords(2));
+    generatePage.mockImplementation(async (kw) => `---\nslug: ${kw.target_slug}\nproducts: [p1, p2, p3]\n---\nbody`);
+    createPRs.mockResolvedValue({ prs: [], warnings: [], errors: [] });
+
+    await run();
+
+    const pages = createPRs.mock.calls[0][0].generatedPages;
+    expect(pages.map(p => p.slug)).toEqual(['slug-0']);
+  });
+
   it('skips discover and generate with a warning while the shop is unreachable, and keeps improving', async () => {
     loadCatalog.mockRejectedValue(new Error('Catalog unreachable (https://shop.test/seo/catalog.json): HTTP 503'));
     prepareImprove.mockResolvedValue(null);

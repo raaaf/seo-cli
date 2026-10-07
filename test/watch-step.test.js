@@ -104,6 +104,16 @@ describe('watch-step', () => {
     expect(report.alerts.opened[0].detail).toMatch(/50 percent/);
   });
 
+  it('leaves overlay pages out of the landing page totals', async () => {
+    queryPageTotals.mockImplementation(async (_p, { endDate }) => [
+      { url: url('page'), impressions: 1000, clicks: 0, position: 5 },
+      { url: url('shop/nachteule'), impressions: endDate === trafficWindows(todayRef).current.endDate ? 0 : 5000, clicks: 0, position: 5 },
+    ]);
+    todayRef = '2026-10-07';
+    const report = await watch({ config: { ...CONFIG, overlays: { products: 'content/seo/products' } }, cwd: dir, today: '2026-10-07', diagnose: async () => ({ updated: [] }), submit: async () => {} });
+    expect(report.traffic).toMatchObject({ status: 'ok', drop: 0 });
+  });
+
   it('raises no traffic alert below the volume floor', async () => {
     gsc({ current: 0, previous: 100 });
     await go('2026-10-07');
@@ -193,6 +203,21 @@ describe('watch-step: diagnosis and resubmit', () => {
 
     expect(submit).toHaveBeenCalledTimes(1);
     expect(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).toBe(before);
+  });
+
+  it('resubmits again after a technical cause was fixed, but not before 7 days since the last submit', async () => {
+    const submit = vi.fn().mockResolvedValue();
+    const causing = (cause) => async ({ alerts }) => {
+      for (const a of alerts) a.diagnosis = { cause, urls: [{ url: url('page') }] };
+      return { updated: [] };
+    };
+    await dropPage({ submit, diagnose: causing('clean') });
+    await go('2026-10-09', { diagnose: causing('technical'), submit });
+    expect(alertsFile().open[0].resubmitted_at).toBeUndefined();
+    await go('2026-10-10', { diagnose: causing('clean'), submit });
+    expect(submit).toHaveBeenCalledTimes(1);
+    await go('2026-10-15', { diagnose: causing('clean'), submit });
+    expect(submit).toHaveBeenCalledTimes(2);
   });
 
   it('resubmits a later clean alert only once 7 days have passed since the last submit', async () => {
@@ -329,6 +354,28 @@ describe('watch-step: deploy checks', () => {
     const report = await check(10, { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 200 } }) });
     expect(report.status).toBe('resolved');
     expect(alertsFile().open).toEqual([]);
+  });
+
+  it('keeps checking an open alert by its stored URL after its PR left the window', async () => {
+    writeFileSync(join(dir, 'content/de/neu.md'), '---\n---\n');
+    const down = { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 404 } }) };
+    await check(8, down);
+    await check(9, down);
+    const stillDown = await check(10, { listPRs: prs(), fetchPage: pages({ [url('neu')]: { status: 404 } }) });
+    expect(stillDown.alerts.resolved).toEqual([]);
+    expect(alertsFile().open.map(a => a.id)).toEqual(['not_deployed:neu']);
+    const up = await check(11, { listPRs: prs(), fetchPage: pages({ [url('neu')]: { status: 200 } }) });
+    expect(up.status).toBe('resolved');
+  });
+
+  it('resolves an open alert as removed once its file is gone', async () => {
+    writeFileSync(join(dir, 'content/de/neu.md'), '---\n---\n');
+    const down = { listPRs: prs(NEW_PR), fetchPage: pages({ [url('neu')]: { status: 404 } }) };
+    await check(8, down);
+    await check(9, down);
+    rmSync(join(dir, 'content/de/neu.md'));
+    const report = await check(10, { listPRs: prs(), fetchPage: pages({}) });
+    expect(report.alerts.resolved).toMatchObject([{ id: 'not_deployed:neu', reason: 'removed' }]);
   });
 
   it('skips a PR merged less than 24 hours ago', async () => {

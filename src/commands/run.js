@@ -82,7 +82,7 @@ async function generateCounterpartPage(kw, sourceMarkdown, config, cwd, dryRun, 
 // Generates the default-locale page for `kw`, then (when config.counterpart_locale
 // is set) its reciprocal counterpart page. Returns an array of 0-2 page objects
 // ({ keyword, slug, score, type, locale, filePath, markdown }).
-async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys, catalog) {
+async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys, catalog, acceptedPages = []) {
   const localeLandingPathStr = getLocaleLandingPath(config, locale);
   const localeConfig = { ...config, locale, landing_path: localeLandingPathStr };
   const label = (config.locales?.length ?? 1) > 1 ? ` [${locale}]` : '';
@@ -102,10 +102,12 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
   let valid = false;
   let lastResult;
   const validateOpts = contractOptions(localeConfig, catalog, cwd, locale);
+  // The overlap rule also compares against pages accepted earlier in this run, which are not on disk yet.
+  const withAccepted = () => (validateOpts.existingPages ? { ...validateOpts, existingPages: [...validateOpts.existingPages, ...acceptedPages.filter(p => p.locale === locale)] } : validateOpts);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     markdown = await generatePage(kw, localeConfig, cwd, attempt > 1 ? lastResult : null, { catalog });
-    lastResult = validate(markdown, kw, validateOpts);
+    lastResult = validate(markdown, kw, withAccepted());
     if (lastResult.ok) { valid = true; break; }
   }
 
@@ -177,6 +179,20 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
     return [];
   }
   delete kw.counterpart_failures;
+
+  // Generation runs concurrently, so a sibling may have been accepted while this page waited on the
+  // fact check: compare once more, with no await between the check and the registration.
+  if (validateOpts.existingPages) {
+    const overlap = validate(markdown, kw, withAccepted()).errors.filter(e => e.startsWith('Product overlap'));
+    if (overlap.length) {
+      console.log(chalk.red(`  Skipped: ${kw.keyword}${label} (overlaps a page of this run)`));
+      overlap.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
+      kw.status = KEYWORD_STATUS.VALIDATION_FAILED;
+      return [];
+    }
+    const products = parseFrontmatter(markdown).parsed?.products;
+    acceptedPages.push({ slug: kw.target_slug, locale, products: Array.isArray(products) ? products : [] });
+  }
 
   const filePath = join(localeLandingPathStr, `${kw.target_slug}.md`).replace(/\\/g, '/');
   const pages = [];
@@ -463,11 +479,12 @@ export async function runCommand(opts) {
       const GENERATE_CONCURRENCY = 2;
       const limit = pLimit(GENERATE_CONCURRENCY);
       const generatedKeysAtomic = new Set();
+      const acceptedPages = [];
       const tasks = [];
       for (const kw of toGenerate) {
         for (const locale of locales) {
           tasks.push(limit(async () => {
-            const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic, catalog);
+            const pages = await generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeysAtomic, catalog, acceptedPages);
             for (const page of pages) {
               generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
               generatedPages.push(page);

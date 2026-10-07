@@ -113,6 +113,12 @@ describe('config-load: loadConfig', () => {
     expect(cfg.config_warnings).toHaveLength(3);
   });
 
+  it('throws a config error naming the page_contract key with a wrong shape', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'page_contract:\n  body_words: [300]\n', 'utf8');
+    expect(() => loadConfig(tmpDir)).toThrow('page_contract.body_words must be a list of two numbers');
+  });
+
   it('throws when config file is missing', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     expect(() => loadConfig(tmpDir)).toThrow('seo.config.yaml not found');

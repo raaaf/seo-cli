@@ -50,11 +50,21 @@ export async function getPR({ repo, number, url }) {
 // Merged PRs of the seo pipeline since `sinceIso`: head branch `seo/new/*` or `seo/improve/*`.
 // Returns [{ number, headRef, mergedAt, files: [path] }], newest first. The deploy watcher derives
 // the expected live URLs from the changed files, so it needs no state of its own.
+// Closed PRs are read newest-updated first until one is older than `sinceIso` (a merge sets
+// `updated_at`, so nothing merged since then can sit behind it), at most 5 pages.
+const LIST_PAGE_SIZE = 50;
+const LIST_MAX_PAGES = 5;
+
 export async function listRecentlyMergedSeoPRs(repo, sinceIso) {
   const [owner, name] = repo.split('/');
   const octokit = getOctokit(owner);
-  const { data } = await octokit.pulls.list({ owner, repo: name, state: 'closed', sort: 'updated', direction: 'desc', per_page: 50 });
-  const merged = data.filter(pr => pr.merged_at && pr.merged_at >= sinceIso && /^seo\/(new|improve)\//.test(pr.head?.ref ?? ''));
+  const closed = [];
+  for (let page = 1; page <= LIST_MAX_PAGES; page++) {
+    const { data } = await octokit.pulls.list({ owner, repo: name, state: 'closed', sort: 'updated', direction: 'desc', per_page: LIST_PAGE_SIZE, page });
+    closed.push(...data);
+    if (data.length < LIST_PAGE_SIZE || data.some(pr => pr.updated_at && pr.updated_at < sinceIso)) break;
+  }
+  const merged = closed.filter(pr => pr.merged_at && pr.merged_at >= sinceIso && /^seo\/(new|improve)\//.test(pr.head?.ref ?? ''));
   return Promise.all(merged.map(async (pr) => {
     const files = await octokit.paginate(octokit.pulls.listFiles, { owner, repo: name, pull_number: pr.number, per_page: 100 });
     return { number: pr.number, headRef: pr.head.ref, mergedAt: pr.merged_at, files: files.map(f => f.filename) };

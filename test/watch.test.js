@@ -217,10 +217,11 @@ describe('watch: not_deployed alert', () => {
     expect(day(open, live(null), '2026-10-09').resolved).toEqual([]);
   });
 
-  it('resolves an alert whose page left the check window, with a reason, and drops stale pending state', () => {
+  it('keeps an unlisted alert open, resolves a removed one with a reason, and drops stale pending state', () => {
     const open = day(day(emptyAlerts(), live(false), '2026-10-07').state, live(false), '2026-10-08').state;
-    const gone = day(open, [], '2026-10-09');
-    expect(gone.resolved).toMatchObject([{ id: 'not_deployed:page', reason: 'no_longer_checked' }]);
+    expect(day(open, [], '2026-10-09').resolved).toEqual([]);
+    const gone = day(open, [{ key: 'page', url: 'https://a.de/page', ok: null, removed: true }], '2026-10-09');
+    expect(gone.resolved).toMatchObject([{ id: 'not_deployed:page', reason: 'removed' }]);
     const pending = day(emptyAlerts(), live(false), '2026-10-07').state;
     expect(day(pending, [], '2026-10-08').state.deploy_pending).toBeUndefined();
   });

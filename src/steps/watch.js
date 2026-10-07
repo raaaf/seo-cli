@@ -18,9 +18,13 @@ import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } 
 const RESUBMIT_EVERY_DAYS = 7;
 
 // Landing page rows of one window; rows that map to no known landing page are not ours to watch.
+// Overlay pages (shop) are not landing pages: their traffic is not part of the landing page totals.
 async function landingRows(config, window, slugsByLocale) {
   const rows = await queryPageTotals(config.gsc_property, { ...window, pageFilter: config.base_url || null });
-  return rows.filter(r => urlToSlug(r.url, config, slugsByLocale) !== null);
+  return rows.filter((r) => {
+    const page = urlToSlug(r.url, config, slugsByLocale);
+    return page !== null && !page.overlay;
+  });
 }
 
 async function checkTraffic(config, cwd, today) {
@@ -93,16 +97,32 @@ function expectedLive(pr, config) {
   return found;
 }
 
+// Does the change behind a key still exist in the repo: the overlay file or the default-locale landing file.
+function hasLocalFile(key, config, cwd) {
+  const file = parseOverlayKey(key)
+    ? overlayFilePath(config, key)
+    : `${localeLandingPath(config, defaultLocale(config)).replace(/^\.\//, '').replace(/\/+$/, '')}/${key}.md`;
+  return Boolean(file) && existsSync(join(cwd, file));
+}
+
 // `liveChecks` for evaluateWatch: seo PRs of the repo merged between 14 days and 24 hours ago, read from
 // GitHub (the watcher must see a missed deploy within days, the ledger only fills weekly). Null unless
 // `watch.check_deploy` is on. A fetch that fails decides nothing and is a warning; a GitHub error throws.
-async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs }) {
+async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, openAlerts }) {
   if (!config.watch?.check_deploy) return null;
   const since = new Date(now - DEPLOY_CHECK_UNTIL_DAYS * DAY_MS).toISOString();
   const until = new Date(now - DEPLOY_CHECK_FROM_HOURS * HOUR_MS).toISOString();
   const prs = (await listPRs(config.repo, since)).filter(pr => pr.mergedAt <= until);
   const targets = new Map(prs.flatMap(pr => expectedLive(pr, config)).map(t => [t.key, t]));
+  // An open alert is checked until it passes, also after its PR left the 14-day window; a file that
+  // left the repo ends it as `removed`.
   const checks = [];
+  for (const alert of openAlerts.filter(a => a.kind === 'not_deployed')) {
+    const key = alert.id.slice('not_deployed:'.length);
+    if (targets.has(key)) continue;
+    if (!hasLocalFile(key, config, cwd)) checks.push({ key, url: alert.detail, ok: null, removed: true });
+    else targets.set(key, { key, url: alert.detail });
+  }
   for (const { key, url } of targets.values()) {
     try {
       checks.push({ key, url, ok: await isLive({ slug: key, urls: [url] }, { config, cwd, fetchPage }) });
@@ -123,6 +143,14 @@ async function resubmitClean(state, { config, today, submit }) {
   for (const alert of due) alert.resubmitted_at = today;
   state.last_resubmit = today;
   return due.map(a => a.id);
+}
+
+// A technical cause means the last resubmit did not help; once it is fixed (clean again) the alert
+// resubmits again, still bounded by `last_resubmit`.
+function resetResubmitOnTechnical(alerts, causeBefore) {
+  for (const alert of alerts) {
+    if (alert.diagnosis?.cause === 'technical' && causeBefore.get(alert.id) !== 'technical') delete alert.resubmitted_at;
+  }
 }
 
 /**
@@ -157,7 +185,7 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   // Opt-in (`watch.check_deploy`). A broken check is a warning and leaves the deploy alerts alone.
   let liveChecks = null;
   try {
-    liveChecks = await checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs });
+    liveChecks = await checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, openAlerts: state.open });
   } catch (e) {
     warnings.push(`Deploy check failed: ${e.message}`);
   }
@@ -178,7 +206,9 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   let updated = [];
   let resubmitted = [];
   if (entries) {
+    const causeBefore = new Map(next.open.map(a => [a.id, a.diagnosis?.cause]));
     const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today }));
+    resetResubmitOnTechnical(next.open, causeBefore);
     updated = (diagnosed?.updated ?? []).filter(a => !opened.includes(a));
     if (!dryRun) resubmitted = (await guarded('Resubmit', () => resubmitClean(next, { config, today, submit }))) ?? [];
     if (!dryRun) saveAlerts(next, cwd);
