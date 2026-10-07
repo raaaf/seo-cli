@@ -58,11 +58,27 @@ export async function fetchForDiagnosis(url, { locale } = {}) {
 }
 
 function attr(tag, name) {
-  const m = tag.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+  const m = tag.match(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
   return m ? (m[1] ?? m[2] ?? m[3]) : null;
 }
 
 const hasNoindex = (value) => /noindex/i.test(value ?? '');
+
+// One header value (several headers arrive joined by ","). `name: directive` addresses one bot and
+// holds for the directives after it, so only a googlebot prefix or none counts.
+function headerNoindex(value) {
+  return String(value ?? '').split('\n').some((line) => {
+    let applies = true;
+    return line.split(',').some((part) => {
+      const m = part.match(/^\s*([a-z][\w-]*)\s*:\s*(.*)$/i);
+      if (m && m[1].toLowerCase() !== 'unavailable_after') {
+        applies = m[1].toLowerCase() === 'googlebot';
+        return applies && hasNoindex(m[2]);
+      }
+      return applies && hasNoindex(part);
+    });
+  });
+}
 
 function metaNoindex(html) {
   return (html.match(/<meta\b[^>]*>/gi) ?? []).some(tag =>
@@ -74,9 +90,21 @@ function canonicalHref(html) {
   return tag ? attr(tag, 'href') : null;
 }
 
+// Plain comparison: Google reports /x to /x/ and apex to www as "Page with redirect" too.
+function redirected(url, finalUrl) {
+  try {
+    return new URL(finalUrl).href !== new URL(url).href;
+  } catch {
+    return finalUrl !== url;
+  }
+}
+
 // Each finding is [code, detail].
-function liveFindings({ url, response, robotsStatus }) {
-  if (!response) return [['fetch_failed', 'no response']];
+function liveFindings({ url, response, fetchError, robotsStatus }) {
+  if (!response) {
+    const detail = String(fetchError ?? '').split('\n')[0] || 'no response';
+    return [[detail.startsWith('Too many redirects') ? 'redirect' : 'fetch_failed', detail]];
+  }
   const { status, finalUrl, headers, html } = response;
   const found = [];
 
@@ -85,8 +113,8 @@ function liveFindings({ url, response, robotsStatus }) {
   else if ([401, 403, 429].includes(status)) found.push(['blocked_for_bot', `HTTP ${status}`]);
   else if (status >= 400) found.push(['http_error', `HTTP ${status}`]);
 
-  if (!sameUrl(finalUrl, url)) found.push(['redirect', `ends at ${finalUrl}`]);
-  if (hasNoindex(headers?.['x-robots-tag'])) found.push(['noindex_header', headers['x-robots-tag']]);
+  if (redirected(url, finalUrl)) found.push(['redirect', `ends at ${finalUrl}`]);
+  if (headerNoindex(headers?.['x-robots-tag'])) found.push(['noindex_header', headers['x-robots-tag']]);
   if (status < 400) {
     if (metaNoindex(html)) found.push(['noindex_meta', 'robots meta tag']);
     const canonical = canonicalHref(html);
@@ -110,14 +138,14 @@ function googleFindings({ url, inspection }) {
 
 /**
  * Pure diagnosis of one URL. `response` is the result of `fetchForDiagnosis`
- * (null when the fetch threw), `robotsStatus` the status of robots.txt (null
+ * (null when the fetch threw, then `fetchError` carries the message), `robotsStatus` the status of robots.txt (null
  * when unknown). `cause` is `technical` when a live finding with a technical
  * effect applies, else `unknown` when a finding says we cannot tell or the
  * inspection entry is missing or unknown, else `clean`. Google findings never
  * decide: they can linger until the next crawl after a fix.
  */
-export function diagnoseUrl({ url, inspection, response, robotsStatus }) {
-  const found = [...liveFindings({ url, response, robotsStatus }), ...googleFindings({ url, inspection })];
+export function diagnoseUrl({ url, inspection, response, fetchError, robotsStatus }) {
+  const found = [...liveFindings({ url, response, fetchError, robotsStatus }), ...googleFindings({ url, inspection })];
   const findings = found.map(([code, detail]) => ({ code, source: CODES[code].source, detail, fix: CODES[code].fix }));
   const effects = found.map(([code]) => CODES[code].effect);
 

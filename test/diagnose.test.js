@@ -50,14 +50,32 @@ describe('diagnose: live findings', () => {
     expect(result.cause).toBe('technical');
   });
 
-  it('reports a different final URL as redirect, but not a www or slash variant', () => {
-    expect(codes(diagnose({ response: ok({ finalUrl: 'https://a.de/new' }) }))).toEqual(['redirect']);
-    expect(codes(diagnose({ response: ok({ finalUrl: 'https://www.a.de/page/' }) }))).toEqual([]);
+  it('reports a different final URL as redirect, also a slash or www variant', () => {
+    for (const finalUrl of ['https://a.de/new', 'https://a.de/page/', 'https://www.a.de/page']) {
+      const result = diagnose({ response: ok({ finalUrl }) });
+      expect(codes(result)).toEqual(['redirect']);
+      expect(result.cause).toBe('technical');
+    }
+  });
+
+  it('reports no redirect when the final URL only differs in host case or default port', () => {
+    expect(codes(diagnose({ response: ok({ finalUrl: 'HTTPS://A.de:443/page' }) }))).toEqual([]);
   });
 
   it('reports noindex in the X-Robots-Tag header, also for a named bot', () => {
     expect(codes(diagnose({ response: ok({ headers: { 'x-robots-tag': 'googlebot: noindex' } }) }))).toEqual(['noindex_header']);
     expect(codes(diagnose({ response: ok({ headers: { 'x-robots-tag': 'all' } }) }))).toEqual([]);
+  });
+
+  it('ignores an X-Robots-Tag noindex addressed to another bot', () => {
+    expect(codes(diagnose({ response: ok({ headers: { 'x-robots-tag': 'bingbot: noindex' } }) }))).toEqual([]);
+    expect(codes(diagnose({ response: ok({ headers: { 'x-robots-tag': 'bingbot: nofollow, noindex' } }) }))).toEqual([]);
+    expect(codes(diagnose({ response: ok({ headers: { 'x-robots-tag': 'bingbot: nofollow, googlebot: noindex' } }) }))).toEqual(['noindex_header']);
+  });
+
+  it('does not read data-name or data-content as meta attributes', () => {
+    const html = page('<meta data-name="robots" data-content="noindex" name="description" content="x">');
+    expect(codes(diagnose({ response: ok({ html }) }))).toEqual([]);
   });
 
   it('reports noindex in a robots or googlebot meta tag, whatever the attribute order', () => {
@@ -86,10 +104,18 @@ describe('diagnose: live findings', () => {
     expect(result.cause).toBe('clean');
   });
 
-  it('reports a failed fetch as fetch_failed, unknown', () => {
-    const result = diagnose({ response: null });
+  it('reports a failed fetch as fetch_failed, unknown, with the first line of the error', () => {
+    const result = diagnose({ response: null, fetchError: 'getaddrinfo ENOTFOUND a.de\n    at x' });
     expect(codes(result)).toEqual(['fetch_failed']);
+    expect(result.findings[0].detail).toBe('getaddrinfo ENOTFOUND a.de');
     expect(result.cause).toBe('unknown');
+  });
+
+  it('reports a redirect loop as redirect, technical', () => {
+    const result = diagnose({ response: null, fetchError: 'Too many redirects (max 5) from https://a.de/page' });
+    expect(codes(result)).toEqual(['redirect']);
+    expect(result.findings[0].detail).toMatch(/^Too many redirects/);
+    expect(result.cause).toBe('technical');
   });
 });
 

@@ -33,6 +33,35 @@ describe('diagnose-step', () => {
     expect(alert.diagnosis.urls.map(u => u.url)).toEqual(['https://a.de/', url('a')]);
   });
 
+  it('does not let one big site_not_indexed alert starve a deindexed alert', async () => {
+    const site = { id: 'site_not_indexed', kind: 'site_not_indexed', since: '2026-10-01', detail: { indexed: 0, total: 12 } };
+    const late = deindexed('late');
+    const slugs = Array.from({ length: 12 }, (_, i) => `p${i}`);
+    const fetch = vi.fn(clean);
+
+    await run([site, late], [...slugs.map(s => entry(s)), entry('late')], fetch);
+
+    expect(fetch.mock.calls.map(c => c[0])).toContain(url('late'));
+    expect(late.diagnosis).toBeDefined();
+    expect(fetch.mock.calls.length).toBe(11); // robots.txt + 10 URLs
+  });
+
+  it('carries the fetch error message into the finding', async () => {
+    const dns = deindexed('dns');
+    const loop = deindexed('loop');
+    const fetch = async (u) => {
+      if (u.endsWith('/robots.txt')) return { status: 200 };
+      throw new Error(u.endsWith('/dns') ? 'getaddrinfo ENOTFOUND a.de' : 'Too many redirects (max 5) from x');
+    };
+
+    await run([dns, loop], [entry('dns'), entry('loop')], fetch);
+
+    expect(dns.diagnosis.urls[0].findings[0]).toMatchObject({ code: 'fetch_failed', detail: 'getaddrinfo ENOTFOUND a.de' });
+    expect(dns.diagnosis.cause).toBe('unknown');
+    expect(loop.diagnosis.urls[0].findings[0].code).toBe('redirect');
+    expect(loop.diagnosis.cause).toBe('technical');
+  });
+
   it('writes nothing on a later run with the same result', async () => {
     const alert = deindexed('page');
     await run([alert], [entry('page')], noindex, '2026-10-08');

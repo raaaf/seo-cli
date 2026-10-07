@@ -16,6 +16,17 @@ function alertUrls(alert, entries, config) {
   return [...missing.filter(u => sameUrl(u, config.base_url)), ...missing.filter(u => !sameUrl(u, config.base_url))];
 }
 
+// First URL of every alert, then the second of every alert, ...: one big alert must not starve the others.
+function roundRobin(lists, max) {
+  const picked = new Set();
+  for (let i = 0; picked.size < max && lists.some(l => i < l.length); i++) {
+    for (const list of lists) {
+      if (i < list.length && picked.size < max) picked.add(list[i]);
+    }
+  }
+  return [...picked];
+}
+
 // technical beats unknown beats clean: one broken URL is enough to call the alert technical.
 function alertCause(urls) {
   const causes = urls.map(u => u.cause);
@@ -26,7 +37,7 @@ const resultKey = ({ cause, codes }) => `${cause}:${codes.join(',')}`;
 
 /**
  * Attaches a technical diagnosis to every open `deindexed` and `site_not_indexed`
- * alert. At most 10 distinct URLs are fetched per run. The diagnosis is merged
+ * alert. At most 10 distinct URLs are fetched per run, picked round-robin across the alerts. The diagnosis is merged
  * into the existing alert object (`opened` and `open` share it). Quiet days
  * write nothing: `checked_at` and `urls` move only with `cause` or `codes`, an
  * `unknown` result never replaces a diagnosis, and a changed result needs two
@@ -36,22 +47,22 @@ const resultKey = ({ cause, codes }) => `${cause}:${codes.join(',')}`;
  */
 export async function diagnoseAlerts({ alerts, entries, config, today, fetch = fetchForDiagnosis }) {
   const targets = alerts.filter(a => INDEX_KINDS.includes(a.kind)).map(alert => ({ alert, urls: alertUrls(alert, entries, config) }));
-  const checked = [...new Set(targets.flatMap(t => t.urls))].slice(0, MAX_URLS);
+  const checked = roundRobin(targets.map(t => t.urls), MAX_URLS);
   if (!checked.length) return { updated: [] };
 
   const locale = defaultLocale(config);
   const attempt = async (url) => {
     try {
-      return await fetch(url, { locale });
-    } catch {
-      return null;
+      return { response: await fetch(url, { locale }) };
+    } catch (e) {
+      return { response: null, fetchError: e.message };
     }
   };
-  const robotsStatus = (await attempt(`${new URL(config.base_url).origin}/robots.txt`))?.status ?? null;
+  const robotsStatus = (await attempt(`${new URL(config.base_url).origin}/robots.txt`)).response?.status ?? null;
   const results = new Map();
   for (const url of checked) {
     const inspection = entries.find(e => e.url === url);
-    results.set(url, { url, ...diagnoseUrl({ url, inspection, response: await attempt(url), robotsStatus }) });
+    results.set(url, { url, ...diagnoseUrl({ url, inspection, ...await attempt(url), robotsStatus }) });
   }
 
   const updated = [];

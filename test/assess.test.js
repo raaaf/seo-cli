@@ -68,6 +68,28 @@ describe('assess', () => {
     expect(complete).toHaveBeenCalledTimes(3);
   });
 
+  it('treats a result without actions as a failed assessment, nothing saved', async () => {
+    seed([deindexed('a')]);
+    complete.mockResolvedValue({ likely_causes: ['x'], actions: [] });
+
+    const { done, warnings } = await assess();
+
+    expect(done).toEqual([]);
+    expect(saved()[0].assessment).toBeUndefined();
+    expect(warnings[0]).toMatch(/Assessment failed for deindexed:/);
+  });
+
+  it('skips an alert with the no_text hint without a call and warns', async () => {
+    const noText = { ...diagnosis('a'), urls: [{ url: url('a'), cause: 'clean', findings: [{ code: 'no_text' }] }], codes: ['no_text'] };
+    seed([deindexed('a', { diagnosis: noText }), deindexed('b')]);
+
+    const { done, warnings } = await assess();
+
+    expect(done.map(d => d.alert_id)).toEqual([`deindexed:${url('b')}`]);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(warnings).toEqual([expect.stringContaining(`deindexed:${url('a')}`)]);
+  });
+
   it('prints but saves nothing on a dry run', async () => {
     seed([deindexed('a')]);
     const before = readFileSync(join(dir, 'seo/alerts.json'), 'utf8');

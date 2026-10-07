@@ -59,6 +59,8 @@ function cleanAssessment(parsed, today) {
   };
 }
 
+const hasNoText = (alert) => alert.diagnosis.codes?.includes('no_text') || alert.diagnosis.urls.some(u => u.findings.some(f => f.code === 'no_text'));
+
 function isCandidate(alert, today) {
   if (alert.diagnosis?.cause !== 'clean') return false;
   return !alert.assessment || alert.assessment.assessed_at <= addDays(today, -REASSESS_AFTER_DAYS);
@@ -77,13 +79,16 @@ function urlFacts(alert, entries) {
  * `clean`): up to 3 per run, `site_not_indexed` first, none that was assessed
  * in the last 28 days. One Sonnet call per alert with the page text as
  * untrusted data. Saved as `alert.assessment`; a dry run only prints. A
- * failing call is a warning, `BudgetExceededError` is rethrown. Returns the
+ * failing call or a result without actions is a warning (nothing saved), an alert with the `no_text` hint is skipped with a warning, `BudgetExceededError` is rethrown. Returns the
  * new assessments with their `alert_id`.
  */
 export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false, warnings = [], today = format(new Date()), fetch = fetchForDiagnosis }) {
   const state = loadAlerts(cwd, warnings);
-  const candidates = state.open
-    .filter(a => isCandidate(a, today))
+  // Almost no page text: the model would invent causes.
+  const due = state.open.filter(a => isCandidate(a, today));
+  for (const a of due.filter(hasNoText)) warnings.push(`Assessment skipped for ${a.id}: page has almost no text (no_text)`);
+  const candidates = due
+    .filter(a => !hasNoText(a))
     .sort((a, b) => (b.kind === 'site_not_indexed') - (a.kind === 'site_not_indexed'))
     .slice(0, MAX_ASSESSMENTS);
   if (!candidates.length) return [];
@@ -108,6 +113,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: ASSESS_SCHEMA,
       });
       const assessment = cleanAssessment(parsed, today);
+      if (!assessment.actions.length) throw new Error('model returned no actions');
       console.log(chalk.blue(`  Assessment ${alert.id}: ${assessment.likely_causes.join(' | ') || 'no causes named'}`));
       if (!dryRun) {
         alert.assessment = assessment;
