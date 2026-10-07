@@ -128,9 +128,8 @@ export function selectControls(targetImpressions, candidates) {
  */
 export function verdictFor({ target, controls }) {
   const insufficient = (reason) => ({ verdict: 'insufficient_data', reason });
-  if (target.before.impressions < MIN_TARGET_IMPRESSIONS || target.after.impressions < MIN_TARGET_IMPRESSIONS) {
-    return insufficient('volume');
-  }
+  // Only the baseline gates: a page that collapses after the rewrite has to stay measurable.
+  if (target.before.impressions < MIN_TARGET_IMPRESSIONS) return insufficient('volume');
   if (controls.length < MIN_CONTROLS) return insufficient('control');
 
   const metric = target.before.clicks >= CLICKS_METRIC_FROM ? 'clicks' : 'impressions';

@@ -130,15 +130,67 @@ describe('changes: backfill of merged PRs without an entry', () => {
     expect(loadKeywords(dir).keywords[0].published_at).toBe('2026-09-02');
   });
 
-  it('ignores PRs opened more than 90 days ago without asking GitHub', async () => {
+  it('records a PR merged more than 90 days ago as skipped and does not read it again', async () => {
     const old = format(new Date(Date.now() - 120 * 86400000));
     seedKeyword({ status: 'published', pr_opened_at: old });
     seedImprovement({ merged_at: old, date: old });
+    getPR.mockImplementation(async () => merged(daysAgo(100)));
 
     await reconcile();
 
-    expect(getPR).not.toHaveBeenCalled();
     expect(loadChanges(dir).entries).toEqual([]);
+    expect(loadChanges(dir).skipped).toEqual([{ id: KW_PR, reason: 'too_old' }, { id: IMP_PR, reason: 'too_old' }]);
+
+    getPR.mockClear();
+    await reconcile();
+    expect(getPR).not.toHaveBeenCalled();
+  });
+
+  it('records a merged PR without a real merge date as skipped and does not read it again', async () => {
+    seedKeyword({ status: 'published' });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: null, createdAt: daysAgo(40), headRef: 'x' });
+
+    await reconcile();
+    expect(loadChanges(dir).skipped).toEqual([{ id: KW_PR, reason: 'no_merge_date' }]);
+
+    getPR.mockClear();
+    await reconcile();
+    expect(getPR).not.toHaveBeenCalled();
+  });
+
+  it('measures the 90 days from the merge date, not from the creation of the PR', async () => {
+    const old = format(new Date(Date.now() - 120 * 86400000));
+    seedKeyword({ status: 'published', pr_opened_at: old });
+    getPR.mockResolvedValue(merged(daysAgo(30), daysAgo(120)));
+
+    await reconcile();
+
+    expect(loadChanges(dir).entries).toHaveLength(1);
+  });
+
+  it('keeps an existing published_at', async () => {
+    seedKeyword({ status: 'published', published_at: '2026-08-30' });
+    getPR.mockResolvedValue(merged('2026-09-02T10:00:00Z'));
+
+    await reconcile();
+
+    expect(loadKeywords(dir).keywords[0].published_at).toBe('2026-08-30');
+    expect(loadChanges(dir).entries[0].merged_at).toBe('2026-09-02');
+  });
+
+  it('adds the counterpart URL to a rewrite entry once the alternate is readable, without asking GitHub', async () => {
+    seedImprovement({ merged_at: '2026-09-05T08:00:00Z' });
+    mkdirSync(join(dir, 'content/de'), { recursive: true });
+    getPR.mockResolvedValue(merged('2026-09-05T08:00:00Z'));
+    await reconcile();
+    expect(loadChanges(dir).entries[0].urls).toEqual(['https://a.de/preise']);
+
+    writeFileSync(join(dir, 'content/de/preise.md'), '---\nslug: preise\nalternate: pricing\n---\nbody');
+    getPR.mockClear();
+    await reconcile();
+
+    expect(getPR).not.toHaveBeenCalled();
+    expect(loadChanges(dir).entries[0].urls).toEqual(['https://a.de/preise', 'https://a.de/en/pricing']);
   });
 
   it('retries a PR that cannot be read on the next run', async () => {

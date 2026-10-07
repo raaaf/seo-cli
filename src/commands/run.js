@@ -10,7 +10,7 @@ import {
   loadSitemapPending, saveSitemapPending,
 } from '../lib/keywords.js';
 import { loadImprovements, saveImprovements } from '../lib/improvements.js';
-import { loadChanges, saveChanges, upsertEntry } from '../lib/changes.js';
+import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/changes.js';
 import { getPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { BudgetExceededError, loadBudget, budgetLimits } from '../lib/budget.js';
@@ -252,24 +252,42 @@ function rewriteEntry(item, mergedAt, config, cwd) {
 
 // Merged PRs the ledger does not know yet: published keywords (the main loop skips
 // them) and rewrites merged before the ledger existed. A PR that cannot be read has
-// no entry and is tried again next run. Returns whether a keyword changed.
+// no entry and is tried again next run; one that was read but never qualifies (no real
+// merge date, merged more than 90 days ago) goes to `changes.skipped` and is not read
+// again. Rewrites already in the ledger without a counterpart pick it up once it is
+// on disk. Returns whether a keyword changed.
 async function backfillLedger({ config, cwd, changes, keywords, improvements, warnings }) {
-  const known = new Set(changes.entries.map(e => e.id));
+  const known = new Map(changes.entries.map(e => [e.id, e]));
+  const skipped = new Set(changes.skipped.map(s => s.id));
   let keywordsChanged = false;
 
+  // Whether a merged PR is worth an entry; otherwise it is recorded and never read again.
+  const qualifies = (id, mergedAt) => {
+    const reason = !mergedAt ? 'no_merge_date' : !withinBackfill(mergedAt) ? 'too_old' : null;
+    if (reason) markSkipped(changes, id, reason);
+    return !reason;
+  };
+
   for (const kw of keywords.keywords) {
-    if (kw.status !== KEYWORD_STATUS.PUBLISHED || !kw.pr_url || known.has(kw.pr_url) || !withinBackfill(kw.pr_opened_at)) continue;
-    const { state, mergedAt, createdAt } = await readPR(config.repo, kw.pr_url, warnings);
-    if (state !== 'merged' || !mergedAt || !withinBackfill(createdAt)) continue;
-    kw.published_at = mergedAt.slice(0, 10);
-    keywordsChanged = true;
+    if (kw.status !== KEYWORD_STATUS.PUBLISHED || !kw.pr_url || known.has(kw.pr_url) || skipped.has(kw.pr_url)) continue;
+    const { state, mergedAt } = await readPR(config.repo, kw.pr_url, warnings);
+    if (state !== 'merged' || !qualifies(kw.pr_url, mergedAt)) continue;
+    if (!kw.published_at) {
+      kw.published_at = mergedAt.slice(0, 10);
+      keywordsChanged = true;
+    }
     upsertEntry(changes, newPageEntry(kw, mergedAt, config));
   }
 
   for (const item of improvements.entries) {
-    if (!item.pr_url || !item.merged_at || known.has(item.pr_url) || !withinBackfill(item.date)) continue;
+    if (!item.pr_url || !item.merged_at || skipped.has(item.pr_url)) continue;
+    const entry = known.get(item.pr_url);
+    if (entry) {
+      if (entry.kind === 'rewrite' && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
+      continue;
+    }
     const { state, mergedAt } = await readPR(config.repo, item.pr_url, warnings);
-    if (state === 'merged' && mergedAt) upsertEntry(changes, rewriteEntry(item, mergedAt, config, cwd));
+    if (state === 'merged' && qualifies(item.pr_url, mergedAt)) upsertEntry(changes, rewriteEntry(item, mergedAt, config, cwd));
   }
   return keywordsChanged;
 }
@@ -292,7 +310,7 @@ export async function reconcileState({ config, cwd, warnings }) {
   } catch (e) {
     warnings.push(`Change ledger skipped: ${e.message}`);
   }
-  const entriesBefore = changes?.entries.length;
+  const changesBefore = JSON.stringify(changes);
 
   for (const kw of keywords.keywords) {
     if (!kw.pr_url) continue;
@@ -309,7 +327,7 @@ export async function reconcileState({ config, cwd, warnings }) {
       for (const slug of kw.sitemap_slugs ?? []) {
         if (!sitemap.slugs.includes(slug)) { sitemap.slugs.push(slug); sitemapChanged = true; }
       }
-      // Only a real merge date makes a ledger entry; a merged PR without one is retried by the backfill.
+      // Only a real merge date makes a ledger entry; a merged PR without one goes through the backfill, which records it as skipped.
       if (mergedAt) {
         kw.published_at = mergedAt.slice(0, 10);
         if (changes) upsertEntry(changes, newPageEntry(kw, mergedAt, config));
@@ -347,7 +365,7 @@ export async function reconcileState({ config, cwd, warnings }) {
   if (keywordsChanged) saveKeywords(keywords, cwd);
   if (sitemapChanged) saveSitemapPending({ ...sitemap, updated: format(new Date()) }, cwd);
   if (improvementsChanged) saveImprovements(improvements, cwd);
-  if (changes && changes.entries.length !== entriesBefore) saveChanges(changes, cwd);
+  if (changes && JSON.stringify(changes) !== changesBefore) saveChanges(changes, cwd);
 }
 
 function writeReport(path, report) {

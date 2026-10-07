@@ -74,7 +74,7 @@ describe('measure-step: rewrites', () => {
     expect(report).toEqual({
       entries: 1, due: 2, measured: 2,
       verdicts: { positive: 1, neutral: 1, negative: 0, insufficient_data: 0 },
-      insufficient_by_reason: { volume: 0, control: 0, dispersion: 0, overlap: 0 },
+      insufficient_by_reason: { volume: 0, control: 0, dispersion: 0, overlap: 0, missing: 0, unmapped: 0 },
       revert_candidates: [],
       changed: [
         { slug: 'target', kind: 'rewrite', reading: 'd28', verdict: 'positive' },
@@ -110,6 +110,60 @@ describe('measure-step: rewrites', () => {
     warnings.length = 0;
     await run();
     expect(warnings).toEqual([]);
+  });
+
+  it('reports a target without any row in the reading window as missing, not as zero', async () => {
+    seed(entry());
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline') },
+      d28: { ...controlsAt(1000, 'after') },
+    });
+
+    const report = await run({ today: '2026-09-15' });
+
+    expect(loadChanges(dir).entries[0].readings.d28).toMatchObject({ verdict: 'insufficient_data', reason: 'missing' });
+    expect(report.insufficient_by_reason.missing).toBe(1);
+  });
+
+  it('treats a row with small numbers as a real value', async () => {
+    seed(entry());
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline') },
+      d28: { [url('target')]: [5], ...controlsAt(1000, 'after') },
+    });
+
+    await run({ today: '2026-09-15' });
+
+    expect(loadChanges(dir).entries[0].readings.d28).toMatchObject({ verdict: 'negative', impressions: 5 });
+  });
+
+  it('marks a target URL that maps to no landing page as unmapped once and never measures it', async () => {
+    seed(entry({ urls: [url('gone-page')] }));
+
+    const report = await run();
+    const again = await run();
+
+    expect(queryPageTotals).not.toHaveBeenCalled();
+    const [saved] = loadChanges(dir).entries;
+    expect(saved).toMatchObject({ unmapped: true, readings: { d28: null, d56: null } });
+    expect(report).toMatchObject({ due: 0, measured: 0 });
+    expect(report.insufficient_by_reason.unmapped).toBe(1);
+    expect(warnings.filter(w => w.includes('maps to no landing page'))).toHaveLength(1);
+    expect(again.insufficient_by_reason.unmapped).toBe(1);
+  });
+
+  it('does not compute d56 in the same run when d28 failed', async () => {
+    seed(entry());
+    queryPageTotals.mockImplementation(async (_property, { startDate }) => {
+      if (startDate === W.d28.startDate) throw new Error('quota');
+      return [{ url: url('target'), impressions: 1000, clicks: 0, position: 5 }];
+    });
+
+    const report = await run();
+
+    expect(report).toMatchObject({ due: 1, measured: 0 });
+    expect(loadChanges(dir).entries[0].readings).toEqual({ d28: null, d56: null });
+    expect(queryPageTotals.mock.calls.some(([, w]) => w.startDate === W.d56.startDate)).toBe(false);
   });
 
   it('marks two rewrites of the same page as overlap without asking GSC', async () => {
@@ -162,7 +216,7 @@ describe('measure-step: failures and dry run', () => {
     const report = await run();
 
     expect(warnings.some(w => w.includes('quota'))).toBe(true);
-    expect(report).toMatchObject({ due: 2, measured: 0, changed: [] });
+    expect(report).toMatchObject({ due: 1, measured: 0, changed: [] });
     expect(readFileSync(join(dir, CHANGES_FILE), 'utf8')).toBe(before);
   });
 

@@ -82,9 +82,12 @@ describe('measure: verdictFor', () => {
   const controls = Array.from({ length: 20 }, (_, i) => page(100, 100 + i * 2));
   const target = (after, before = 200) => page(before, after);
 
-  it('is insufficient (volume) when the target has fewer than 100 impressions before or after', () => {
+  it('is insufficient (volume) when the target has fewer than 100 impressions before', () => {
     expect(verdictFor({ target: target(500, 99), controls })).toMatchObject({ verdict: 'insufficient_data', reason: 'volume' });
-    expect(verdictFor({ target: target(99), controls })).toMatchObject({ verdict: 'insufficient_data', reason: 'volume' });
+  });
+
+  it('stays measurable when the page collapses after the rewrite: 400 before, 10 after is negative', () => {
+    expect(verdictFor({ target: target(10, 400), controls }).verdict).toBe('negative');
   });
 
   it('is insufficient (control) with fewer than 12 controls', () => {

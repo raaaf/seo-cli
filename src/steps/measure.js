@@ -41,6 +41,10 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     return pages;
   }
 
+  // A page whose URL maps to no known landing page (slug gone, other URL scheme) cannot be measured.
+  const isMapped = (url) => urlToSlug(url, config, slugsByLocale) !== null;
+  const isUnmapped = (entry) => entry.kind === 'new' ? !entry.urls.some(isMapped) : !isMapped(entry.urls[0]);
+
   async function measureEntry(entry, key) {
     const windows = windowsFor(entry.merged_at);
     const window = windows[key];
@@ -58,6 +62,10 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     const afterPages = await windowPages(window);
     const target = normalizeUrl(entry.urls[0]);
     entry.baseline ??= { window: windows.baseline, ...(baselinePages.get(target) ?? NONE) };
+    // A row with small numbers is a real value; no row at all is not a zero.
+    if (entry.baseline.impressions > 0 && !afterPages.has(target)) {
+      return { ...reading, verdict: 'insufficient_data', reason: 'missing' };
+    }
     const after = afterPages.get(target) ?? NONE;
 
     // Pages touched near this one, counterparts included, are no control.
@@ -79,7 +87,14 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
   for (const entry of changes.entries) {
     const windows = windowsFor(entry.merged_at);
     for (const key of READINGS) {
+      if (entry.unmapped) break;
       if (entry.readings[key] || !isDue(windows[key], today)) continue;
+      if (isUnmapped(entry)) {
+        entry.unmapped = true;
+        dirty = true;
+        warnings.push(`Measurement of ${entry.slug} skipped: its URL maps to no landing page`);
+        break;
+      }
       due++;
       try {
         entry.readings[key] = await measureEntry(entry, key);
@@ -88,6 +103,8 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
       } catch (e) {
         warnings.push(`Measurement of ${entry.slug} (${key}) failed: ${e.message}`);
       }
+      // d56 only after d28 exists, so the revert rule sees both readings in order.
+      if (!entry.readings[key]) break;
     }
     if (entry.kind === 'rewrite' && !entry.revert_candidate && isRevertCandidate(entry)) {
       entry.revert_candidate = true;
@@ -112,7 +129,10 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     due,
     measured: changed.length,
     verdicts: tally('verdict', ['positive', 'neutral', 'negative', 'insufficient_data']),
-    insufficient_by_reason: tally('reason', ['volume', 'control', 'dispersion', 'overlap']),
+    insufficient_by_reason: {
+      ...tally('reason', ['volume', 'control', 'dispersion', 'overlap', 'missing']),
+      unmapped: changes.entries.filter(e => e.unmapped).length,
+    },
     revert_candidates: changes.entries.filter(e => e.revert_candidate).map(e => e.slug),
     changed,
   };
