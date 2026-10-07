@@ -1,5 +1,5 @@
-import { join, dirname } from 'path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 import chalk from 'chalk';
 import {
   loadConfig, defaultLocale as getDefaultLocale, localeLandingPath as getLocaleLandingPath, localeUrlPath,
@@ -13,8 +13,8 @@ import { loadImprovements, saveImprovements } from '../lib/improvements.js';
 import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/changes.js';
 import { getPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
-import { BudgetExceededError, loadBudget, budgetLimits } from '../lib/budget.js';
-import { getLlmStats } from '../lib/claude.js';
+import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
+import { BudgetExceededError } from '../lib/budget.js';
 import { isoWeek, format } from '../lib/date.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
@@ -368,37 +368,6 @@ export async function reconcileState({ config, cwd, warnings }) {
   if (changes && JSON.stringify(changes) !== changesBefore) saveChanges(changes, cwd);
 }
 
-function writeReport(path, report) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(report, null, 2) + '\n', 'utf8');
-}
-
-// Roughly 1 percent of the weekly Max limit (see the plan's calibration).
-const SUBSCRIPTION_WARN_USD = 25;
-
-// Which backend answered, and why it did not: the fallbacks cost API money.
-function llmSummary(warnings) {
-  const llm = getLlmStats();
-  if (llm.fallbacks.length > 0) {
-    const kinds = [...new Set(llm.fallbacks.map(f => f.kind))].join(', ');
-    warnings.push(`${llm.fallbacks.length} LLM call(s) fell back from the subscription to the API (${kinds})`);
-  }
-  if (llm.usd_equivalent > SUBSCRIPTION_WARN_USD) {
-    warnings.push(`Subscription usage this run is worth ${llm.usd_equivalent.toFixed(2)} USD on the API, over ${SUBSCRIPTION_WARN_USD} USD`);
-  }
-  return llm;
-}
-
-function budgetSummary(cwd) {
-  const { month, serpapi, anthropic } = loadBudget(cwd);
-  const limits = budgetLimits(cwd);
-  return {
-    month,
-    serpapi: { used: serpapi.used, limit: limits.serpapi_per_month },
-    anthropic: { usd: Number(anthropic.usd.toFixed(4)), calls: anthropic.calls, limit_usd: limits.usd_per_month },
-  };
-}
-
 export async function runCommand(opts) {
   const missing = REQUIRED_ENV.filter(k => !process.env[k]);
   if (missing.length) {
@@ -532,7 +501,10 @@ export async function runCommand(opts) {
       throw e;
     }
   } finally {
+    try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
+    report.llm = llmSummary(report.warnings);
     if (!dryRun) {
+      try { writeRunLog({ cwd, report, mode: 'run' }); } catch (e) { report.warnings.push(`Run log not written: ${e.message}`); }
       try {
         releasePending([...awaiting]);
         if (keywordsData) saveKeywords(keywordsData, cwd);
@@ -542,8 +514,6 @@ export async function runCommand(opts) {
         console.error(chalk.red(`\nState commit after the run failed: ${e.message}`));
       }
     }
-    try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
-    report.llm = llmSummary(report.warnings);
     if (opts.report) writeReport(opts.report, report);
   }
 

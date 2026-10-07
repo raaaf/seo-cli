@@ -81,4 +81,14 @@ describe('state: commitState', () => {
     remoteTree({});
     expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual(['seo/changes.json']);
   });
+
+  it('limits the candidates to `files` when given, and treats the run log and alerts as state', async () => {
+    write('seo/keywords.json', '{"a":1}\n');
+    write('seo/alerts.json', '{}\n');
+    write('seo/runs.jsonl', '{}\n');
+    remoteTree({});
+
+    expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'watch', files: ['seo/alerts.json'] })).toEqual(['seo/alerts.json']);
+    expect((await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).sort()).toEqual(['seo/alerts.json', 'seo/keywords.json', 'seo/runs.jsonl']);
+  });
 });

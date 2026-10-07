@@ -71,10 +71,19 @@ export function loadIndexStatus(cwd = process.cwd()) {
   }
 }
 
+/**
+ * Writes the snapshot. An `unknown` entry (quota ran out) never replaces the
+ * previous entry for that URL, and `updated` only moves when the entries do, so
+ * an unchanged daily snapshot stays byte-identical and is not committed again.
+ */
 export function saveIndexStatus(data, cwd = process.cwd()) {
   const path = join(cwd, INDEX_STATUS_FILE);
+  const previous = loadIndexStatus(cwd);
+  const previousByUrl = new Map(previous.entries.map(e => [e.url, e]));
+  data.entries = data.entries.map(e => (e.coverageState === 'unknown' && previousByUrl.has(e.url) ? previousByUrl.get(e.url) : e));
+  const unchanged = previous.updated && JSON.stringify(previous.entries) === JSON.stringify(data.entries);
+  data.updated = unchanged ? previous.updated : format(new Date());
   mkdirSync(dirname(path), { recursive: true });
-  data.updated = format(new Date());
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 

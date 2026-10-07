@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -27,7 +27,10 @@ vi.mock('../src/steps/improve.js', () => ({
   improvePage: (...a) => improvePage(...a),
   keywordFor: () => ({ keyword: 'preise', expected_entities: [] }),
 }));
-vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
+vi.mock('../src/lib/claude.js', () => ({
+  complete: (...a) => complete(...a),
+  getLlmStats: () => ({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] }),
+}));
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 vi.mock('../src/steps/review.js', () => ({
   reviewPage: (...a) => reviewPage(...a),
@@ -73,6 +76,19 @@ afterEach(() => {
 });
 
 describe('improveCommand', () => {
+  it('writes the run log before the last state commit, and none on a dry run', async () => {
+    const seen = [];
+    commitState.mockImplementation(async () => { seen.push(existsSync(join(dir, 'seo/last-run.json'))); return []; });
+
+    await improveCommand({ config: CONFIG });
+    expect(seen).toEqual([false, true]);
+    expect(JSON.parse(readFileSync(join(dir, 'seo/last-run.json'), 'utf8'))).toMatchObject({ mode: 'improve', status: 'prs_opened' });
+
+    rmSync(join(dir, 'seo'), { recursive: true });
+    await improveCommand({ config: CONFIG, dryRun: true });
+    expect(existsSync(join(dir, 'seo/last-run.json'))).toBe(false);
+  });
+
   it('commits to the same per-page improve branch the PR is opened against', async () => {
     await improveCommand({ config: CONFIG });
 

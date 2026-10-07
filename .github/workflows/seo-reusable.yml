@@ -12,6 +12,12 @@ on:
         type: boolean
         required: false
         default: false
+      # run: the full pipeline (default). watch: the daily guard without an LLM
+      # (index status and traffic, alerts only), no secrets besides Google's.
+      mode:
+        type: string
+        required: false
+        default: run
     secrets:
       # Option A: 1Password (ANTHROPIC_API_KEY + SERPAPI_KEY werden aus 1Password geladen)
       OP_SERVICE_ACCOUNT_TOKEN:
@@ -67,7 +73,7 @@ jobs:
           node-version: '22'
 
       - name: Load shared secrets from 1Password
-        if: env.HAVE_OP_TOKEN == 'true'
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true'
         uses: 1password/load-secrets-action@v4
         with:
           export-env: true
@@ -77,7 +83,7 @@ jobs:
           SERPAPI_KEY: op://development/seo-cli/SERPAPI_KEY
 
       - name: Use direct secrets (no 1Password)
-        if: env.HAVE_OP_TOKEN != 'true'
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN != 'true'
         env:
           DIRECT_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           DIRECT_SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
@@ -103,7 +109,7 @@ jobs:
 
       # Only with a token: without it seo-cli never starts `claude`.
       - name: Install Claude Code
-        if: env.HAVE_CC_TOKEN == 'true'
+        if: inputs.mode != 'watch' && env.HAVE_CC_TOKEN == 'true'
         run: npm install -g @anthropic-ai/claude-code@2.1.292
 
       - name: Write Google credentials
@@ -116,6 +122,7 @@ jobs:
           printf '%s' "$GSC_TOKEN" > "$HOME/.seo-cli-token.json"
 
       - name: Run seo
+        if: inputs.mode != 'watch'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
@@ -123,26 +130,31 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: node .seo-cli/bin/seo.js run --report "$RUNNER_TEMP/seo-report.json"
 
-      # Weekly index-status snapshot, committed straight to main. Non-fatal: the
-      # zeit incident (deindexed 2026-08-04, unnoticed for five weeks because a
-      # quiet week and a silently deindexed one both print "nothing to do") is
-      # the reason this exists, but a Search Console hiccup here must not fail
-      # the whole run.
-      - name: Check index status
+      # Index status and traffic through `seo watch`: alerts only for what is new
+      # or resolved, state committed to main only when it changed. In run mode it
+      # follows the run, non-fatal (the zeit incident, deindexed 2026-08-04 and
+      # unnoticed for five weeks, is why it exists, but a Search Console hiccup
+      # must not fail the run). In watch mode it is the job and its report feeds
+      # the notify step. Needs no LLM or SerpAPI key.
+      - name: Watch (index status and traffic)
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
+          MODE: ${{ inputs.mode }}
         run: |
-          if ! node .seo-cli/bin/seo.js index-status --commit; then
-            echo "::warning::index-status check failed (non-fatal)"
-            echo "index-status check failed" >> "$RUNNER_TEMP/seo-warnings.txt"
+          WATCH_REPORT="$RUNNER_TEMP/seo-watch.json"
+          if [ "$MODE" = "watch" ]; then WATCH_REPORT="$RUNNER_TEMP/seo-report.json"; fi
+          if ! node .seo-cli/bin/seo.js watch --commit --report "$WATCH_REPORT"; then
+            if [ "$MODE" = "watch" ]; then exit 1; fi
+            echo "::warning::seo watch failed (non-fatal)"
+            echo "seo watch failed" >> "$RUNNER_TEMP/seo-warnings.txt"
           fi
 
       # One pass per PR from the run report. The state files are already on main
       # (committed by `seo run`), so the PR branches contain pages only.
       - name: Gate (validate, auto-merge)
-        if: always()
+        if: always() && inputs.mode != 'watch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REQUIRE_REVIEW: ${{ inputs.require_review }}
@@ -349,12 +361,16 @@ jobs:
         env:
           NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
           JOB_STATUS: ${{ job.status }}
+          MODE: ${{ inputs.mode }}
         run: |
           set -uo pipefail
 
           REPORT_FILE="$RUNNER_TEMP/seo-report.json"
           GATE_STATUS_FILE="$RUNNER_TEMP/gate-status.txt"
           WARNINGS_FILE="$RUNNER_TEMP/seo-warnings.txt"
+          # Run mode: the watch report is a separate file. Watch mode: it is the report.
+          WATCH_FILE="$RUNNER_TEMP/seo-watch.json"
+          if [ "$MODE" = "watch" ]; then WATCH_FILE="$REPORT_FILE"; fi
 
           if [ -z "${NOTIFY_WEBHOOK:-}" ]; then
             echo "::warning::No SEO_NOTIFY_WEBHOOK configured, this run reports nowhere."
@@ -365,6 +381,8 @@ jobs:
           [ -f "$REPORT_FILE" ] && REPORT=$(cat "$REPORT_FILE")
           GATES='{}'
           [ -s "$GATE_STATUS_FILE" ] && GATES=$(jq -Rn '[inputs | split(" ") | {key: .[0], value: .[1]}] | from_entries' < "$GATE_STATUS_FILE")
+          ALERTS='null'
+          [ -f "$WATCH_FILE" ] && ALERTS=$(jq -c '.alerts // null' "$WATCH_FILE")
           EXTRA_WARNINGS='[]'
           [ -s "$WARNINGS_FILE" ] && EXTRA_WARNINGS=$(jq -Rn '[inputs]' < "$WARNINGS_FILE")
 
@@ -379,16 +397,18 @@ jobs:
             --arg repo "${GITHUB_REPOSITORY}" \
             --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg status "$STATUS" \
+            --arg mode "$MODE" \
+            --argjson alerts "$ALERTS" \
             --argjson report "$REPORT" \
             --argjson gates "$GATES" \
             --argjson extra "$EXTRA_WARNINGS" \
-            '{repo:$repo, run_url:$run_url, status:$status,
+            '{repo:$repo, run_url:$run_url, status:$status, mode:$mode, alerts:$alerts,
               prs: ($report.prs // [] | map({url, gate_status: ($gates[.url] // "unknown")})),
               budget: ($report.budget // null),
               llm: ($report.llm // null),
               warnings: (($report.warnings // []) + $extra),
               errors: ($report.errors // [])}' \
-            | curl -sS -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \
+            | curl -sS --fail -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \
             || echo "::warning::Notify webhook call failed (non-fatal)."
 
       - name: Clean up credentials

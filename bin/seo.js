@@ -18,6 +18,7 @@ import { checkCommand } from '../src/commands/check.js';
 import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
 import { indexnowCommand } from '../src/commands/indexnow.js';
 import { indexStatusCommand } from '../src/commands/index-status.js';
+import { watchCommand } from '../src/commands/watch.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
 import { improveCommand } from '../src/commands/improve.js';
 import { conversationalCommand } from '../src/commands/conversational.js';
@@ -82,5 +83,13 @@ program
   .option('--json', 'print the inspection results and diff as JSON')
   .option('--commit', 'commit seo/index-status.json to main via the GitHub API')
   .action(indexStatusCommand);
+
+program
+  .command('watch')
+  .description('Daily guard without an LLM: index status and landing page traffic, alerts only for what is new or resolved')
+  .option('--commit', 'commit seo/alerts.json and seo/index-status.json to main when they changed')
+  .option('--report <path>', 'write the watch result (status, alerts, warnings) as JSON')
+  .option('--dry-run', 'do not write seo/alerts.json and do not commit')
+  .action(watchCommand);
 
 program.parse();

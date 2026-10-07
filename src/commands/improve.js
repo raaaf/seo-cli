@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
+import { writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
 import { isoWeek } from '../lib/date.js';
 import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown } from '../lib/improvements.js';
 import { fetchPagePerformance, selectPage, improvePage, keywordFor } from '../steps/improve.js';
@@ -155,17 +156,37 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
 /**
  * `seo improve`: prepare, state to main, PR, state to main again. Returns the PR
  * url, or null when nothing qualified, the rewrite was dropped or the PR skipped.
+ * The run log (`last-run.json`, `runs.jsonl`) is written before the last state
+ * commit, also when the PR failed; a dry run writes nothing.
  */
 export async function improveCommand(opts = {}, cwd = process.cwd()) {
   const config = opts.config ?? loadConfig(cwd);
   const prepared = await prepareImprove({ ...opts, config }, cwd);
-  if (!prepared) return null;
+  if (opts.dryRun) return null;
 
+  const report = { status: 'idle', prs: [], budget: null, warnings: [], errors: [] };
   const syncState = (reason) => commitState({ cwd, repo: config.repo, reason });
   const week = isoWeek();
-  await syncState(`improve ${week}`);
-  const prUrl = await publishImprove(prepared, { config, cwd });
-  await syncState(`improve ${week} results`);
+  let prUrl = null;
+  try {
+    if (prepared) {
+      await syncState(`improve ${week}`);
+      prUrl = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
+      if (prUrl) {
+        report.prs.push({ url: prUrl, kind: 'improve', slug: prepared.slug });
+        report.status = 'prs_opened';
+      }
+    }
+  } catch (e) {
+    report.status = 'failed';
+    report.errors.push(e.message);
+    throw e;
+  } finally {
+    try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
+    report.llm = llmSummary(report.warnings);
+    try { writeRunLog({ cwd, report, mode: 'improve' }); } catch (e) { report.warnings.push(`Run log not written: ${e.message}`); }
+    await syncState(`improve ${week} results`);
+  }
   return prUrl;
 }
 

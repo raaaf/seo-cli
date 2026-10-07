@@ -6,10 +6,12 @@ import { IMPROVEMENTS_FILE } from './improvements.js';
 import { INDEX_STATUS_FILE } from './index-status.js';
 import { BUDGET_FILE } from './budget.js';
 import { CHANGES_FILE } from './changes.js';
+import { LAST_RUN_FILE, RUNS_LOG_FILE } from './runlog.js';
+import { ALERTS_FILE } from './watch.js';
 import { commitToBranch, getBlobShas } from './github.js';
 
 // Machine state that goes straight to main, never into a content PR.
-export const STATE_FILES = [KEYWORDS_FILE, SITEMAP_PENDING_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE];
+export const STATE_FILES = [KEYWORDS_FILE, SITEMAP_PENDING_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE, LAST_RUN_FILE, RUNS_LOG_FILE, ALERTS_FILE];
 
 // Git object id of a file: sha1("blob <bytes>\0<content>").
 export function gitBlobSha(content) {
@@ -21,10 +23,12 @@ export function gitBlobSha(content) {
  * Commits the state files whose content differs from main to main. [skip ci]
  * because raaaf/portfolio-2025 deploys to FTP on every unfiltered push, and a
  * bookkeeping snapshot must not redeploy the site. Returns the committed paths
- * (empty when nothing differs, then no commit is made).
+ * (empty when nothing differs, then no commit is made). `files` limits the
+ * candidates to a subset of STATE_FILES, so `seo watch` commits only its own.
  */
-export async function commitState({ cwd, repo, reason }) {
+export async function commitState({ cwd, repo, reason, files = null }) {
   const local = STATE_FILES
+    .filter(path => !files || files.includes(path))
     .filter(path => existsSync(join(cwd, path)))
     .map(path => ({ path, content: readFileSync(join(cwd, path), 'utf8') }));
 
