@@ -126,9 +126,10 @@ export function validate(markdown, keyword, opts = {}) {
   // meta_title length
   if (parsed.meta_title != null) {
     const len = String(parsed.meta_title).length;
-    if (len < SEO_THRESHOLDS.metaTitle.shortWarn) warnings.push(`meta_title short (${len} chars, aim 50–60)`);
-    // The site appends its brand to every title, so the contract shortens the limit by that suffix.
-    const titleMax = SEO_THRESHOLDS.metaTitle.errorMax - (contract?.meta_title_suffix?.length ?? 0);
+    // The site appends its brand to every title, so the contract shortens both limits by that suffix.
+    const suffixLen = contract?.meta_title_suffix?.length ?? 0;
+    if (len < SEO_THRESHOLDS.metaTitle.shortWarn - suffixLen) warnings.push(`meta_title short (${len} chars, aim 50–60)`);
+    const titleMax = SEO_THRESHOLDS.metaTitle.errorMax - suffixLen;
     if (len > titleMax) errors.push(`meta_title too long (${len} chars, max ${titleMax})`);
   }
 

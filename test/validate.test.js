@@ -368,6 +368,11 @@ describe('validate-page: page contract', () => {
     expect(run(page({ title })).errors).toEqual([]);
   });
 
+  it('lowers the short-title warning by the brand suffix too', () => {
+    const title = 'geschenke fuer nachteulen heute'; // 31 chars, 49 with the suffix the site appends
+    expect(run(page({ title })).warnings.some(w => w.startsWith('meta_title short'))).toBe(false);
+  });
+
   it('fails a claim the catalog does not back', () => {
     const { errors } = run(page({ bodyText: `${body()} kostet nur 19,99 euro.` }));
     expect(errors.some(e => e.startsWith('Claim not backed by the catalog') && e.includes('19,99 eur'))).toBe(true);

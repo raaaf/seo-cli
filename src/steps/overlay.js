@@ -85,8 +85,9 @@ export function validateOverlay(fields, { key, contract = null, catalog = null }
 
   if (text('meta_title')) {
     const len = text('meta_title').length;
-    const max = SEO_THRESHOLDS.metaTitle.errorMax - (contract?.meta_title_suffix?.length ?? 0);
-    if (len < SEO_THRESHOLDS.metaTitle.shortWarn) warnings.push(`meta_title short (${len} chars)`);
+    const suffixLen = contract?.meta_title_suffix?.length ?? 0;
+    const max = SEO_THRESHOLDS.metaTitle.errorMax - suffixLen;
+    if (len < SEO_THRESHOLDS.metaTitle.shortWarn - suffixLen) warnings.push(`meta_title short (${len} chars)`);
     if (len > max) errors.push(`meta_title too long (${len} chars, max ${max})`);
   }
   if (text('meta_description')) {
