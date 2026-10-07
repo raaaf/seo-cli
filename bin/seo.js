@@ -44,12 +44,17 @@ program
   .command('improve')
   .description('Rewrite the existing page with the strongest case for it, based on live Search Console data')
   .option('--dry-run', 'print the rewritten markdown, do not commit or open PR')
+  .option('--slug <slug>', 'rewrite this page instead of selecting one from Search Console')
+  .option('--merge-from <slugs>', 'with --slug: merge these pages (comma separated) into it, delete them and redirect', (v) => v.split(',').map(x => x.trim()).filter(Boolean))
+  .option('--brief <file>', 'with --slug: file with what the rewrite has to fix')
+  .option('--report <path>', 'write the run report (status, PRs, warnings, errors) as JSON')
   .action((opts) => improveCommand(opts));
 
 program
   .command('check')
   .description('Validate already-generated landing-page markdown files (CI gate)')
   .argument('<files...>', 'markdown files to validate (e.g. the PR\'s changed .md files)')
+  .option('--strict', 'apply the strict quality rules even without `quality: strict` in seo.config.yaml')
   .action(checkCommand);
 
 program

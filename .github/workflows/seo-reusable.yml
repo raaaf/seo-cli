@@ -18,6 +18,21 @@ on:
         type: string
         required: false
         default: run
+      # Targeted rewrite instead of `seo run`: rewrite this page (`seo improve --slug`),
+      # optionally merging the comma-separated `merge_from` pages into it, with the
+      # brief file (a path in the target repo) as diagnosis. Empty = the normal run.
+      slug:
+        type: string
+        required: false
+        default: ''
+      merge_from:
+        type: string
+        required: false
+        default: ''
+      brief:
+        type: string
+        required: false
+        default: ''
     secrets:
       # Option A: 1Password (ANTHROPIC_API_KEY + SERPAPI_KEY werden aus 1Password geladen)
       OP_SERVICE_ACCOUNT_TOKEN:
@@ -128,7 +143,18 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
           # ANTHROPIC_API_KEY (from GITHUB_ENV) stays set: it is the fallback.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: node .seo-cli/bin/seo.js run --report "$RUNNER_TEMP/seo-report.json"
+          SEO_SLUG: ${{ inputs.slug }}
+          SEO_MERGE_FROM: ${{ inputs.merge_from }}
+          SEO_BRIEF: ${{ inputs.brief }}
+        run: |
+          if [ -n "$SEO_SLUG" ]; then
+            args=(improve --slug "$SEO_SLUG" --report "$RUNNER_TEMP/seo-report.json")
+            [ -n "$SEO_MERGE_FROM" ] && args+=(--merge-from "$SEO_MERGE_FROM")
+            [ -n "$SEO_BRIEF" ] && args+=(--brief "$SEO_BRIEF")
+            node .seo-cli/bin/seo.js "${args[@]}"
+          else
+            node .seo-cli/bin/seo.js run --report "$RUNNER_TEMP/seo-report.json"
+          fi
 
       # Index status and traffic through `seo watch`: alerts only for what is new
       # or resolved, state committed to main only when it changed. In run mode it

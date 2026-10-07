@@ -11,6 +11,7 @@ import { tmpdir } from 'os';
 const fetchPagePerformance = vi.fn();
 const selectPage = vi.fn();
 const improvePage = vi.fn();
+const targetedPage = vi.fn();
 const validate = vi.fn();
 const createBranchAndCommit = vi.fn();
 const openPR = vi.fn();
@@ -25,6 +26,7 @@ vi.mock('../src/steps/improve.js', () => ({
   fetchPagePerformance: (...a) => fetchPagePerformance(...a),
   selectPage: (...a) => selectPage(...a),
   improvePage: (...a) => improvePage(...a),
+  targetedPage: (...a) => targetedPage(...a),
   keywordFor: () => ({ keyword: 'preise', expected_entities: [] }),
 }));
 vi.mock('../src/lib/claude.js', () => ({
@@ -59,7 +61,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-improve-cmd-'));
   cwd = process.cwd();
   process.chdir(dir);
-  for (const fn of [fetchPagePerformance, selectPage, improvePage, validate, createBranchAndCommit, openPR, deleteBranch, reviewPage, complete, commitState]) fn.mockReset();
+  for (const fn of [fetchPagePerformance, selectPage, improvePage, targetedPage, validate, createBranchAndCommit, openPR, deleteBranch, reviewPage, complete, commitState]) fn.mockReset();
   reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
   fetchPagePerformance.mockResolvedValue([]);
   selectPage.mockReturnValue({ ...PAGE });
@@ -284,5 +286,65 @@ describe('improveCommand', () => {
       expect(filesOfCommit()).not.toContain('content/landing/en/pricing.md');
       expect(openPR.mock.calls[0][0].body).toContain('Counterpart pricing could not be re-adapted');
     });
+  });
+});
+
+describe('improve --slug', () => {
+  const TARGET = { slug: 'preise', mergeFrom: ['alt-a', 'alt-b'], kind: 'targeted', reason: 'targeted rewrite, merging alt-a, alt-b', diagnosis: 'd', impressions: 0, clicks: 0, bestPosition: 0, queries: [] };
+  const landing = (name, content) => {
+    mkdirSync(join(dir, 'content/landing/de'), { recursive: true });
+    writeFileSync(join(dir, 'content/landing/de', `${name}.md`), content);
+  };
+
+  beforeEach(() => {
+    targetedPage.mockReturnValue({ ...TARGET });
+    landing('preise', '---\nslug: preise\n---\nbody');
+    landing('alt-a', '---\nslug: alt-a\n---\nA');
+    landing('alt-b', '---\nslug: alt-b\n---\nB');
+    landing('other', '---\nslug: other\nrelated_pages:\n  - alt-a\n  - kept\n  - alt-b\n---\nO');
+    landing('untouched', '---\nslug: untouched\nrelated_pages:\n  - kept\n---\nU');
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/redirects.json'), JSON.stringify({ old: 'alt-a' }));
+  });
+
+  it('skips Search Console and selection', async () => {
+    await prepareImprove({ config: CONFIG, slug: 'preise', mergeFrom: ['alt-a', 'alt-b'], brief: undefined });
+
+    expect(fetchPagePerformance).not.toHaveBeenCalled();
+    expect(selectPage).not.toHaveBeenCalled();
+    expect(targetedPage).toHaveBeenCalledWith({ slug: 'preise', mergeFrom: ['alt-a', 'alt-b'], brief: null }, CONFIG, expect.any(String));
+  });
+
+  it('passes the brief file content on', async () => {
+    writeFileSync(join(dir, 'brief.md'), 'fix the legal errors');
+    await prepareImprove({ config: CONFIG, slug: 'preise', brief: 'brief.md' });
+
+    expect(targetedPage.mock.calls[0][0].brief).toBe('fix the legal errors');
+  });
+
+  it('refuses --merge-from and --brief without --slug', async () => {
+    await expect(prepareImprove({ config: CONFIG, mergeFrom: ['alt-a'] })).rejects.toThrow(/need --slug/);
+  });
+
+  it('puts rewrite, deletions, redirects and repointed related pages into one PR', async () => {
+    const prepared = await prepareImprove({ config: CONFIG, slug: 'preise', mergeFrom: ['alt-a', 'alt-b'] });
+    const byPath = Object.fromEntries(prepared.files.map(f => [f.path, f]));
+
+    expect(Object.keys(byPath).sort()).toEqual([
+      'content/landing/de/alt-a.md', 'content/landing/de/alt-b.md', 'content/landing/de/other.md',
+      'content/landing/de/preise.md', 'seo/redirects.json',
+    ]);
+    expect(byPath['content/landing/de/alt-a.md'].delete).toBe(true);
+    expect(byPath['content/landing/de/alt-b.md'].delete).toBe(true);
+    expect(JSON.parse(byPath['seo/redirects.json'].content)).toEqual({ old: 'preise', 'alt-a': 'preise', 'alt-b': 'preise' });
+    expect(byPath['content/landing/de/other.md'].content).toBe('---\nslug: other\nrelated_pages:\n  - preise\n  - kept\n---\nO');
+    expect(prepared.files.some(f => f.path.includes('keywords.json'))).toBe(false);
+  });
+
+  it('opens a plain rewrite PR without merge files when nothing is merged', async () => {
+    targetedPage.mockReturnValue({ ...TARGET, mergeFrom: [] });
+    const prepared = await prepareImprove({ config: CONFIG, slug: 'preise' });
+
+    expect(prepared.files.map(f => f.path)).toEqual(['content/landing/de/preise.md']);
   });
 });

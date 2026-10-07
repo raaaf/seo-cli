@@ -63,7 +63,9 @@ export async function deleteBranch({ repo, branch }) {
 async function buildCommit(octokit, { owner, name, files, message, parentSha }) {
   const { data: parent } = await octokit.git.getCommit({ owner, repo: name, commit_sha: parentSha });
 
-  const treeItems = await Promise.all(files.map(async ({ path, content }) => {
+  // A file with `delete: true` becomes a tree entry with sha null, which removes it.
+  const treeItems = await Promise.all(files.map(async ({ path, content, delete: remove }) => {
+    if (remove) return { path, mode: '100644', type: 'blob', sha: null };
     const { data: blob } = await octokit.git.createBlob({
       owner, repo: name,
       content: Buffer.from(content).toString('base64'),

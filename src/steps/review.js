@@ -1,4 +1,5 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import chalk from 'chalk';
 import { complete } from '../lib/claude.js';
 import { rethrowIfBudget } from '../lib/budget.js';
@@ -6,7 +7,7 @@ import { format } from '../lib/date.js';
 import { fillTemplate } from '../lib/template.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { getExistingPages } from '../lib/landings.js';
-import { defaultLocale } from '../lib/config.js';
+import { defaultLocale, isStrict } from '../lib/config.js';
 import { loadStyleDoc } from './generate.js';
 
 const REVIEW_PROMPT = readFileSync(new URL('../prompts/review.md', import.meta.url), 'utf8');
@@ -14,6 +15,7 @@ const REVIEW_PROMPT = readFileSync(new URL('../prompts/review.md', import.meta.u
 // Sibling pages handed to the reviewer for cross-page number consistency. More
 // than this and the prompt grows faster than the check gets better.
 const CLUSTER_PAGES = 8;
+const PRODUCT_FACTS_FILE = 'seo/product-facts.md';
 const SEVERITIES = new Set(['high', 'medium', 'low']);
 const NO_JSON_RETRY = 'Your previous answer contained no JSON. Return only the JSON object in the documented shape, with no prose before or after it. Use an empty findings array when nothing is wrong.';
 
@@ -43,6 +45,7 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
     site_name: config.site_name || config.project || '',
     today: format(new Date()),
     cluster_context: clusterContext(config, cwd, locale),
+    product_facts: productFactsBlock(config, cwd),
     style_guide: loadStyleDoc(config, cwd),
   };
 
@@ -86,6 +89,30 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
   logFindings(findings);
 
   return { markdown: patched, findings };
+}
+
+// Under `quality: strict`, what the product does and does not do, from the target
+// repo. Empty (and the prompt unchanged) for a standard project or without the file.
+function productFactsBlock(config, cwd) {
+  const path = join(cwd, PRODUCT_FACTS_FILE);
+  if (!isStrict(config) || !existsSync(path)) return '';
+  return [
+    '',
+    '',
+    '## Product facts',
+    '',
+    'What the product described on this page really does and does not do. Unlike the',
+    'rule above about unverifiable claims, this list is the evidence, so no web search',
+    'is needed for it:',
+    '',
+    '- A claim about the product that CONTRADICTS this list is **high**.',
+    '- A claim about the product that is ABSENT from this list is **medium**: the page',
+    '  must not promise what we cannot show.',
+    '',
+    'BEGIN PRODUCT FACTS',
+    readFileSync(path, 'utf8').trim(),
+    'END PRODUCT FACTS',
+  ].join('\n');
 }
 
 // Highest severity among findings that are still standing after patching.

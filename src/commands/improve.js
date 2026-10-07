@@ -2,12 +2,13 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
+import { strictValidateOpts, buildMergeFiles } from '../lib/landings.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
-import { writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
+import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
 import { isoWeek } from '../lib/date.js';
 import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown } from '../lib/improvements.js';
-import { fetchPagePerformance, selectPage, improvePage, keywordFor } from '../steps/improve.js';
+import { fetchPagePerformance, selectPage, improvePage, keywordFor, targetedPage } from '../steps/improve.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
@@ -15,7 +16,8 @@ import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 
 /**
- * Selects the one existing page with the strongest case, rewrites it, validates
+ * Selects the one existing page with the strongest case (or takes the one named
+ * by `opts.slug`, optionally merging `opts.mergeFrom` into it), rewrites it, validates
  * and fact-checks it. Commits nothing and records no cooldown: that happens in
  * publishImprove, once the PR exists.
  *
@@ -30,15 +32,22 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
 
   console.log(chalk.bold(`\nseo improve — ${config.project}${dryRun ? ' (dry run)' : ''}\n`));
 
-  let rows;
-  try {
-    rows = await fetchPagePerformance(config);
-  } catch (e) {
-    console.log(chalk.yellow(`  Search Console unavailable: ${e.message}`));
-    return null;
-  }
+  if (!opts.slug && (opts.mergeFrom?.length || opts.brief)) throw new Error('--merge-from and --brief need --slug');
 
-  const page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)) });
+  let page;
+  if (opts.slug) {
+    const brief = opts.brief ? readFileSync(join(cwd, opts.brief), 'utf8') : null;
+    page = targetedPage({ slug: opts.slug, mergeFrom: opts.mergeFrom ?? [], brief }, config, cwd);
+  } else {
+    let rows;
+    try {
+      rows = await fetchPagePerformance(config);
+    } catch (e) {
+      console.log(chalk.yellow(`  Search Console unavailable: ${e.message}`));
+      return null;
+    }
+    page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)) });
+  }
 
   if (!page) {
     console.log(chalk.gray('  No page qualifies: not enough impressions, or everything eligible was rewritten recently.'));
@@ -47,13 +56,14 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
 
   const before = readMeta(page.slug, config, cwd);
   const keywordLike = keywordFor(page);
+  const validateOpts = strictValidateOpts(config, join(cwd, localeLandingPath(config, defaultLocale(config))), [page.slug, ...(page.mergeFrom ?? [])]);
 
   // Two attempts, same as generate. A rewrite costs a full Opus call, and a
   // single hard error (one word over the tldr limit) is not worth losing it.
   let filePath, markdown, result;
   for (let attempt = 1; attempt <= 2; attempt++) {
     ({ filePath, markdown } = await improvePage(page, config, cwd, attempt > 1 ? result : null));
-    result = validate(markdown, keywordLike);
+    result = validate(markdown, keywordLike, validateOpts);
     if (result.ok) break;
   }
 
@@ -73,7 +83,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       console.log(chalk.red(`  Improvement discarded: unresolved factual error in the rewrite of ${page.slug}`));
       return null;
     }
-    if (reviewed !== markdown && validate(reviewed, keywordLike).ok) finalMarkdown = reviewed;
+    if (reviewed !== markdown && validate(reviewed, keywordLike, validateOpts).ok) finalMarkdown = reviewed;
   }
 
   // The counterpart adapts the already-checked rewrite, so it is not fact-checked
@@ -93,18 +103,20 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   }
 
   const week = isoWeek();
+  const mergeFrom = page.mergeFrom ?? [];
   return {
     slug: page.slug,
     files: [
       { path: filePath, content: finalMarkdown },
       ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
+      ...(mergeFrom.length ? buildMergeFiles({ survivor: page.slug, mergeFrom, config, cwd }) : []),
     ],
     record: { slug: page.slug, queries: page.queries.map(q => q.query) },
     commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
     prTitle: `SEO: improve ${page.slug} (${week})`,
     prBody: buildBody(page, before, readMetaFrom(finalMarkdown), {
       factCheckError,
-      warnings: validate(finalMarkdown, keywordLike).warnings,
+      warnings: validate(finalMarkdown, keywordLike, validateOpts).warnings,
       counterpart,
     }),
   };
@@ -188,6 +200,8 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
     report.llm = llmSummary(report.warnings);
     try { writeRunLog({ cwd, report, mode: 'improve' }); } catch (e) { report.warnings.push(`Run log not written: ${e.message}`); }
+    // The reusable workflow's gate reads this to find the PR to gate.
+    if (opts.report) writeReport(opts.report, report);
     // A failing last commit must not replace the error that ended the run.
     try {
       await syncState(`improve ${week} results`);
@@ -271,18 +285,28 @@ function buildBody(page, before, after, { factCheckError = null, warnings = [], 
   return [
     ...warning,
     ...counterpartNote,
-    `Überarbeitung von \`${page.slug}\` auf Basis der Suchanfragen der letzten 28 Tage.`,
-    '',
-    `**Befund:** ${page.reason}`,
-    '',
-    `Gesamt: ${page.impressions} Impressionen, ${page.clicks} Klicks, beste Position ${page.bestPosition.toFixed(1)}.`,
-    '',
-    '## Suchanfragen, die die Seite tatsächlich erreichen',
-    '',
-    '| Query | Position | Impressionen | Klicks |',
-    '|---|---|---|---|',
-    queries,
-    '',
+    ...(page.kind === 'targeted'
+      ? [
+        `Gezielte Überarbeitung von \`${page.slug}\`.`,
+        '',
+        `**Befund:** ${page.reason}`,
+        ...(page.mergeFrom?.length ? ['', `Gelöscht und per \`seo/redirects.json\` auf \`${page.slug}\` umgeleitet: ${page.mergeFrom.map(s => `\`${s}\``).join(', ')}. Redirects greifen erst nach dem Deploy.`] : []),
+        '',
+      ]
+      : [
+        `Überarbeitung von \`${page.slug}\` auf Basis der Suchanfragen der letzten 28 Tage.`,
+        '',
+        `**Befund:** ${page.reason}`,
+        '',
+        `Gesamt: ${page.impressions} Impressionen, ${page.clicks} Klicks, beste Position ${page.bestPosition.toFixed(1)}.`,
+        '',
+        '## Suchanfragen, die die Seite tatsächlich erreichen',
+        '',
+        '| Query | Position | Impressionen | Klicks |',
+        '|---|---|---|---|',
+        queries,
+        '',
+      ]),
     metaBlock,
     '',
     factCheckError

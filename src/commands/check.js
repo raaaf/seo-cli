@@ -1,9 +1,11 @@
 import { readFileSync, existsSync } from 'fs';
-import { basename, join } from 'path';
+import { basename, dirname, join } from 'path';
 import chalk from 'chalk';
 import { loadKeywords } from '../lib/keywords.js';
 import { validate } from '../steps/validate.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
+import { loadConfig, isStrict } from '../lib/config.js';
+import { strictValidateOpts } from '../lib/landings.js';
 
 function slugFromPath(filePath) {
   return basename(filePath).replace(/\.md$/i, '');
@@ -21,8 +23,19 @@ function keywordFor(slug, keywordsData, frontmatter) {
   return { keyword: slug.replace(/-/g, ' '), expected_entities: [] };
 }
 
-export async function checkCommand(files) {
+// `quality: strict` in the project's config, or --strict. A project without a config file is standard.
+function wantsStrict(cwd, flag) {
+  if (flag) return true;
+  try {
+    return isStrict(loadConfig(cwd));
+  } catch {
+    return false;
+  }
+}
+
+export async function checkCommand(files, opts = {}) {
   const cwd = process.cwd();
+  const strict = wantsStrict(cwd, opts.strict);
   const keywordsData = loadKeywords(cwd);
 
   const targets = (files && files.length)
@@ -46,7 +59,7 @@ export async function checkCommand(files) {
     const { parsed } = parseFrontmatter(markdown);
     const keyword = keywordFor(slug, keywordsData, parsed);
     console.log(chalk.bold(`\nChecking ${file} (keyword: "${keyword.keyword}")`));
-    const { ok, errors, warnings } = validate(markdown, keyword);
+    const { ok, errors, warnings } = validate(markdown, keyword, strictValidateOpts({}, dirname(abs), [slug], strict));
     results.push({ file, ok, errors, warnings });
   }
 

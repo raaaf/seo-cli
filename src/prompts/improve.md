@@ -67,12 +67,12 @@ section, additional FAQ entries, a sharper opening paragraph. Also align
 
 In both cases:
 
-- Keep the slug, the frontmatter schema and the existing structure.
+- Keep the slug, the frontmatter schema{{structure_rule}}.
 - Keep the address form (du or Sie) exactly as the page uses it now.
 - Keep every section that is already there unless it is factually wrong. You are
   extending and sharpening, not replacing.
 - Do not invent facts, figures, laws, prices or sources to fill a gap. If a query
-  demands a number you do not have, answer it qualitatively.
+  demands a number you do not have, answer it qualitatively.{{sources_rule}}
 - **Never claim a service, tool, technology or qualification the current page
   does not already claim**, even when a query asks for it. A query for a tool we
   do not offer is not a licence to say we offer it. Either leave that query

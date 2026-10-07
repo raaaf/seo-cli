@@ -50,6 +50,10 @@ export const DEFAULTS = {
   greenfield: false,
   // Verify checkable claims against the live web before a page is committed.
   fact_check: true,
+  // 'strict' turns on the content rules for sites that were demoted for thin or
+  // duplicated pages: duplicate blocks, unsourced numbers, FAQ cap, product facts.
+  // Anything else leaves validation, review and prompts exactly as they were.
+  quality: 'standard',
   // Slugs the improve step must never rewrite: hand-written service and pricing
   // pages, whose claims the model cannot verify.
   exclude_slugs: [],
@@ -64,6 +68,10 @@ export const DEFAULTS = {
   // project keeps up to 4 projects under the shared 250/month free tier.
   budget: { usd_per_month: 30, serpapi_per_month: 60 },
 };
+
+export function isStrict(config) {
+  return config?.quality === 'strict';
+}
 
 export function defaultLocale(config) {
   return config.locales?.[0] ?? config.locale ?? 'de';

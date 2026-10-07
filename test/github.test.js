@@ -36,6 +36,16 @@ describe('github-commit', () => {
     expect(git.updateRef).not.toHaveBeenCalled();
   });
 
+  it('deletes a file with a null-sha tree entry and creates no blob for it', async () => {
+    await createBranchAndCommit({ files: [{ path: 'gone.md', delete: true }, { path: 'kept.md', content: 'K' }], message: 'm', repo: 'o/r' });
+
+    expect(git.createBlob).toHaveBeenCalledTimes(1);
+    expect(git.createTree.mock.calls[0][0].tree).toEqual([
+      { path: 'gone.md', mode: '100644', type: 'blob', sha: null },
+      { path: 'kept.md', mode: '100644', type: 'blob', sha: 'blob-sha' },
+    ]);
+  });
+
   it('uses an explicit branch name when one is given', async () => {
     const branch = await createBranchAndCommit({ files: [{ path: 'a.md', content: 'A' }], message: 'm', repo: 'o/r', branch: 'seo/improve-2026-W31' });
 

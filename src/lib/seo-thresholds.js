@@ -6,3 +6,13 @@ export const SEO_THRESHOLDS = Object.freeze({
   faqMin: 3,
   extLinksMin: 1,
 });
+
+// Only applied under `quality: strict`.
+export const STRICT_THRESHOLDS = Object.freeze({
+  // A paragraph sharing at least this share of its 5-word shingles with a
+  // paragraph of another page counts as a duplicate block. First guess.
+  overlapShare: 0.4,
+  // Paragraphs shorter than this are headings, one-liners and callouts, not blocks.
+  overlapMinWords: 15,
+  faqMax: 6,
+});

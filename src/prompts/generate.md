@@ -62,7 +62,7 @@ steps:         # 4–6 steps for howto/guide types. Omit for comparison/service.
 checklist:     # 5–8 items. Short phrases, no full sentences.
   - "Item one"
   - "Item two"
-faq:           # 4–6 entries from people_also_ask. Real questions, real answers.
+faq:           # {{faq_count}} entries from people_also_ask. Real questions, real answers.
   - q: "Question from search?"
     a: "Concise, factual answer. 2–4 sentences."
 related_pages: # 2–4 slugs from existing_slugs only. Never invent slugs.
@@ -76,7 +76,7 @@ MINIMUM 800 WORDS. Count carefully before finishing — if the body is under 800
 Target 900–1100 words. The body is the main content; frontmatter steps/faq/checklist are UI supplements only.
 
 - Starts directly with context/problem/insight — no H1 (the app renders hero)
-- Exactly 4–5 H2 sections, each introduced by a bold 1–2 sentence summary (AI Overviews citation bait)
+- {{h2_rule}}, each introduced by a bold 1–2 sentence summary (AI Overviews citation bait)
 - Each H2 section: minimum 150 words of prose
 - Use H3 for sub-points where needed
 - Cover content_gaps with concrete, verifiable information
@@ -92,7 +92,7 @@ Target 900–1100 words. The body is the main content; frontmatter steps/faq/che
   "Häufig genügt...". Illustrative cost/effort examples are fine only when framed
   generically ("ein internes Tool dieser Art liegt bei rund X Euro"), never as
   "aus meiner Praxis".
-- Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)
+- {{numbers_rule}}
 - Numeric consistency: state every price, range, or statistic identically wherever it
   recurs (tldr, body, FAQ). Never give one range in the body and a different one in the FAQ.
 - No absolute calendar dates in examples or sample texts (e.g. a sample email announcing

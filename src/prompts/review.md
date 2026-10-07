@@ -43,7 +43,7 @@ evidence is not a finding.
 If the page below states a price or pricing rule that contradicts a canonical
 value or rule in the style guide, that is a **medium** finding, and the
 correction should move the number to the canonical value. The style guide
-outranks the cluster below when the two disagree.
+outranks the cluster below when the two disagree.{{product_facts}}
 
 ## Cluster consistency
 

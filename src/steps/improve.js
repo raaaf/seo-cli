@@ -6,13 +6,18 @@ import { queryPagePerformance } from '../lib/gsc.js';
 import { fillTemplate } from '../lib/template.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { format } from '../lib/date.js';
-import { defaultLocale, localeLandingPath } from '../lib/config.js';
-import { getExistingSlugs } from '../lib/landings.js';
-import { stripCodeFence, loadStyleDoc } from './generate.js';
+import { defaultLocale, localeLandingPath, isStrict } from '../lib/config.js';
+import { getExistingSlugs, strictValidateOpts } from '../lib/landings.js';
+import { stripCodeFence, loadStyleDoc, SOURCES_RULE } from './generate.js';
 import { validate } from './validate.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
 const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
+
+// What a standard project's prompt says today, so its rendered prompt does not change.
+const STANDARD_RULES = { structure_rule: ' and the existing structure', sources_rule: '' };
+// Strict: the structure may change (duplicate blocks have to go), figures need sources.
+const STRICT_RULES = { structure_rule: '', sources_rule: `\n- ${SOURCES_RULE} Add or extend \`sources:\` in the frontmatter.` };
 
 // A page needs enough impressions for the numbers to mean anything.
 const MIN_IMPRESSIONS = 20;
@@ -205,6 +210,37 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
   return best;
 }
 
+/**
+ * `seo improve --slug`: the page to rewrite is named, not selected from Search
+ * Console. The brief and the full text of the pages being merged in are the
+ * diagnosis. Returns the same shape selectPage does, plus `mergeFrom`.
+ */
+export function targetedPage({ slug, mergeFrom = [], brief = null }, config, cwd = process.cwd()) {
+  const dir = join(cwd, localeLandingPath(config, defaultLocale(config)));
+  const read = (name) => {
+    const file = join(dir, `${name}.md`);
+    if (!existsSync(file)) throw new Error(`Landing page not found: ${join(localeLandingPath(config, defaultLocale(config)), `${name}.md`)}`);
+    return readFileSync(file, 'utf8');
+  };
+  read(slug);
+  if (mergeFrom.includes(slug)) throw new Error(`--merge-from must not contain the target slug ${slug}`);
+
+  const sources = mergeFrom.map(name => `### Merge source: ${name}\n\n${read(name)}`);
+  const diagnosis = [
+    mergeFrom.length
+      ? `Targeted rewrite of this page. Merge what is worth keeping from ${mergeFrom.map(n => `/${n}`).join(', ')} into it. Those pages are deleted afterwards and redirect here, so nothing may be repeated twice: one block per topic, the strongest version wins.`
+      : 'Targeted rewrite of this page, not driven by Search Console data.',
+    ...(brief ? ['', 'Brief:', brief.trim()] : []),
+    ...(sources.length ? ['', ...sources] : []),
+  ].join('\n');
+
+  return {
+    slug, mergeFrom, kind: 'targeted',
+    reason: mergeFrom.length ? `targeted rewrite, merging ${mergeFrom.join(', ')}` : 'targeted rewrite',
+    diagnosis, impressions: 0, clicks: 0, bestPosition: 0, queries: [],
+  };
+}
+
 /** The keyword the validator checks a rewrite of this page against. */
 export function keywordFor(page) {
   return { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
@@ -223,7 +259,9 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
 
   // Which topics are taken. Without this the model optimises the page towards
   // whatever the query table shows, including questions a sibling answers.
-  const siblings = getExistingSlugs(config, cwd, locale).filter(slug => slug !== page.slug);
+  // Pages being merged into this one are about to disappear: not a sibling.
+  const gone = new Set([page.slug, ...(page.mergeFrom ?? [])]);
+  const siblings = getExistingSlugs(config, cwd, locale).filter(slug => !gone.has(slug));
   const siblingList = siblings.length
     ? siblings.map(slug => `- /${slug}`).join('\n')
     : '(no other landing pages yet)';
@@ -232,7 +270,8 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
   // rewrite keeps them (events#650 kept an H1 without the keyword and body H2s
   // that duplicate the template sections).
   const current = readFileSync(full, 'utf8');
-  const { errors, warnings } = validate(current, keywordFor(page));
+  const validateOpts = strictValidateOpts(config, join(cwd, localeLandingPath(config, locale)), [...gone]);
+  const { errors, warnings } = validate(current, keywordFor(page), validateOpts);
   const currentIssues = [...errors, ...warnings];
 
   const prompt = fillTemplate(IMPROVE_PROMPT, {
@@ -242,7 +281,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     locale,
     site_name: config.site_name || config.project || '',
     today: format(new Date()),
-    problem: page.reason,
+    problem: page.diagnosis ?? page.reason,
     kind: page.kind,
     query_table: queryTable,
     sibling_pages: siblingList,
@@ -250,6 +289,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     clicks: page.clicks,
     best_position: page.bestPosition.toFixed(1),
     gsc_guardrail: GSC_GUARDRAIL,
+    ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
     style_guide: loadStyleDoc(config, cwd),
     validator_feedback: validatorFeedback
       ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
