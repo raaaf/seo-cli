@@ -48,10 +48,20 @@ export function upsertKeyword(data, incoming) {
   }
 }
 
+// Order in which proposed keywords are worked off: the score, minus 2 for an
+// informational keyword whose SERP shows an AI Overview that does not cite us
+// (clicks drop there). The stored score stays untouched: AI Overviews come and
+// go, and a lowered score would push the keyword under the cutoff for good.
+export function serpPriority(keyword) {
+  const f = keyword.serp_features;
+  const penalised = keyword.intent === 'informational' && f?.ai_overview && !f.ai_overview_cites_us;
+  return keyword.score - (penalised ? 2 : 0);
+}
+
 export function getPending(data, scoreCutoff) {
-  return data.keywords.filter(
-    k => k.status === KEYWORD_STATUS.PROPOSED && k.score >= scoreCutoff
-  );
+  return data.keywords
+    .filter(k => k.status === KEYWORD_STATUS.PROPOSED && k.score >= scoreCutoff)
+    .sort((a, b) => serpPriority(b) - serpPriority(a));
 }
 
 // New-page PRs opened in the calendar month of `now`: open or merged, not

@@ -211,6 +211,7 @@ The machine state goes straight to `main` (commit message `seo: state (<reason>)
 | `seo/alerts.json` | Watcher state: `open` alerts (`deindexed:<url>`, `site_not_indexed`, `traffic_drop`, `watch_blind`), `known_indexed` URLs, the traffic hysteresis and the failure counter | state commit to `main` |
 | `seo/last-run.json` | Report of the last `seo run` or `seo improve` (without the per-change lists) | state commit to `main` |
 | `seo/runs.jsonl` | One line per `seo run`/`seo improve` (`date`, `mode`, `status`, `prs`, `llm`, `budget`, warning and error counts), last 52 | state commit to `main` |
+| `seo/signals/serp.json` | SERP signal cache (30 days): top results, related searches and SERP features such as AI Overview per keyword; a cache hit costs no SerpAPI search | state commit to `main` |
 | `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage (`subscription: { calls, usd_equivalent }`) of the current month | state commit to `main` |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo.config.yaml` | Project config | commit |
@@ -262,7 +263,7 @@ Configure `landing_path` and `locale` in `seo.config.yaml` to match your project
 
 ## SerpAPI quota and budget
 
-SerpAPI searches and Anthropic spend are counted per project and calendar month in `seo/budget.json` and checked before every paid call. The limits come from `budget:` in `seo.config.yaml` (default 30 USD and 60 searches per month, so up to four projects stay under the shared 250/month free tier). Once per process the free `account.json` endpoint is read as well: with no searches left on the account the run stops, whatever the project budget says. Failed requests refund their reservation. Calls on the Claude subscription cost no API money: they are tallied under `subscription` (`calls`, `usd_equivalent`) and not checked against the limit, while API fallbacks are. A run that hits a limit ends with status `budget_exceeded` and exit code 0.
+SerpAPI searches and Anthropic spend are counted per project and calendar month in `seo/budget.json` and checked before every paid call. The limits come from `budget:` in `seo.config.yaml` (default 30 USD and 60 searches per month, so up to four projects stay under the shared 250/month free tier). Once per process the free `account.json` endpoint is read as well: with no searches left on the account the run stops, whatever the project budget says. Failed requests refund their reservation. Results are cached for 30 days in `seo/signals/serp.json` and read before any of these checks, so a repeated keyword costs no search. Keywords whose SERP shows an AI Overview that does not cite the site and whose intent is informational are worked off after comparable keywords (priority score minus 2, the stored score is unchanged). Calls on the Claude subscription cost no API money: they are tallied under `subscription` (`calls`, `usd_equivalent`) and not checked against the limit, while API fallbacks are. A run that hits a limit ends with status `budget_exceeded` and exit code 0.
 
 ## License
 

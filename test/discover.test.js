@@ -51,6 +51,23 @@ describe('discover-run', () => {
     expect(complete).toHaveBeenCalledTimes(1); // scoring only, cap already filled
   });
 
+  it('stores the SERP features on the keyword, gives the model the present ones and passes base_url', async () => {
+    const features = { ai_overview: true, ai_overview_cites_us: false, answer_box: false, local_pack: false, shopping: false, videos: true };
+    getSerp.mockResolvedValue({ ...EMPTY_SERP, features });
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 },
+    ]);
+    complete.mockResolvedValue({
+      score: 9, type: 'guide', intent: 'informational',
+      target_slug: 'hochzeit-planen', expected_entities: [], content_gaps: [],
+    });
+
+    const data = await discover({ ...config, base_url: 'https://acme.io' }, dir);
+    expect(data.keywords.find(k => k.keyword === 'hochzeit planen').serp_features).toEqual(features);
+    expect(getSerp).toHaveBeenCalledWith('hochzeit planen', expect.objectContaining({ baseUrl: 'https://acme.io' }));
+    expect(complete.mock.calls[0][0].prompt).toContain('SERP features present: ai_overview, videos');
+  });
+
   it('narrows the GSC query to the project base_url so sibling subdomains do not fill the row limit', async () => {
     querySearchAnalytics.mockResolvedValue([]);
     complete.mockResolvedValue([]);

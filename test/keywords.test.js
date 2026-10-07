@@ -74,6 +74,14 @@ describe('keywords-store', () => {
     expect(pending.map(k => k.keyword)).toEqual(['a']);
   });
 
+  it('getPending orders by score, highest first', () => {
+    const data = { keywords: [
+      { keyword: 'a', status: 'proposed', score: 7 },
+      { keyword: 'b', status: 'proposed', score: 9 },
+    ] };
+    expect(getPending(data, 7).map(k => k.keyword)).toEqual(['b', 'a']);
+  });
+
   it('releasePending resets pr_opened keywords without a PR and leaves ones with a PR url', () => {
     const kws = [
       { keyword: 'a', status: 'pr_opened' },

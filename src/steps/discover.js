@@ -20,13 +20,15 @@ const MAX_SCORED_PER_RUN = 10;
 
 const KEYWORD_TYPES = ['howto', 'comparison', 'service', 'guide', 'local_service'];
 
+const KEYWORD_INTENTS = ['informational', 'commercial', 'transactional', 'navigational', 'local'];
+
 const SCORE_SCHEMA = {
   type: 'object',
   properties: {
     score: { type: 'integer' },
     covered_by: { type: ['string', 'null'] },
     type: { type: 'string', enum: KEYWORD_TYPES },
-    intent: { type: 'string' },
+    intent: { type: 'string', enum: KEYWORD_INTENTS },
     target_slug: { type: 'string' },
     expected_entities: { type: 'array', items: { type: 'string' } },
     content_gaps: { type: 'array', items: { type: 'string' } },
@@ -159,6 +161,7 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
     serp: { people_also_ask: serp.people_also_ask, related_searches: serp.related_searches },
     discovered_at: format(new Date()),
   };
+  if (serp.features) entry.serp_features = serp.features;
   if (gsc) entry.gsc = gsc;
   return entry;
 }
@@ -221,7 +224,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
 
     let serpData = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
     try {
-      serpData = await getSerp(row.keyword, { locale: config.locale });
+      serpData = await getSerp(row.keyword, { locale: config.locale, baseUrl: config.base_url });
     } catch (e) {
       rethrowIfBudget(e);
       console.log(chalk.yellow(`  SerpAPI skip (${row.keyword}): ${e.message}`));
@@ -310,7 +313,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
     keywords.map(async (kw) => {
       if (!kw.keyword) return null;
       try {
-        return await getSerp(kw.keyword, { locale: config.locale });
+        return await getSerp(kw.keyword, { locale: config.locale, baseUrl: config.base_url });
       } catch (e) {
         rethrowIfBudget(e);
         console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
@@ -373,6 +376,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existin
     serp_titles: serpData.top_titles.join('\n') || 'n/a',
     serp_snippets: serpData.top_snippets.join('\n') || 'n/a',
     people_also_ask: serpData.people_also_ask.join('\n') || 'n/a',
+    serp_features: serpData.features ? Object.entries(serpData.features).filter(([, on]) => on).map(([name]) => name).join(', ') || 'none' : 'n/a',
     locale: config.locale || 'de',
     gsc_guardrail: GSC_GUARDRAIL,
   };
