@@ -66,6 +66,7 @@ seo run --dry-run  # preview without committing
 |---|---|
 | `seo init` | Interactive setup, writes `seo.config.yaml` in the current project |
 | `seo run [--dry-run] [--report <path>]` | Full pipeline: reconcile status with the real PR state, discover, generate, validate, fact-check, one PR per keyword. Improves an existing page when the backlog is empty. `--report` writes the run report as JSON |
+| `seo watch [--commit] [--report <path>] [--dry-run]` | Daily guard without an LLM: index status plus landing page traffic against `seo/alerts.json`. Reports (`status: alert`/`resolved`) only what opens or resolves, `watch_ok` otherwise. `--commit` pushes only `seo/alerts.json` and `seo/index-status.json`, only when they changed |
 | `seo improve [--dry-run]` | Rewrite the existing page with the strongest case, from live GSC data |
 | `seo check <files...>` | Validate already-generated landing-page markdown (CI gate) |
 | `seo dashboard [--live] [--project <name>] [--json]` | Cross-project overview: funnel, rankings, movers, suggestions |
@@ -108,6 +109,8 @@ jobs:
 | `GSC_TOKEN` | GSC auth token JSON (contents of `~/.seo-cli-token.json`) |
 
 **Optional secret:** `SEO_NOTIFY_WEBHOOK` receives one report per run (see Run report). Without it the run ends with a visible `::warning::`.
+
+**Optional input:** `mode: watch` (under `with:`, default `run`) runs the daily guard instead of the pipeline: checkout, Google credentials, `seo watch --commit --report`, notify. No 1Password or direct secrets, no Claude Code, no run, no gate. Expose it as a `workflow_dispatch` input and run it daily from the scheduler (n8n triggers it at 07:00, `mode=run` on Thursdays). The seo-cli checkout has no `ref`: the `@main` pin in the project fixes only the workflow file, the code is always `main`.
 
 **Optional input:** `require_review: true` (under `with:`) disables auto-merge
 entirely — every generated PR stays open and is reported as `needs_review`.
@@ -204,7 +207,10 @@ The machine state goes straight to `main` (commit message `seo: state (<reason>)
 | `seo/sitemap-pending.json` | Slugs queued for sitemap submission, added when a keyword's PR is merged | state commit to `main` |
 | `seo/improvements.json` | Which page was rewritten when, the queries behind it, its PR url and merge date | state commit to `main` |
 | `seo/changes.json` | Change ledger: every merged seo PR (new page or rewrite) with its merge date, baseline and the 28 and 56 day readings | state commit to `main` |
-| `seo/index-status.json` | Last week's Google index coverage per sitemap URL | state commit to `main` |
+| `seo/index-status.json` | Google index coverage per sitemap URL, rewritten daily by `seo watch`; `updated` moves only when an entry does, and an `unknown` entry (quota) never replaces the previous one | state commit to `main` |
+| `seo/alerts.json` | Watcher state: `open` alerts (`deindexed:<url>`, `traffic_drop`, `watch_blind`), `known_indexed` URLs, the traffic hysteresis and the failure counter | state commit to `main` |
+| `seo/last-run.json` | Report of the last `seo run` or `seo improve` (without the per-change lists) | state commit to `main` |
+| `seo/runs.jsonl` | One line per `seo run`/`seo improve` (`date`, `mode`, `status`, `prs`, `llm`, `budget`, warning and error counts), last 52 | state commit to `main` |
 | `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage (`subscription: { calls, usd_equivalent }`) of the current month | state commit to `main` |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
 | `seo.config.yaml` | Project config | commit |
@@ -242,6 +248,8 @@ Every merged seo PR becomes an entry in `seo/changes.json` (`id` = PR url, `kind
 ### Run report
 
 `seo run --report <path>` writes `{ status, prs: [{ url, kind: 'new'|'improve', slug }], measurement, budget, llm, warnings, errors }`. `measurement` is `{ entries, due, measured, verdicts, insufficient_by_reason, revert_candidates: [slug], changed: [{ slug, kind, reading, verdict }] }`: counts over the whole ledger and the readings computed in this run, not the ledger itself. `llm` is `{ subscription_calls, api_calls, usd_equivalent, fallbacks: [{ model, kind, reason }] }`; a non-empty `fallbacks` and a `usd_equivalent` above 25 USD (roughly 1 percent of the weekly Max limit) each add a warning. `status` is `idle`, `prs_opened`, `failed` or `budget_exceeded` (exit code 0). The workflow gates every PR of the report and ends with a notify step that always runs and posts `{ repo, run_url, status, prs: [{ url, gate_status }], budget, llm, warnings, errors }` to `SEO_NOTIFY_WEBHOOK`. `--dry-run` skips the reconcile, the state commits and the PRs, and still writes the report.
+
+**Watcher alerts** (`seo watch`, no LLM, no SerpAPI): a `deindexed:<url>` alert opens for a URL that was once seen indexed and is not now, and resolves when it is indexed again. `traffic_drop` compares landing page impressions of the last 7 complete days (ending today-3) with the 7 days before: it opens after 2 consecutive days with more than 40 percent loss (at least 200 impressions in the comparison window, otherwise `insufficient`, no alert) and resolves below 25 percent. A failed GSC or inspection check is a warning; 2 failed runs in a row open `watch_blind`, which resolves on the first good run. The watch report is `{ status: 'alert'|'resolved'|'watch_ok', mode: 'watch', alerts: { opened, resolved }, open_alerts, traffic, warnings, errors }`; the notify payload carries `mode` and `alerts`, and the mail routing should skip `watch_ok`. The watcher writes no run log.
 
 ## Supported project types
 

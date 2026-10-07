@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -179,6 +179,27 @@ describe('run-pipeline', () => {
 
     expect(loadKeywords(dir).keywords[0].status).toBe('proposed');
     expect(report()).toMatchObject({ status: 'failed', prs: [], errors: [expect.stringMatching(/GitHub 500/)] });
+  });
+
+  it('writes the run log before the final state commit, also when the run fails, and none on --dry-run', async () => {
+    const seen = [];
+    commitState.mockImplementation(async () => { seen.push(existsSync(join(dir, 'seo/runs.jsonl'))); return []; });
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+
+    await run();
+    expect(seen).toEqual([false, true]);
+    expect(JSON.parse(readFileSync(join(dir, 'seo/last-run.json'), 'utf8'))).toMatchObject({ mode: 'run', status: 'prs_opened' });
+
+    discover.mockRejectedValue(new Error('boom'));
+    await expect(run()).rejects.toThrow('boom');
+    const lines = readFileSync(join(dir, 'seo/runs.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    expect(lines.map(l => l.status)).toEqual(['prs_opened', 'failed']);
+
+    discover.mockResolvedValue(keywordsData());
+    rmSync(join(dir, 'seo'), { recursive: true });
+    await run({ dryRun: true });
+    expect(existsSync(join(dir, 'seo/runs.jsonl'))).toBe(false);
   });
 
   it('skips PR and track on --dry-run, with no reconcile and no state commit, but still reports', async () => {

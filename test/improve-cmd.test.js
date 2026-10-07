@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -27,7 +27,10 @@ vi.mock('../src/steps/improve.js', () => ({
   improvePage: (...a) => improvePage(...a),
   keywordFor: () => ({ keyword: 'preise', expected_entities: [] }),
 }));
-vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
+vi.mock('../src/lib/claude.js', () => ({
+  complete: (...a) => complete(...a),
+  getLlmStats: () => ({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] }),
+}));
 vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) }));
 vi.mock('../src/steps/review.js', () => ({
   reviewPage: (...a) => reviewPage(...a),
@@ -41,6 +44,7 @@ vi.mock('../src/lib/github.js', () => ({
 vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
+const { BudgetExceededError } = await import('../src/lib/budget.js');
 const { improveCommand, prepareImprove, publishImprove } = await import('../src/commands/improve.js');
 const { loadImprovements } = await import('../src/lib/improvements.js');
 
@@ -73,6 +77,37 @@ afterEach(() => {
 });
 
 describe('improveCommand', () => {
+  it('writes the run log before the last state commit, and none on a dry run', async () => {
+    const seen = [];
+    commitState.mockImplementation(async () => { seen.push(existsSync(join(dir, 'seo/last-run.json'))); return []; });
+
+    await improveCommand({ config: CONFIG });
+    expect(seen).toEqual([false, true]);
+    expect(JSON.parse(readFileSync(join(dir, 'seo/last-run.json'), 'utf8'))).toMatchObject({ mode: 'improve', status: 'prs_opened' });
+
+    rmSync(join(dir, 'seo'), { recursive: true });
+    await improveCommand({ config: CONFIG, dryRun: true });
+    expect(existsSync(join(dir, 'seo/last-run.json'))).toBe(false);
+  });
+
+  it('writes the run log and commits state when the preparation throws, and keeps that error', async () => {
+    selectPage.mockImplementation(() => { throw new BudgetExceededError('Anthropic monthly budget exhausted'); });
+    commitState.mockResolvedValue([]);
+
+    await expect(improveCommand({ config: CONFIG })).rejects.toThrow(BudgetExceededError);
+
+    expect(JSON.parse(readFileSync(join(dir, 'seo/last-run.json'), 'utf8'))).toMatchObject({ status: 'failed' });
+    expect(commitState).toHaveBeenCalledTimes(1);
+    expect(commitState).toHaveBeenCalledWith(expect.objectContaining({ reason: expect.stringMatching(/results$/) }));
+  });
+
+  it('keeps the original error when the last state commit fails as well', async () => {
+    openPR.mockRejectedValue(new Error('GitHub 500'));
+    commitState.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('push rejected'));
+
+    await expect(improveCommand({ config: CONFIG })).rejects.toThrow('GitHub 500');
+  });
+
   it('commits to the same per-page improve branch the PR is opened against', async () => {
     await improveCommand({ config: CONFIG });
 

@@ -15,9 +15,9 @@ const MAX_URLS = 500;
  * week's snapshot, prints a summary, and returns `{ current, diff, changed }`
  * for the caller to persist and commit. `changed` is false when the diff is
  * empty and nothing new needs to be written (still true on baseline, since the
- * first snapshot is itself new information).
+ * first snapshot is itself new information). A dry run does not write the snapshot.
  */
-export async function checkIndexStatus(config, cwd = process.cwd()) {
+export async function checkIndexStatus(config, cwd = process.cwd(), { dryRun = false } = {}) {
   const urls = await fetchSitemapUrls(config.base_url, safeFetch, defaultLocale(config));
   const truncated = urls.length > MAX_URLS;
   const inspectUrls = urls.slice(0, MAX_URLS);
@@ -31,8 +31,7 @@ export async function checkIndexStatus(config, cwd = process.cwd()) {
 
   printSummary(diff, previous);
 
-  const data = { version: 1, updated: previous.updated, entries: current };
-  saveIndexStatus(data, cwd);
+  if (!dryRun) saveIndexStatus({ version: 1, updated: previous.updated, entries: current }, cwd);
 
   return { current, diff };
 }

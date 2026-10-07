@@ -71,10 +71,28 @@ export function loadIndexStatus(cwd = process.cwd()) {
   }
 }
 
+/**
+ * Writes the snapshot. An `unknown` entry (quota ran out) never replaces the
+ * previous entry for that URL, and an entry whose verdict fields are unchanged
+ * keeps the previous one (and with it the old `lastCrawlTime`). `updated` only
+ * moves when the entries do, so an unchanged daily snapshot stays byte-identical
+ * and is not committed again.
+ */
 export function saveIndexStatus(data, cwd = process.cwd()) {
   const path = join(cwd, INDEX_STATUS_FILE);
+  const previous = loadIndexStatus(cwd);
+  const previousByUrl = new Map(previous.entries.map(e => [e.url, e]));
+  // Only the verdict fields count as a change: a recrawl moves lastCrawlTime alone
+  // and must not make a state commit every day.
+  const verdictOf = ({ lastCrawlTime: _crawled, ...verdict }) => JSON.stringify(verdict);
+  data.entries = data.entries.map((e) => {
+    const prev = previousByUrl.get(e.url);
+    if (!prev) return e;
+    return e.coverageState === 'unknown' || verdictOf(prev) === verdictOf(e) ? prev : e;
+  });
+  const unchanged = previous.updated && JSON.stringify(previous.entries) === JSON.stringify(data.entries);
+  data.updated = unchanged ? previous.updated : format(new Date());
   mkdirSync(dirname(path), { recursive: true });
-  data.updated = format(new Date());
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 

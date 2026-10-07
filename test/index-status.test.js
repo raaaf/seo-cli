@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 // `diffIndexStatus`/`isIndexed` are pure and tested directly. `fetchIndexStatus`
 // talks to the Search Console API, so googleapis and getAuth are mocked.
@@ -13,7 +16,7 @@ vi.mock('../src/lib/gsc.js', () => ({
   rethrowWithAuthHint: (e) => { throw e; },
 }));
 
-const { fetchIndexStatus, diffIndexStatus, isIndexed } = await import('../src/lib/index-status.js');
+const { fetchIndexStatus, diffIndexStatus, isIndexed, saveIndexStatus, loadIndexStatus } = await import('../src/lib/index-status.js');
 
 const CONFIG = { gsc_property: 'https://zeit.rafaelalex.de/' };
 
@@ -108,5 +111,55 @@ describe('index-status: fetchIndexStatus', () => {
       { url: 'https://s/c', coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null },
     ]);
     expect(inspect).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('index-status: saveIndexStatus', () => {
+  let dir;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'seo-index-')); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const entry = (url, coverageState) => ({ url, coverageState, lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null });
+
+  const seed = (entries) => {
+    mkdirSync(join(dir, 'seo'));
+    writeFileSync(join(dir, 'seo/index-status.json'), JSON.stringify({ version: 1, updated: '2020-01-01', entries }, null, 2) + '\n');
+  };
+
+  it('keeps `updated` and the file bytes when the entries are the same', () => {
+    seed([entry('a', 'Submitted and indexed')]);
+    const path = join(dir, 'seo/index-status.json');
+    const before = readFileSync(path, 'utf8');
+
+    saveIndexStatus({ version: 1, updated: null, entries: [entry('a', 'Submitted and indexed')] }, dir);
+
+    expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+
+  it('keeps the file bytes on a recrawl that changes only lastCrawlTime, and stores it once the verdict changes', () => {
+    seed([entry('a', 'Submitted and indexed')]);
+    const path = join(dir, 'seo/index-status.json');
+    const before = readFileSync(path, 'utf8');
+
+    saveIndexStatus({ version: 1, updated: null, entries: [{ ...entry('a', 'Submitted and indexed'), lastCrawlTime: '2026-10-07T01:00:00Z' }] }, dir);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+
+    saveIndexStatus({ version: 1, updated: null, entries: [{ ...entry('a', 'Crawled - currently not indexed'), lastCrawlTime: '2026-10-08T01:00:00Z' }] }, dir);
+    expect(loadIndexStatus(dir).entries[0].lastCrawlTime).toBe('2026-10-08T01:00:00Z');
+  });
+
+  it('moves `updated` when an entry changes', () => {
+    seed([entry('a', 'Submitted and indexed')]);
+
+    saveIndexStatus({ version: 1, updated: null, entries: [entry('a', 'Crawled - currently not indexed')] }, dir);
+
+    expect(loadIndexStatus(dir).updated).not.toBe('2020-01-01');
+  });
+
+  it('never lets an unknown entry overwrite the previous one', () => {
+    saveIndexStatus({ version: 1, updated: null, entries: [entry('a', 'Submitted and indexed')] }, dir);
+    saveIndexStatus({ version: 1, updated: null, entries: [entry('a', 'unknown'), entry('b', 'unknown')] }, dir);
+
+    expect(loadIndexStatus(dir).entries.map(e => [e.url, e.coverageState])).toEqual([['a', 'Submitted and indexed'], ['b', 'unknown']]);
   });
 });
