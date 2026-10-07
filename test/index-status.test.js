@@ -99,6 +99,16 @@ describe('index-status: fetchIndexStatus', () => {
     expect(results[1]).toMatchObject({ url: 'https://s/b', coverageState: 'Crawled - currently not indexed' });
   });
 
+  it('keeps the canonicals and the page fetch state the API returns', async () => {
+    inspect.mockResolvedValueOnce({ data: { inspectionResult: { indexStatusResult: {
+      coverageState: 'Crawled - currently not indexed', googleCanonical: 'https://s/other', userCanonical: 'https://s/a', pageFetchState: 'SOFT_404',
+    } } } });
+
+    const [result] = await fetchIndexStatus(CONFIG, ['https://s/a'], 0);
+
+    expect(result).toMatchObject({ googleCanonical: 'https://s/other', userCanonical: 'https://s/a', pageFetchState: 'SOFT_404' });
+  });
+
   it('keeps the URLs already inspected and marks the rest unknown on a quota error', async () => {
     inspect.mockResolvedValueOnce(inspected('Submitted and indexed'));
     inspect.mockRejectedValueOnce(Object.assign(new Error('Quota exceeded'), { code: 429 }));
@@ -106,9 +116,9 @@ describe('index-status: fetchIndexStatus', () => {
     const results = await fetchIndexStatus(CONFIG, ['https://s/a', 'https://s/b', 'https://s/c'], 0);
 
     expect(results).toEqual([
-      { url: 'https://s/a', coverageState: 'Submitted and indexed', lastCrawlTime: null, verdict: 'FAIL', robotsTxtState: 'ALLOWED', indexingState: 'INDEXING_ALLOWED' },
-      { url: 'https://s/b', coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null },
-      { url: 'https://s/c', coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null },
+      { url: 'https://s/a', coverageState: 'Submitted and indexed', lastCrawlTime: null, verdict: 'FAIL', robotsTxtState: 'ALLOWED', indexingState: 'INDEXING_ALLOWED', googleCanonical: null, userCanonical: null, pageFetchState: null },
+      { url: 'https://s/b', coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null, googleCanonical: null, userCanonical: null, pageFetchState: null },
+      { url: 'https://s/c', coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null, googleCanonical: null, userCanonical: null, pageFetchState: null },
     ]);
     expect(inspect).toHaveBeenCalledTimes(2);
   });

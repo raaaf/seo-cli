@@ -16,6 +16,7 @@ const prepareImprove = vi.fn();
 const publishImprove = vi.fn();
 const track = vi.fn();
 const measure = vi.fn();
+const assessAlerts = vi.fn();
 const reviewPage = vi.fn();
 const commitState = vi.fn();
 const getPR = vi.fn();
@@ -51,6 +52,7 @@ vi.mock('../src/lib/github.js', () => ({ getPR: (...a) => getPR(...a), deleteBra
 vi.mock('../src/lib/claude.js', () => ({ getLlmStats: () => getLlmStats() }));
 vi.mock('../src/steps/track.js', () => ({ track: (...a) => track(...a) }));
 vi.mock('../src/steps/measure.js', () => ({ measure: (...a) => measure(...a) }));
+vi.mock('../src/steps/assess.js', () => ({ assessAlerts: (...a) => assessAlerts(...a) }));
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
 const { runCommand } = await import('../src/commands/run.js');
@@ -86,11 +88,12 @@ beforeEach(() => {
   saved = {};
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
   reportPath = join(dir, 'report.json');
-  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, measure, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
+  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, measure, assessAlerts, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
   getLlmStats.mockReset();
   getLlmStats.mockReturnValue({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] });
   commitState.mockResolvedValue([]);
   measure.mockResolvedValue({ entries: 0, due: 0, measured: 0, changed: [] });
+  assessAlerts.mockResolvedValue([]);
   deleteBranch.mockResolvedValue();
   createPRs.mockResolvedValue({ prs: [], warnings: [], errors: [] });
   reviewPage.mockImplementation(async (markdown) => ({ markdown, findings: [] }));
@@ -132,6 +135,39 @@ describe('run-pipeline', () => {
     expect(report().status).toBe('prs_opened');
     expect(report().warnings).toContain('Measurement failed: ledger corrupt');
     expect(report().measurement).toBeUndefined();
+  });
+
+  it('assesses index alerts after the measurement and before discover, and puts the result in the report', async () => {
+    const order = [];
+    measure.mockImplementation(async () => { order.push('measure'); return { entries: 0, due: 0, measured: 0, changed: [] }; });
+    assessAlerts.mockImplementation(async () => { order.push('assess'); return [{ alert_id: 'site_not_indexed', actions: [] }]; });
+    discover.mockImplementation(async () => { order.push('discover'); return { keywords: [] }; });
+
+    await run();
+
+    expect(order).toEqual(['measure', 'assess', 'discover']);
+    expect(assessAlerts.mock.calls[0][0]).toMatchObject({ dryRun: false });
+    expect(report().assessments).toEqual([{ alert_id: 'site_not_indexed', actions: [] }]);
+  });
+
+  it('turns a failing assessment into a warning and carries on', async () => {
+    assessAlerts.mockRejectedValue(new Error('no claude access'));
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+
+    await run();
+
+    expect(report().status).toBe('prs_opened');
+    expect(report().warnings).toContain('Assessment failed: no claude access');
+  });
+
+  it('ends with budget_exceeded when the assessment runs into the budget', async () => {
+    assessAlerts.mockRejectedValue(new BudgetExceededError('Anthropic monthly budget exhausted'));
+
+    await run();
+
+    expect(report()).toMatchObject({ status: 'budget_exceeded', errors: ['Anthropic monthly budget exhausted'] });
+    expect(discover).not.toHaveBeenCalled();
   });
 
   it('runs discover → generate → state → PRs → state → track', async () => {

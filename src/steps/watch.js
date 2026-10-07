@@ -1,33 +1,15 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
 import { defaultLocale } from '../lib/config.js';
 import { format } from '../lib/date.js';
 import { queryPageTotals } from '../lib/gsc.js';
 import { getExistingSlugs } from '../lib/landings.js';
-import { urlToSlug } from '../lib/measure.js';
+import { urlToSlug, addDays } from '../lib/measure.js';
 import { loadIndexStatus } from '../lib/index-status.js';
 import { checkIndexStatus } from './index-check.js';
-import { ALERTS_FILE, emptyAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
+import { diagnoseAlerts, submitFixes } from './diagnose.js';
+import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
 
-function loadAlerts(cwd, warnings) {
-  const path = join(cwd, ALERTS_FILE);
-  if (!existsSync(path)) return emptyAlerts();
-  try {
-    return { ...emptyAlerts(), ...JSON.parse(readFileSync(path, 'utf8')) };
-  } catch (e) {
-    warnings.push(`${ALERTS_FILE} unreadable, starting from empty alerts: ${e.message}`);
-    return emptyAlerts();
-  }
-}
-
-// Written only when the content changes, so a quiet day leaves the file as it is.
-function saveAlerts(state, cwd) {
-  const path = join(cwd, ALERTS_FILE);
-  const content = JSON.stringify(state, null, 2) + '\n';
-  if (existsSync(path) && readFileSync(path, 'utf8') === content) return;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content, 'utf8');
-}
+// A clean alert that stays unindexed must not make Google and IndexNow hear from us every day.
+const RESUBMIT_EVERY_DAYS = 7;
 
 // Landing page rows of one window; rows that map to no known landing page are not ours to watch.
 async function landingRows(config, window, slugsByLocale) {
@@ -47,6 +29,17 @@ async function checkTraffic(config, cwd, today) {
   return trafficChange(current, previous);
 }
 
+// Sitemap and IndexNow once for all alerts whose live fetch is clean, at most every 7 days.
+// Throws before anything is set, so a failed submit is tried again next run.
+async function resubmitClean(state, { config, today, submit }) {
+  const due = state.open.filter(a => a.diagnosis?.cause === 'clean' && !a.resubmitted_at);
+  if (!due.length || (state.last_resubmit && state.last_resubmit > addDays(today, -RESUBMIT_EVERY_DAYS))) return [];
+  await submit({ config, urls: [...new Set(due.flatMap(a => a.diagnosis.urls.map(u => u.url)))] });
+  for (const alert of due) alert.resubmitted_at = today;
+  state.last_resubmit = today;
+  return due.map(a => a.id);
+}
+
 /**
  * The daily watcher, no LLM: index status plus landing page traffic against
  * `seo/alerts.json`. A failing check (GSC or auth error) is no alert on its own,
@@ -55,7 +48,7 @@ async function checkTraffic(config, cwd, today) {
  * report: `status` is `failed`, `alert` (something opened), `resolved` (only
  * resolutions) or `watch_ok`.
  */
-export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()) }) {
+export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()), diagnose = diagnoseAlerts, submit = submitFixes }) {
   const warnings = [];
   const state = loadAlerts(cwd, warnings);
 
@@ -77,12 +70,31 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   }
 
   const { state: next, opened, resolved } = evaluateWatch(state, { today, entries, traffic });
+  // Saved before the slow part, so a hanging fetch cannot lose the alerts.
   if (!dryRun) saveAlerts(next, cwd);
 
+  // Diagnosis problems are warnings, never errors: the alerts stand without them.
+  const guarded = async (label, fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      warnings.push(`${label} failed: ${e.message}`);
+      return null;
+    }
+  };
+  let updated = [];
+  let resubmitted = [];
+  if (entries) {
+    const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today }));
+    updated = (diagnosed?.updated ?? []).filter(a => !opened.includes(a));
+    if (!dryRun) resubmitted = (await guarded('Resubmit', () => resubmitClean(next, { config, today, submit }))) ?? [];
+    if (!dryRun) saveAlerts(next, cwd);
+  }
+
   // A failed check is the loudest outcome: the report says so even when alerts opened too.
-  const status = errors.length ? 'failed' : opened.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
+  const status = errors.length ? 'failed' : opened.length || updated.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
   return {
-    status, mode: 'watch', prs: [], alerts: { opened, resolved }, open_alerts: next.open,
+    status, mode: 'watch', prs: [], alerts: { opened, updated, resolved, resubmitted }, open_alerts: next.open,
     traffic: traffic && { status: traffic.status, drop: traffic.drop }, warnings, errors,
   };
 }

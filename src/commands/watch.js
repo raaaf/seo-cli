@@ -31,6 +31,8 @@ export async function watchCommand(opts = {}) {
   const report = await watch({ config, cwd, dryRun });
   report.warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
   report.alerts.opened.forEach(a => console.log(chalk.red(`  ALERT ${a.id}: ${a.detail}`)));
+  report.alerts.updated.forEach(a => console.log(chalk.yellow(`  diagnosis changed ${a.id}: ${a.diagnosis.cause} (${a.diagnosis.codes.join(', ') || 'no findings'})`)));
+  if (report.alerts.resubmitted.length) console.log(chalk.green(`  resubmitted for ${report.alerts.resubmitted.length} clean alert(s).`));
   report.alerts.resolved.forEach(a => console.log(chalk.green(`  resolved ${a.id}${a.reason ? ` (${a.reason})` : ''}`)));
   report.errors.forEach(e => console.log(chalk.red(`  ${e}`)));
   console.log(`  watch: ${report.status}, ${report.open_alerts.length} open alert(s).`);

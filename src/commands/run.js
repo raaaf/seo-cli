@@ -14,7 +14,7 @@ import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/chang
 import { getPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
-import { BudgetExceededError } from '../lib/budget.js';
+import { BudgetExceededError, rethrowIfBudget } from '../lib/budget.js';
 import { isoWeek, format } from '../lib/date.js';
 import { discover } from '../steps/discover.js';
 import { generatePage } from '../steps/generate.js';
@@ -26,6 +26,7 @@ import { prepareImprove, publishImprove } from './improve.js';
 import { createPRs } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 import { measure } from '../steps/measure.js';
+import { assessAlerts } from '../steps/assess.js';
 
 function pLimit(concurrency) {
   const queue = [];
@@ -404,6 +405,14 @@ export async function runCommand(opts) {
       report.measurement = await measure({ config, cwd, dryRun, warnings: report.warnings });
     } catch (e) {
       report.warnings.push(`Measurement failed: ${e.message}`);
+    }
+
+    // 1c. Content assessment of index alerts the daily watcher found technically clean.
+    try {
+      report.assessments = await assessAlerts({ config, cwd, dryRun, warnings: report.warnings });
+    } catch (e) {
+      rethrowIfBudget(e);
+      report.warnings.push(`Assessment failed: ${e.message}`);
     }
 
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
