@@ -49,6 +49,13 @@ describe('pr-create', () => {
     expect(data.keywords[0]).toMatchObject({ status: 'pr_opened', pr_url: 'https://github.com/o/r/pull/42', sitemap_slugs: ['/hochzeit-planen'] });
   });
 
+  it('stamps the keyword with the day its PR was opened', async () => {
+    const data = kwData('hochzeit planen');
+    await createPRs({ generatedPages: [page()], keywordsData: data, config });
+
+    expect(data.keywords[0].pr_opened_at).toBe(new Date().toISOString().slice(0, 10));
+  });
+
   it('opens a separate PR per keyword, each with only its own files', async () => {
     openPR.mockResolvedValueOnce('https://github.com/o/r/pull/1').mockResolvedValueOnce('https://github.com/o/r/pull/2');
     const pages = [page(), page({ keyword: 'brautkleid', slug: 'brautkleid', filePath: 'resources/landing/de/brautkleid.md' })];

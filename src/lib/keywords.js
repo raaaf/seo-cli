@@ -54,6 +54,16 @@ export function getPending(data, scoreCutoff) {
   );
 }
 
+// New-page PRs opened in the calendar month of `now`: open or merged, not
+// closed-unmerged. Keywords without pr_opened_at are not counted.
+export function newPagesThisMonth(data, now = new Date()) {
+  const month = format(now).slice(0, 7);
+  return data.keywords.filter(k =>
+    (k.status === KEYWORD_STATUS.PR_OPENED || k.status === KEYWORD_STATUS.PUBLISHED)
+    && k.pr_opened_at?.startsWith(month)
+  ).length;
+}
+
 // A keyword marked pr_opened that never got a PR (it failed, was skipped, or the
 // run broke before the PRs) goes back to proposed. Entries that already carry a
 // pr_url are left alone, they are reconciled against the real PR state.

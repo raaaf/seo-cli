@@ -44,7 +44,7 @@ export async function getPR({ repo, number, url }) {
 
   const { data } = await octokit.pulls.get({ owner, repo: name, pull_number: pullNumber });
   const state = data.merged ? 'merged' : data.state === 'open' ? 'open' : 'closed';
-  return { state, mergedAt: data.merged_at ?? null, headRef: data.head?.ref ?? null };
+  return { state, mergedAt: data.merged_at ?? null, createdAt: data.created_at ?? null, headRef: data.head?.ref ?? null };
 }
 
 // Removes a branch. An already deleted one (404) is fine: the goal is that the

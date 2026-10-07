@@ -120,6 +120,13 @@ describe('github-get-pr', () => {
     expect((await getPR({ repo: 'o/r', number: 3 })).state).toBe('open');
   });
 
+  it('returns the creation timestamp, null when absent', async () => {
+    pr({ state: 'open', merged: false, created_at: '2026-10-06T08:00:00Z' });
+    expect((await getPR({ repo: 'o/r', number: 3 })).createdAt).toBe('2026-10-06T08:00:00Z');
+    pr({ state: 'open', merged: false });
+    expect((await getPR({ repo: 'o/r', number: 3 })).createdAt).toBeNull();
+  });
+
   it('returns the head branch name', async () => {
     pr({ state: 'closed', merged: false, head: { ref: 'seo/new/x' } });
     expect((await getPR({ repo: 'o/r', number: 3 })).headRef).toBe('seo/new/x');
