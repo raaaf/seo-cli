@@ -31,7 +31,8 @@ export async function watchCommand(opts = {}) {
   const report = await watch({ config, cwd, dryRun });
   report.warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
   report.alerts.opened.forEach(a => console.log(chalk.red(`  ALERT ${a.id}: ${a.detail}`)));
-  report.alerts.resolved.forEach(a => console.log(chalk.green(`  resolved ${a.id}`)));
+  report.alerts.resolved.forEach(a => console.log(chalk.green(`  resolved ${a.id}${a.reason ? ` (${a.reason})` : ''}`)));
+  report.errors.forEach(e => console.log(chalk.red(`  ${e}`)));
   console.log(`  watch: ${report.status}, ${report.open_alerts.length} open alert(s).`);
 
   if (opts.commit && !dryRun) {
@@ -44,4 +45,6 @@ export async function watchCommand(opts = {}) {
     }
   }
   if (opts.report) writeReport(opts.report, report);
+  // Only now: the state and the report are out, the failed run still shows up in the workflow.
+  if (report.status === 'failed') process.exitCode = 1;
 }

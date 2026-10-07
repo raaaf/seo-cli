@@ -58,6 +58,22 @@ describe('watch: deindex alert', () => {
   });
 });
 
+describe('watch: sitemap removal', () => {
+  it('prunes known_indexed to the current sitemap and resolves a deindex alert of a removed URL with its reason', () => {
+    const open = run(run(emptyAlerts(), { entries: [IDX('a', OK), IDX('b', OK)] }).state, { entries: [IDX('a', GONE), IDX('b', OK)] }, '2026-10-08').state;
+    const after = run(open, { entries: [IDX('b', OK)] }, '2026-10-09');
+
+    expect(after.state.known_indexed).toEqual(['b']);
+    expect(after.resolved).toMatchObject([{ id: 'deindexed:a', reason: 'removed_from_sitemap' }]);
+    expect(after.state.open).toEqual([]);
+  });
+
+  it('gives no reason when the URL is indexed again', () => {
+    const open = run(run(emptyAlerts(), { entries: [IDX('a', OK)] }).state, { entries: [IDX('a', GONE)] }, '2026-10-08').state;
+    expect(run(open, { entries: [IDX('a', OK)] }, '2026-10-09').resolved[0].reason).toBeUndefined();
+  });
+});
+
 describe('watch: traffic alert with hysteresis', () => {
   it('opens only on the second consecutive day above 40 percent', () => {
     const day1 = run(emptyAlerts(), { traffic: drop(0.5) }, '2026-10-07');
@@ -78,6 +94,21 @@ describe('watch: traffic alert with hysteresis', () => {
     const open = run(run(emptyAlerts(), { traffic: drop(0.5) }, '2026-10-07').state, { traffic: drop(0.5) }, '2026-10-08').state;
     expect(run(open, { traffic: drop(0.3) }, '2026-10-09').resolved).toEqual([]);
     expect(run(open, { traffic: drop(0.2) }, '2026-10-09').resolved.map(a => a.id)).toEqual(['traffic_drop']);
+  });
+
+  it('resolves against the volume it opened with, also when the week fell under the volume floor', () => {
+    const open = run(run(emptyAlerts(), { traffic: drop(0.5) }, '2026-10-07').state, { traffic: drop(0.5) }, '2026-10-08').state;
+    expect(open.open[0].reference).toBe(100);
+    const thin = (current) => ({ status: 'insufficient', current, previous: 150, drop: null });
+    expect(run(open, { traffic: thin(70) }, '2026-10-09').resolved).toEqual([]);
+    expect(run(open, { traffic: thin(75) }, '2026-10-09').resolved.map(a => a.id)).toEqual(['traffic_drop']);
+  });
+
+  it('forgets a pending drop day when the next day is under the volume floor', () => {
+    const day1 = run(emptyAlerts(), { traffic: drop(0.5) }, '2026-10-07');
+    const thin = run(day1.state, { traffic: { status: 'insufficient', current: 0, previous: 150, drop: null } }, '2026-10-08');
+    expect(thin.state.traffic_pending).toBeNull();
+    expect(run(thin.state, { traffic: drop(0.5) }, '2026-10-09').opened).toEqual([]);
   });
 
   it('opens nothing on thin volume', () => {

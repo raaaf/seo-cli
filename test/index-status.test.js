@@ -136,6 +136,18 @@ describe('index-status: saveIndexStatus', () => {
     expect(readFileSync(path, 'utf8')).toBe(before);
   });
 
+  it('keeps the file bytes on a recrawl that changes only lastCrawlTime, and stores it once the verdict changes', () => {
+    seed([entry('a', 'Submitted and indexed')]);
+    const path = join(dir, 'seo/index-status.json');
+    const before = readFileSync(path, 'utf8');
+
+    saveIndexStatus({ version: 1, updated: null, entries: [{ ...entry('a', 'Submitted and indexed'), lastCrawlTime: '2026-10-07T01:00:00Z' }] }, dir);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+
+    saveIndexStatus({ version: 1, updated: null, entries: [{ ...entry('a', 'Crawled - currently not indexed'), lastCrawlTime: '2026-10-08T01:00:00Z' }] }, dir);
+    expect(loadIndexStatus(dir).entries[0].lastCrawlTime).toBe('2026-10-08T01:00:00Z');
+  });
+
   it('moves `updated` when an entry changes', () => {
     seed([entry('a', 'Submitted and indexed')]);
 

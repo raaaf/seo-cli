@@ -10,7 +10,8 @@ export const ALERTS_FILE = 'seo/alerts.json';
 export const MIN_IMPRESSIONS = 200;
 // Hysteresis: opens after 2 consecutive days above 40 percent loss, resolves below 25 percent.
 const DROP_OPEN = 0.4;
-const DROP_RESOLVE = 0.25;
+// An open alert resolves once the week is back at 75 percent of the volume it was measured against.
+const RESOLVE_SHARE = 1 - 0.25;
 const OPEN_AFTER_DAYS = 2;
 const BLIND_AFTER_FAILURES = 2;
 // GSC data lags by about three days.
@@ -38,6 +39,13 @@ export function trafficChange(currentRows, previousRows) {
   return { status: 'ok', current, previous, drop: (previous - current) / previous };
 }
 
+// Against the volume the alert opened with, so a week that fell under the volume floor can still resolve.
+// An alert without a reference (opened before it was stored) falls back to the plain comparison.
+function trafficRecovered(alert, traffic) {
+  if (alert.reference) return traffic.current >= alert.reference * RESOLVE_SHARE;
+  return traffic.status === 'ok' && traffic.drop < 1 - RESOLVE_SHARE;
+}
+
 const seenIndexed = (e) => e.coverageState !== 'unknown' && isIndexed(e.coverageState);
 
 /** URLs that were seen indexed once and are not indexed now. A URL without an entry or with an unknown one is not judged. */
@@ -60,36 +68,43 @@ export function evaluateWatch(state, { today, entries, traffic }) {
   const opened = [];
   const resolved = [];
   const isOpen = (id) => next.open.some(a => a.id === id);
-  const open = (id, kind, detail) => {
+  const open = (id, kind, detail, extra = {}) => {
     if (isOpen(id)) return;
-    const alert = { id, kind, since: today, detail };
+    const alert = { id, kind, since: today, detail, ...extra };
     next.open.push(alert);
     opened.push(alert);
   };
-  const close = (id) => {
+  const close = (id, reason) => {
     const alert = next.open.find(a => a.id === id);
     if (!alert) return;
     next.open = next.open.filter(a => a !== alert);
-    resolved.push(alert);
+    resolved.push(reason ? { ...alert, reason } : alert);
   };
 
   if (entries) {
-    next.known_indexed = [...new Set([...next.known_indexed, ...entries.filter(seenIndexed).map(e => e.url)])].sort();
+    // The entries are the current sitemap: a URL that left it is no longer ours to watch.
+    const inSitemap = new Set(entries.map(e => e.url));
+    next.known_indexed = [...new Set([...next.known_indexed, ...entries.filter(seenIndexed).map(e => e.url)])].filter(url => inSitemap.has(url)).sort();
     const dropped = deindexedUrls(entries, next.known_indexed);
     for (const url of dropped) open(`deindexed:${url}`, 'deindexed', url);
-    for (const alert of next.open.filter(a => a.kind === 'deindexed' && !dropped.includes(a.detail))) close(alert.id);
+    for (const alert of next.open.filter(a => a.kind === 'deindexed' && !dropped.includes(a.detail))) {
+      close(alert.id, inSitemap.has(alert.detail) ? undefined : 'removed_from_sitemap');
+    }
   }
 
-  if (traffic?.status === 'ok') {
-    if (isOpen('traffic_drop')) {
-      if (traffic.drop < DROP_RESOLVE) close('traffic_drop');
-    } else if (traffic.drop > DROP_OPEN) {
+  const trafficDrop = next.open.find(a => a.id === 'traffic_drop');
+  if (trafficDrop && traffic) {
+    if (trafficRecovered(trafficDrop, traffic)) close('traffic_drop');
+  } else if (traffic?.status === 'insufficient') {
+    next.traffic_pending = null;
+  } else if (traffic?.status === 'ok') {
+    if (traffic.drop > DROP_OPEN) {
       const pending = next.traffic_pending;
       if (pending?.date !== today) {
         next.traffic_pending = { count: pending?.date === addDays(today, -1) ? pending.count + 1 : 1, date: today };
       }
       if (next.traffic_pending.count >= OPEN_AFTER_DAYS) {
-        open('traffic_drop', 'traffic_drop', `${Math.round(traffic.drop * 100)} percent fewer landing page impressions (${traffic.current} vs ${traffic.previous} in the 7 days before)`);
+        open('traffic_drop', 'traffic_drop', `${Math.round(traffic.drop * 100)} percent fewer landing page impressions (${traffic.current} vs ${traffic.previous} in the 7 days before)`, { reference: traffic.previous });
         next.traffic_pending = null;
       }
     } else {

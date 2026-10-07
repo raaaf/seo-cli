@@ -161,14 +161,17 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
  */
 export async function improveCommand(opts = {}, cwd = process.cwd()) {
   const config = opts.config ?? loadConfig(cwd);
-  const prepared = await prepareImprove({ ...opts, config }, cwd);
-  if (opts.dryRun) return null;
+  if (opts.dryRun) {
+    await prepareImprove({ ...opts, config }, cwd);
+    return null;
+  }
 
   const report = { status: 'idle', prs: [], budget: null, warnings: [], errors: [] };
   const syncState = (reason) => commitState({ cwd, repo: config.repo, reason });
   const week = isoWeek();
   let prUrl = null;
   try {
+    const prepared = await prepareImprove({ ...opts, config }, cwd);
     if (prepared) {
       await syncState(`improve ${week}`);
       prUrl = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
@@ -185,7 +188,12 @@ export async function improveCommand(opts = {}, cwd = process.cwd()) {
     try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
     report.llm = llmSummary(report.warnings);
     try { writeRunLog({ cwd, report, mode: 'improve' }); } catch (e) { report.warnings.push(`Run log not written: ${e.message}`); }
-    await syncState(`improve ${week} results`);
+    // A failing last commit must not replace the error that ended the run.
+    try {
+      await syncState(`improve ${week} results`);
+    } catch (e) {
+      console.log(chalk.yellow(`  Final state commit failed: ${e.message}`));
+    }
   }
   return prUrl;
 }

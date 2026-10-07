@@ -9,17 +9,16 @@ vi.mock('../src/lib/gsc.js', () => ({
   getAuth: vi.fn(),
   rethrowWithAuthHint: (e) => { throw e; },
 }));
-// The index fetch itself is covered by index-status.test.js; here the snapshot is seeded through the real save.
+// The Inspection API call and the sitemap are the I/O boundary; the snapshot goes through the real check and save.
 const nextIndex = { entries: [], error: null };
-vi.mock('../src/steps/index-check.js', async () => {
-  const { saveIndexStatus, loadIndexStatus } = await import('../src/lib/index-status.js');
-  return {
-    checkIndexStatus: async (_config, cwd) => {
-      if (nextIndex.error) throw nextIndex.error;
-      saveIndexStatus({ version: 1, updated: loadIndexStatus(cwd).updated, entries: nextIndex.entries }, cwd);
-    },
-  };
-});
+vi.mock('../src/lib/indexnow.js', () => ({ fetchSitemapUrls: async () => nextIndex.entries.map(e => e.url) }));
+vi.mock('../src/lib/index-status.js', async (orig) => ({
+  ...(await orig()),
+  fetchIndexStatus: async () => {
+    if (nextIndex.error) throw nextIndex.error;
+    return nextIndex.entries;
+  },
+}));
 
 const { watch } = await import('../src/steps/watch.js');
 const { loadIndexStatus } = await import('../src/lib/index-status.js');
@@ -51,8 +50,12 @@ beforeEach(() => {
   nextIndex.entries = [entry('page', OK)];
   nextIndex.error = null;
   gsc();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  vi.restoreAllMocks();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 describe('watch-step', () => {
   it('opens a deindex alert once and does not repeat it the next day', async () => {
@@ -100,14 +103,15 @@ describe('watch-step', () => {
     queryPageTotals.mockRejectedValue(new Error('GSC 500'));
     const report = await go('2026-10-07');
 
-    expect(report.status).toBe('watch_ok');
-    expect(report.warnings).toEqual(['Traffic check failed: GSC 500']);
+    expect(report.status).toBe('failed');
+    expect(report.errors).toEqual(['Traffic check failed: GSC 500']);
     expect(alertsFile()).toMatchObject({ open: [], failures: 1 });
   });
 
   it('writes nothing on a dry run, and leaves an unchanged alerts file untouched', async () => {
     await go('2026-10-07', { dryRun: true });
     expect(existsSync(join(dir, 'seo/alerts.json'))).toBe(false);
+    expect(existsSync(join(dir, 'seo/index-status.json'))).toBe(false);
 
     await go('2026-10-07');
     const before = readFileSync(join(dir, 'seo/alerts.json'), 'utf8');
@@ -121,6 +125,29 @@ describe('watch-step', () => {
     const report = await go('2026-10-08');
 
     expect(report.status).toBe('watch_ok');
+    expect(loadIndexStatus(dir).entries[0].coverageState).toBe(OK);
+  });
+
+  it('reports a failed index check as failed with the error, and opens watch_blind on the second one', async () => {
+    nextIndex.error = new Error('invalid_grant: token expired');
+
+    const first = await go('2026-10-07');
+    expect(first.status).toBe('failed');
+    expect(first.errors).toEqual(['Index check failed: invalid_grant: token expired']);
+    expect(alertsFile()).toMatchObject({ failures: 1, open: [] });
+
+    const second = await go('2026-10-08');
+    expect(second.status).toBe('failed');
+    expect(second.alerts.opened.map(a => a.id)).toEqual(['watch_blind']);
+    expect(alertsFile().open.map(a => a.id)).toEqual(['watch_blind']);
+  });
+
+  it('judges the fresh snapshot on a dry run without saving it', async () => {
+    await go('2026-10-07');
+    nextIndex.entries = [entry('page', GONE)];
+
+    const report = await go('2026-10-08', { dryRun: true });
+    expect(report.alerts.opened.map(a => a.id)).toEqual([`deindexed:${url('page')}`]);
     expect(loadIndexStatus(dir).entries[0].coverageState).toBe(OK);
   });
 });

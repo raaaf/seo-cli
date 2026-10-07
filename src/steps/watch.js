@@ -49,35 +49,40 @@ async function checkTraffic(config, cwd, today) {
 
 /**
  * The daily watcher, no LLM: index status plus landing page traffic against
- * `seo/alerts.json`. A failing check is a warning, never an alert on its own
- * (two in a row open `watch_blind`). Returns the report: `status` is `alert`
- * (something opened), `resolved` (only resolutions) or `watch_ok`.
+ * `seo/alerts.json`. A failing check (GSC or auth error) is no alert on its own,
+ * two in a row open `watch_blind`; it lands in `errors`, makes the status
+ * `failed` and leaves its alerts alone, but the state is still saved. Returns the
+ * report: `status` is `failed`, `alert` (something opened), `resolved` (only
+ * resolutions) or `watch_ok`.
  */
 export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()) }) {
   const warnings = [];
   const state = loadAlerts(cwd, warnings);
 
+  const errors = [];
   let entries = null;
   try {
-    await checkIndexStatus(config, cwd);
-    entries = loadIndexStatus(cwd).entries;
+    const checked = await checkIndexStatus(config, cwd, { dryRun });
+    // A dry run saved nothing, so the file would still hold the previous snapshot.
+    entries = dryRun ? checked.current : loadIndexStatus(cwd).entries;
   } catch (e) {
-    warnings.push(`Index check failed: ${e.message}`);
+    errors.push(`Index check failed: ${e.message}`);
   }
 
   let traffic = null;
   try {
     traffic = await checkTraffic(config, cwd, today);
   } catch (e) {
-    warnings.push(`Traffic check failed: ${e.message}`);
+    errors.push(`Traffic check failed: ${e.message}`);
   }
 
   const { state: next, opened, resolved } = evaluateWatch(state, { today, entries, traffic });
   if (!dryRun) saveAlerts(next, cwd);
 
-  const status = opened.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
+  // A failed check is the loudest outcome: the report says so even when alerts opened too.
+  const status = errors.length ? 'failed' : opened.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
   return {
     status, mode: 'watch', prs: [], alerts: { opened, resolved }, open_alerts: next.open,
-    traffic: traffic && { status: traffic.status, drop: traffic.drop }, warnings, errors: [],
+    traffic: traffic && { status: traffic.status, drop: traffic.drop }, warnings, errors,
   };
 }
