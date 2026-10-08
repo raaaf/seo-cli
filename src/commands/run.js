@@ -436,7 +436,8 @@ export async function runCommand(opts) {
 
     // 1c. Content assessment of index alerts the daily watcher found technically clean.
     try {
-      report.assessments = await assessAlerts({ config, cwd, dryRun, warnings: report.warnings });
+      report.assessments_waiting = [];
+      report.assessments = await assessAlerts({ config, cwd, dryRun, warnings: report.warnings, waiting: report.assessments_waiting });
     } catch (e) {
       rethrowIfBudget(e);
       report.warnings.push(`Assessment failed: ${e.message}`);
