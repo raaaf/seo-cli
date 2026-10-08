@@ -12,6 +12,7 @@ import { overlayFilePath, overlayKeyOfFile, parseOverlay } from './overlay.js';
 import { loadIndexStatus } from '../lib/index-status.js';
 import { checkIndexStatus } from './index-check.js';
 import { diagnoseAlerts, submitFixes } from './diagnose.js';
+import { siteUrl, knowsSite, getUserSites, getCrawlIssues, getUrlInfo, isCrawled } from '../lib/bing.js';
 import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
 
 // A clean alert that stays unindexed must not make Google and IndexNow hear from us every day.
@@ -134,6 +135,47 @@ async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, op
   return checks;
 }
 
+// Bing URL checks per day: the sitemap is covered section by section.
+const BING_URLS_PER_DAY = 30;
+const trimSlash = (url) => String(url).replace(/\/+$/, '');
+
+// Today's section of the sorted sitemap, stateless: the start moves by 30 per day and wraps around.
+function bingSection(urls, today) {
+  const sorted = [...urls].sort();
+  const day = Math.floor(Date.parse(`${today}T00:00:00Z`) / DAY_MS);
+  const start = (day * BING_URLS_PER_DAY) % (sorted.length || 1);
+  return Array.from({ length: Math.min(BING_URLS_PER_DAY, sorted.length) }, (_, i) => sorted[(start + i) % sorted.length]);
+}
+
+// `bing` input of evaluateWatch, see there. Live calls, no cache. A site Bing does not know warns once
+// (`bing.site_missing_warned` on `state`, saved with the alerts) and costs no further calls that day.
+async function checkBing({ config, today, entries, state, warnings, api }) {
+  if (!config.bing?.enabled || !entries) return null;
+  if (!process.env.BING_WEBMASTER_KEY) {
+    warnings.push('bing.enabled is set but BING_WEBMASTER_KEY is missing, skipping the Bing checks');
+    return null;
+  }
+  const site = siteUrl(config);
+  try {
+    if (!knowsSite(await api.getUserSites(), site)) {
+      if (!state.bing?.site_missing_warned) {
+        warnings.push(`Bing does not know ${site} (yet), skipping the Bing checks`);
+        state.bing = { ...state.bing, site_missing_warned: true };
+      }
+      return null;
+    }
+    const urls = entries.map(e => e.url);
+    const known = new Set(urls.map(trimSlash));
+    const issues = [...new Set((await api.getCrawlIssues(site)).map(i => i.Url).filter(u => known.has(trimSlash(u))))];
+    const crawled = {};
+    for (const url of bingSection(urls, today)) crawled[url] = api.isCrawled(await api.getUrlInfo(site, url));
+    return { urls, issues, crawled };
+  } catch (e) {
+    warnings.push(`Bing check failed: ${e.message}`);
+    return { error: e.kind ?? 'error' };
+  }
+}
+
 // Sitemap and IndexNow once for all alerts whose live fetch is clean, at most every 7 days.
 // Throws before anything is set, so a failed submit is tried again next run.
 async function resubmitClean(state, { config, today, submit }) {
@@ -161,7 +203,7 @@ function resetResubmitOnTechnical(alerts, causeBefore) {
  * report: `status` is `failed`, `alert` (something opened), `resolved` (only
  * resolutions) or `watch_ok`.
  */
-export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()), diagnose = diagnoseAlerts, submit = submitFixes, fetchPage = fetchLive, listPRs = listRecentlyMergedSeoPRs, now = Date.now() }) {
+export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()), diagnose = diagnoseAlerts, submit = submitFixes, fetchPage = fetchLive, listPRs = listRecentlyMergedSeoPRs, now = Date.now(), bingApi = { getUserSites, getCrawlIssues, getUrlInfo, isCrawled } }) {
   const warnings = [];
   const state = loadAlerts(cwd, warnings);
 
@@ -190,7 +232,10 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
     warnings.push(`Deploy check failed: ${e.message}`);
   }
 
-  const { state: next, opened, resolved } = evaluateWatch(state, { today, entries, traffic, liveChecks });
+  // Bing is a second signal: its trouble is a warning or a `bing_blind` alert, never an error.
+  const bing = await checkBing({ config, today, entries, state, warnings, api: bingApi });
+
+  const { state: next, opened, resolved } = evaluateWatch(state, { today, entries, traffic, liveChecks, bing });
   // Saved before the slow part, so a hanging fetch cannot lose the alerts.
   if (!dryRun) saveAlerts(next, cwd);
 
@@ -207,7 +252,7 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   let resubmitted = [];
   if (entries) {
     const causeBefore = new Map(next.open.map(a => [a.id, a.diagnosis?.cause]));
-    const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today }));
+    const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today, bing: bing && !bing.error ? { site: siteUrl(config), ...bingApi } : null }));
     resetResubmitOnTechnical(next.open, causeBefore);
     updated = (diagnosed?.updated ?? []).filter(a => !opened.includes(a));
     if (!dryRun) resubmitted = (await guarded('Resubmit', () => resubmitClean(next, { config, today, submit }))) ?? [];

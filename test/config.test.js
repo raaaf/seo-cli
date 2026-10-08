@@ -113,6 +113,16 @@ describe('config-load: loadConfig', () => {
     expect(cfg.config_warnings).toHaveLength(3);
   });
 
+  it('keeps Bing off by default and merges a partial bing mapping with its defaults', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'project: x\n', 'utf8');
+    expect(loadConfig(tmpDir).bing).toEqual({ enabled: false, site_url: null });
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'bing: { enabled: true }\n', 'utf8');
+    expect(loadConfig(tmpDir).bing).toEqual({ enabled: true, site_url: null });
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'bing: 3\n', 'utf8');
+    expect(loadConfig(tmpDir).bing).toEqual({ enabled: false, site_url: null });
+  });
+
   it('throws a config error naming the page_contract key with a wrong shape', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     writeFileSync(join(tmpDir, 'seo.config.yaml'), 'page_contract:\n  body_words: [300]\n', 'utf8');

@@ -64,6 +64,9 @@ on:
       # Optional: n8n-Webhook-URL fuer E-Mail-Benachrichtigung (merged / needs review)
       SEO_NOTIFY_WEBHOOK:
         required: false
+      # Optional: Bing Webmaster API key, only read with `bing.enabled`. Also from op://<op_vault>/seo-cli/BING-WEBMASTER-API; a repo secret wins.
+      BING_WEBMASTER_KEY:
+        required: false
 
 jobs:
   run:
@@ -137,6 +140,17 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ format('op://{0}/seo-cli/CLAUDE_CODE_OAUTH_TOKEN', inputs.op_vault) }}
 
+      # Non-fatal like the others: without the field Bing is skipped with a warning. Run and watch mode.
+      - name: Load Bing key from 1Password
+        if: env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v4
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          BING_WEBMASTER_KEY: ${{ format('op://{0}/seo-cli/BING-WEBMASTER-API', inputs.op_vault) }}
+
       - name: Use direct secrets (no 1Password)
         if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN != 'true'
         env:
@@ -197,12 +211,14 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
           # ANTHROPIC_API_KEY (from GITHUB_ENV) stays set: it is the fallback.
           SECRET_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SECRET_BING_WEBMASTER_KEY: ${{ secrets.BING_WEBMASTER_KEY }}
           SEO_SLUG: ${{ inputs.slug }}
           SEO_MERGE_FROM: ${{ inputs.merge_from }}
           SEO_BRIEF: ${{ inputs.brief }}
         # A repo secret wins; otherwise CLAUDE_CODE_OAUTH_TOKEN may already be set from 1Password.
         run: |
           if [ -n "${SECRET_CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then export CLAUDE_CODE_OAUTH_TOKEN="$SECRET_CLAUDE_CODE_OAUTH_TOKEN"; fi
+          if [ -n "${SECRET_BING_WEBMASTER_KEY:-}" ]; then export BING_WEBMASTER_KEY="$SECRET_BING_WEBMASTER_KEY"; fi
           if [ -n "$SEO_SLUG" ]; then
             args=(improve --slug "$SEO_SLUG" --report "$RUNNER_TEMP/seo-report.json")
             [ -n "$SEO_MERGE_FROM" ] && args+=(--merge-from "$SEO_MERGE_FROM")
@@ -224,7 +240,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
           MODE: ${{ inputs.mode }}
+          SECRET_BING_WEBMASTER_KEY: ${{ secrets.BING_WEBMASTER_KEY }}
         run: |
+          if [ -n "${SECRET_BING_WEBMASTER_KEY:-}" ]; then export BING_WEBMASTER_KEY="$SECRET_BING_WEBMASTER_KEY"; fi
           WATCH_REPORT="$RUNNER_TEMP/seo-watch.json"
           if [ "$MODE" = "watch" ]; then WATCH_REPORT="$RUNNER_TEMP/seo-report.json"; fi
           if ! node .seo-cli/bin/seo.js watch --commit --report "$WATCH_REPORT"; then

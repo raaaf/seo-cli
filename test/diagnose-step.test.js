@@ -148,3 +148,37 @@ describe('diagnose-step', () => {
     expect(alert.diagnosis.codes).toEqual(['robots_unreachable']);
   });
 });
+
+describe('diagnose-step: Bing field', () => {
+  const bingApi = (crawled) => ({ site: 'https://a.de/', getUrlInfo: vi.fn(async () => ({})), isCrawled: () => crawled });
+  const withBing = (alerts, entries, bing, today = '2026-10-08') => diagnoseAlerts({ alerts, entries, config: CONFIG, today, fetch: clean, bing });
+
+  it('sets bing.crawled on the URL entry, leaving cause and codes as without Bing', async () => {
+    const plain = deindexed('page');
+    const alert = deindexed('page');
+    await run([plain], [entry('page')], clean);
+    await withBing([alert], [entry('page')], bingApi(true));
+    expect(alert.diagnosis.urls[0].bing).toEqual({ crawled: true });
+    expect(alert.diagnosis.cause).toBe(plain.diagnosis.cause);
+    expect(alert.diagnosis.codes).toEqual(plain.diagnosis.codes);
+  });
+
+  it('adds no field without Bing, and none when the Bing call fails', async () => {
+    const alert = deindexed('page');
+    await run([alert], [entry('page')], clean);
+    expect(alert.diagnosis.urls[0]).not.toHaveProperty('bing');
+    const failing = { site: 'https://a.de/', getUrlInfo: async () => { throw new Error('x'); }, isCrawled: () => true };
+    const other = deindexed('other');
+    await withBing([other], [entry('other')], failing);
+    expect(other.diagnosis.urls[0]).not.toHaveProperty('bing');
+  });
+
+  it('refreshes the field on an existing diagnosis without reporting an update', async () => {
+    const alert = deindexed('page');
+    await withBing([alert], [entry('page')], bingApi(false));
+    const { updated } = await withBing([alert], [entry('page')], bingApi(true), '2026-10-09');
+    expect(alert.diagnosis.urls[0].bing).toEqual({ crawled: true });
+    expect(alert.diagnosis.checked_at).toBe('2026-10-08');
+    expect(updated).toEqual([]);
+  });
+});

@@ -11,6 +11,7 @@ import { fillTemplate } from '../lib/template.js';
 import { findTokenSetDuplicate } from '../lib/similarity.js';
 import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
 import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
+import { readBingQueries, bingCandidates } from '../lib/signals/bing.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -118,13 +119,24 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
     await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, pageRows, cwd });
   }
 
-  const ready = getPending(data, config.score_cutoff).length;
-  if (ready < (config.weekly_cap ?? 2)) {
+  const cap = config.weekly_cap ?? 2;
+  let ready = getPending(data, config.score_cutoff).length;
+  if (ready < cap && config.greenfield) {
+    // Start mode: Bing questions with demand come before invented keywords. The cannibalization
+    // check needs GSC page rows and does not apply here; the token duplicate guard and covered_by do.
+    const bingRows = bingCandidates(readBingQueries(config, cwd), config).filter(r => !doneKeywords.has(r.keyword));
+    if (bingRows.length > 0) {
+      console.log(chalk.gray(`  ${bingRows.length} Bing candidate(s) (pos <= 20, impr >= ${Math.max(5, minImpressions)})`));
+      await scoreAndSave({ candidates: bingRows, config, data, existingSlugs, existingFiles, cwd, source: 'bing', maxScored: cap - ready });
+      ready = getPending(data, config.score_cutoff).length;
+    }
+  }
+  if (ready < cap) {
     if (config.greenfield) {
-      console.log(chalk.yellow(`  Only ${ready} keyword(s) from GSC (cap ${config.weekly_cap ?? 2}) — topping up via greenfield.`));
+      console.log(chalk.yellow(`  Only ${ready} keyword(s) from GSC (cap ${cap}) — topping up via greenfield.`));
       await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd, catalog });
     } else {
-      console.log(chalk.gray(`  Only ${ready} keyword(s) from GSC (cap ${config.weekly_cap ?? 2}). Greenfield is off, so no keywords are invented to fill the gap.`));
+      console.log(chalk.gray(`  Only ${ready} keyword(s) from GSC (cap ${cap}). Greenfield is off, so no keywords are invented to fill the gap.`));
     }
   }
 
@@ -145,7 +157,7 @@ function isSlugTaken(targetSlug, keyword, data, existingFiles = [], reservedSlug
   return data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword);
 }
 
-function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, expected_entities, content_gaps, serp, gsc, scoreCutoff }) {
+function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, expected_entities, content_gaps, serp, stats, scoreCutoff }) {
   if (score < scoreCutoff) {
     return { keyword, status: KEYWORD_STATUS.SKIP, score, discovered_at: format(new Date()) };
   }
@@ -163,7 +175,7 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
     discovered_at: format(new Date()),
   };
   if (serp.features) entry.serp_features = { ...serp.features, checked_at: format(new Date()) };
-  if (gsc) entry.gsc = gsc;
+  if (stats) entry[source === 'bing' ? 'bing' : 'gsc'] = stats;
   return entry;
 }
 
@@ -198,7 +210,7 @@ function shopOnlyQueries(pageRows) {
   return new Set([...onShop].filter(([, only]) => only).map(([query]) => query));
 }
 
-async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], pageRows = [], cwd }) {
+async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], pageRows = [], cwd, source = 'gsc', maxScored = MAX_SCORED_PER_RUN }) {
   const existingTitles = getExistingTitles(config.landing_path, cwd);
   const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
   let scored = 0;
@@ -293,7 +305,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
 
     upsertKeyword(data, buildKeywordEntry({
       keyword: row.keyword,
-      source: 'gsc',
+      source,
       score: result.score,
       type: result.type,
       intent: result.intent,
@@ -301,11 +313,11 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       expected_entities: result.expected_entities,
       content_gaps: result.content_gaps,
       serp: serpData,
-      gsc: { impressions: row.impressions, position: row.position, clicks: row.clicks },
+      stats: { impressions: row.impressions, position: row.position, clicks: row.clicks },
       scoreCutoff: config.score_cutoff,
     }));
     if (result.score >= config.score_cutoff) scored++;
-    if (scored >= MAX_SCORED_PER_RUN) break;
+    if (scored >= maxScored) break;
   }
 }
 

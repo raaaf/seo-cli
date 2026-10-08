@@ -441,3 +441,108 @@ describe('watch-step: deploy checks', () => {
     expect(fetchPage).not.toHaveBeenCalled();
   });
 });
+
+describe('watch-step: Bing', () => {
+  const CFG = { ...CONFIG, bing: { enabled: true } };
+  const SITE = 'https://a.de/';
+  const never = '/Date(-62135596800000)/';
+  const seen = '/Date(1776384000000)/';
+  const api = (over = {}) => ({
+    getUserSites: vi.fn(async () => [{ Url: SITE }]),
+    getCrawlIssues: vi.fn(async () => []),
+    getUrlInfo: vi.fn(async () => ({ LastCrawledDate: seen })),
+    isCrawled: (info) => info.LastCrawledDate === seen,
+    ...over,
+  });
+  const run = (today, bingApi, config = CFG) => go(today, { config, bingApi });
+  beforeEach(() => { process.env.BING_WEBMASTER_KEY = 'k'; });
+  afterEach(() => { delete process.env.BING_WEBMASTER_KEY; });
+
+  it('makes no Bing call without bing.enabled and writes no bing state', async () => {
+    const bingApi = api();
+    await run('2026-10-07', bingApi, CONFIG);
+    expect(bingApi.getUserSites).not.toHaveBeenCalled();
+    expect(alertsFile().bing).toBeUndefined();
+  });
+
+  it('skips Bing with a warning when the key is missing', async () => {
+    delete process.env.BING_WEBMASTER_KEY;
+    const bingApi = api();
+    const report = await run('2026-10-07', bingApi);
+    expect(bingApi.getUserSites).not.toHaveBeenCalled();
+    expect(report.warnings.join()).toMatch(/BING_WEBMASTER_KEY/);
+  });
+
+  it('records crawled booleans per sitemap URL and ignores crawl issues outside the sitemap', async () => {
+    const bingApi = api({
+      getUrlInfo: vi.fn(async () => ({ LastCrawledDate: never })),
+      getCrawlIssues: vi.fn(async () => [{ Url: url('elsewhere') }]),
+    });
+    await run('2026-10-07', bingApi);
+    await run('2026-10-08', bingApi);
+    expect(alertsFile().bing.crawled).toEqual({ [url('page')]: false });
+    expect(alertsFile().open).toEqual([]);
+  });
+
+  it('opens bing_crawl_issues for a sitemap URL on the second day', async () => {
+    const bingApi = api({ getCrawlIssues: vi.fn(async () => [{ Url: url('page') }]) });
+    await run('2026-10-07', bingApi);
+    const report = await run('2026-10-08', bingApi);
+    expect(report.alerts.opened.map(a => a.id)).toEqual(['bing_crawl_issues']);
+  });
+
+  it('warns once about a site Bing does not know and makes no URL calls', async () => {
+    const bingApi = api({ getUserSites: vi.fn(async () => [{ Url: 'https://other.de/' }]) });
+    const first = await run('2026-10-07', bingApi);
+    const second = await run('2026-10-08', bingApi);
+    expect(first.warnings.join()).toMatch(/does not know/);
+    expect(second.warnings.join()).not.toMatch(/does not know/);
+    expect(alertsFile().bing.site_missing_warned).toBe(true);
+    expect(bingApi.getUrlInfo).not.toHaveBeenCalled();
+    expect(first.errors).toEqual([]);
+  });
+
+  it('turns a Bing error into a warning, never into errors or watch_blind', async () => {
+    const err = Object.assign(new Error('Bing GetUserSites failed (unavailable)'), { kind: 'unavailable' });
+    const bingApi = api({ getUserSites: vi.fn(async () => { throw err; }) });
+    const report = await run('2026-10-07', bingApi);
+    expect(report.errors).toEqual([]);
+    expect(report.status).toBe('watch_ok');
+    expect(report.warnings.join()).toMatch(/Bing check failed/);
+    expect(alertsFile().failures).toBe(0);
+  });
+
+  it('opens bing_blind at once when the key is rejected', async () => {
+    const err = Object.assign(new Error('Bing GetUserSites failed (key_rejected)'), { kind: 'key_rejected' });
+    const report = await run('2026-10-07', api({ getUserSites: vi.fn(async () => { throw err; }) }));
+    expect(report.alerts.opened.map(a => a.id)).toEqual(['bing_blind']);
+    expect(report.errors).toEqual([]);
+  });
+
+  it('checks at most 30 sitemap URLs a day, a deterministic section that advances with the day', async () => {
+    nextIndex.entries = Array.from({ length: 70 }, (_, i) => entry(`p${String(i).padStart(2, '0')}`, OK));
+    const checked = async (today) => {
+      const bingApi = api();
+      await run(today, bingApi);
+      return bingApi.getUrlInfo.mock.calls.map(c => c[1]);
+    };
+    const sorted = nextIndex.entries.map(e => e.url).sort();
+    const dayNumber = Math.floor(Date.parse('2026-10-07T00:00:00Z') / 86400000);
+    const start = (dayNumber * 30) % 70;
+    const first = await checked('2026-10-07');
+    expect(first).toEqual(Array.from({ length: 30 }, (_, i) => sorted[(start + i) % 70]));
+    expect(await checked('2026-10-07')).toEqual(first);
+    expect(await checked('2026-10-08')).not.toEqual(first);
+  });
+
+  it('hands the Bing client to the diagnosis only when the Bing check ran', async () => {
+    const diagnose = vi.fn(async () => ({ updated: [] }));
+    await go('2026-10-07', { config: CONFIG, bingApi: api(), diagnose });
+    expect(diagnose.mock.calls[0][0].bing).toBeNull();
+    await go('2026-10-08', { config: CFG, bingApi: api(), diagnose });
+    expect(diagnose.mock.calls[1][0].bing).toMatchObject({ site: SITE });
+    const err = Object.assign(new Error('x'), { kind: 'unavailable' });
+    await go('2026-10-09', { config: CFG, bingApi: api({ getUserSites: vi.fn(async () => { throw err; }) }), diagnose });
+    expect(diagnose.mock.calls[2][0].bing).toBeNull();
+  });
+});

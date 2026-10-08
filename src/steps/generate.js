@@ -9,6 +9,7 @@ import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
 import { isValidSlug } from '../lib/keywords.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { isStrict } from '../lib/config.js';
+import { readBingQueries, bingQuestionsFor } from '../lib/signals/bing.js';
 import { STRICT_THRESHOLDS } from '../lib/seo-thresholds.js';
 
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
@@ -52,7 +53,8 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     expected_entities: (keyword.expected_entities || []).join(', '),
     content_gaps: (keyword.content_gaps || []).join(', '),
     locale: config.locale || 'de',
-    people_also_ask: (keyword.serp?.people_also_ask || []).join('\n') || 'n/a',
+    // Bing questions ride in the PAA slot (an untrusted block), read from the store at run time.
+    people_also_ask: [...(keyword.serp?.people_also_ask || []), ...bingQuestionsFor(keyword.keyword, readBingQueries(config, cwd))].join('\n') || 'n/a',
     related_searches: (keyword.serp?.related_searches || []).join('\n') || 'n/a',
     existing_slugs: getExistingSlugs(config, cwd, config.locale).join(', ') || 'none',
     style,

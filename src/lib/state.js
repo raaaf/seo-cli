@@ -8,11 +8,11 @@ import { BUDGET_FILE } from './budget.js';
 import { CHANGES_FILE } from './changes.js';
 import { LAST_RUN_FILE, RUNS_LOG_FILE } from './runlog.js';
 import { ALERTS_FILE } from './watch.js';
-import { SERP_SIGNALS_FILE } from './signals/store.js';
+import { SERP_SIGNALS_FILE, BING_SIGNALS_FILE } from './signals/store.js';
 import { commitToBranch, getBlobShas } from './github.js';
 
 // Machine state that goes straight to main, never into a content PR.
-export const STATE_FILES = [KEYWORDS_FILE, SITEMAP_PENDING_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE, LAST_RUN_FILE, RUNS_LOG_FILE, ALERTS_FILE, SERP_SIGNALS_FILE];
+export const STATE_FILES = [KEYWORDS_FILE, SITEMAP_PENDING_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE, LAST_RUN_FILE, RUNS_LOG_FILE, ALERTS_FILE, SERP_SIGNALS_FILE, BING_SIGNALS_FILE];
 
 // Git object id of a file: sha1("blob <bytes>\0<content>").
 export function gitBlobSha(content) {

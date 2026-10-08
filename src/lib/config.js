@@ -17,6 +17,7 @@ export function loadConfig(cwd = process.cwd()) {
     config.config_warnings = [`max_new_pages_per_month must be a number, using ${DEFAULTS.max_new_pages_per_month}`];
   }
   normalizeShopKeys(config);
+  config.bing = { ...DEFAULTS.bing, ...(isPlainObject(config.bing) ? config.bing : {}) };
   return config;
 }
 
@@ -122,6 +123,9 @@ export const DEFAULTS = {
   overlays: null,
   // check_deploy: verify that merged pages and overlays are live (opt-in).
   watch: { check_deploy: false },
+  // Bing Webmaster as a second signal source (needs BING_WEBMASTER_KEY): crawl checks in the watcher,
+  // query questions for discover and generate. site_url overrides base_url as Bing knows the site.
+  bing: { enabled: false, site_url: null },
 };
 
 export function isStrict(config) {

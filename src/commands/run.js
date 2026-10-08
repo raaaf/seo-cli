@@ -24,6 +24,7 @@ import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { validate } from '../steps/validate.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
+import { refreshBingQueries } from '../lib/signals/bing.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { prepareImprove, publishImprove } from './improve.js';
 import { createPRs } from '../steps/pr.js';
@@ -453,6 +454,9 @@ export async function runCommand(opts) {
       console.log(chalk.yellow(`\n${warning}`));
       report.warnings.push(warning);
     }
+
+    // 1e. Bing queries for discover (start mode) and generate (FAQ questions), refreshed weekly. Never fatal.
+    await refreshBingQueries({ config, cwd, warnings: report.warnings });
 
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
     const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));

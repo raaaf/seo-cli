@@ -42,6 +42,7 @@ beforeEach(() => {
   process.env.ANTHROPIC_API_KEY = 'must-not-leak';
   process.env.GITHUB_TOKEN = 'must-not-leak';
   process.env.SERPAPI_KEY = 'must-not-leak';
+  process.env.BING_WEBMASTER_KEY = 'must-not-leak';
 });
 
 describe('claude-code-backend', () => {

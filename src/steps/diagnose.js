@@ -35,6 +35,15 @@ function alertCause(urls) {
 
 const resultKey = ({ cause, codes }) => `${cause}:${codes.join(',')}`;
 
+// Bing's crawl state of one URL, null when the call fails (the watcher reports Bing trouble itself).
+async function bingState(url, { site, api }) {
+  try {
+    return { crawled: api.isCrawled(await api.getUrlInfo(site, url)) };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Attaches a technical diagnosis to every open `deindexed` and `site_not_indexed`
  * alert. At most 10 distinct URLs are fetched per run, picked round-robin across the alerts. The diagnosis is merged
@@ -44,8 +53,12 @@ const resultKey = ({ cause, codes }) => `${cause}:${codes.join(',')}`;
  * runs in a row (`pending_codes`) before it counts. The first diagnosis of an
  * alert counts at once. Returns `{ updated }`: alerts that got their first diagnosis or whose diagnosis changed
  * (the caller drops the ones opened in this run, they are reported as opened).
+ *
+ * With `bing` (`{ site, getUrlInfo, isCrawled }`) every diagnosed URL also gets `bing: { crawled }`. It is
+ * a field of the URL entry, not a finding: `cause`, `codes` and `resultKey` stay as they are, so Bing alone
+ * never produces an `updated` report. The field is refreshed on existing entries on every run, when it changed.
  */
-export async function diagnoseAlerts({ alerts, entries, config, today, fetch = fetchForDiagnosis }) {
+export async function diagnoseAlerts({ alerts, entries, config, today, fetch = fetchForDiagnosis, bing = null }) {
   const targets = alerts.filter(a => INDEX_KINDS.includes(a.kind)).map(alert => ({ alert, urls: alertUrls(alert, entries, config) }));
   const checked = roundRobin(targets.map(t => t.urls), MAX_URLS);
   if (!checked.length) return { updated: [] };
@@ -62,7 +75,8 @@ export async function diagnoseAlerts({ alerts, entries, config, today, fetch = f
   const results = new Map();
   for (const url of checked) {
     const inspection = entries.find(e => e.url === url);
-    results.set(url, { url, ...diagnoseUrl({ url, inspection, ...await attempt(url), robotsStatus }) });
+    const bingResult = bing && await bingState(url, { site: bing.site, api: bing });
+    results.set(url, { url, ...diagnoseUrl({ url, inspection, ...await attempt(url), robotsStatus }), ...(bingResult && { bing: bingResult }) });
   }
 
   const updated = [];
@@ -74,6 +88,10 @@ export async function diagnoseAlerts({ alerts, entries, config, today, fetch = f
       codes: [...new Set(done.flatMap(u => u.findings.map(f => f.code)))].sort(),
     };
     const previous = alert.diagnosis;
+    for (const entry of previous?.urls ?? []) {
+      const fresh = results.get(entry.url)?.bing;
+      if (fresh && fresh.crawled !== entry.bing?.crawled) entry.bing = fresh;
+    }
     const write = () => Object.assign(alert, { diagnosis: { checked_at: today, ...result, urls: done, ...(done.length < urls.length && { sampled: true }) } });
 
     if (!previous) {
