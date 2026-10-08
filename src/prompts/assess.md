@@ -9,6 +9,7 @@ to repeat technical checks and not to rewrite the page.
 Alert: {{kind}}
 Site: {{site_name}}
 Locale: {{locale}}
+Today: {{today}}
 URLs in the sitemap: {{sitemap_urls}}
 Share of sitemap URLs indexed: {{indexed_share}}
 
@@ -21,7 +22,7 @@ days old):
 
 {{recent_changes}}
 
-These changes were already made on the site. Do not propose them again. When pages
+These changes were already made on the site. Do not propose them again, except a change marked as performing worse, which you may propose to revert. When pages
 were changed in the last 4 weeks, say that Google usually needs several weeks to
 re-evaluate them before further content changes make sense.
 
@@ -47,8 +48,8 @@ jargon and no English terms where a German word exists (explain "Index" as
 "Google zeigt die Seite in der Suche"). No em-dashes.
 
 Return JSON with:
-- `likely_causes`: at most 3 short sentences, most likely first, each under 200 characters.
-- `actions`: at most 5 objects `{ "action", "why" }`, most useful first. `action` is one concrete step (under 200 characters), `why` the reason (under 300 characters).
+- `likely_causes`: at most 3 short sentences, most likely first, each under 300 characters.
+- `actions`: at most 5 objects `{ "action", "why" }`, most useful first. `action` is one concrete step (under 300 characters), `why` the reason (under 450 characters).
 
 Plain text only: no HTML, no markdown, no links or URLs.
 

@@ -55,9 +55,9 @@ function plain(value, max) {
 function cleanAssessment(parsed, today) {
   return {
     assessed_at: today,
-    likely_causes: (parsed?.likely_causes ?? []).slice(0, 3).map(c => plain(c, 200)).filter(Boolean),
+    likely_causes: (parsed?.likely_causes ?? []).slice(0, 3).map(c => plain(c, 300)).filter(Boolean),
     actions: (parsed?.actions ?? []).slice(0, 5)
-      .map(a => ({ action: plain(a?.action, 200), why: plain(a?.why, 300) }))
+      .map(a => ({ action: plain(a?.action, 300), why: plain(a?.why, 450) }))
       .filter(a => a.action),
   };
 }
@@ -84,11 +84,11 @@ function recentChanges(cwd, today, warnings) {
       .filter(e => e.merged_at >= since && e.merged_at <= today)
       .sort((a, b) => b.merged_at.localeCompare(a.merged_at))
       .slice(0, MAX_CHANGES)
-      .map(e => `- ${e.merged_at}: ${e.kind === 'new' ? 'new page' : 'rewrite'} ${e.slug}`);
+      .map(e => `- ${e.merged_at}: ${e.kind === 'new' ? 'new page' : 'rewrite'} ${e.slug}${e.revert_candidate ? ' (performs worse than before, may need reverting)' : ''}`);
     return lines.join('\n') || 'none';
   } catch {
     warnings.push('Assessment: changes.json unreadable');
-    return 'none';
+    return 'unknown (change history unreadable)';
   }
 }
 
@@ -122,6 +122,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         kind: alert.kind,
         site_name: config.site_name || config.project || '',
         locale: defaultLocale(config),
+        today,
         sitemap_urls: entries.length,
         indexed_share: entries.length ? `${indexed} of ${entries.length}` : 'n/a',
         recent_changes,
