@@ -25,7 +25,7 @@ const seed = (open) => {
 };
 const saved = () => JSON.parse(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).open;
 const crawledAfterChanges = () => writeFileSync(join(dir, 'seo/index-status.json'), JSON.stringify({ version: 1, updated: TODAY, entries: [{ url: url('a'), coverageState: 'Crawled - currently not indexed', lastCrawlTime: '2026-10-02T00:00:00Z' }] }));
-const assess = (extra = {}) => { const warnings = []; return assessAlerts({ config: CONFIG, cwd: dir, today: TODAY, fetch: page, gitLog: () => '', warnings, ...extra }).then(done => ({ done, warnings })); };
+const assess = (extra = {}) => { const warnings = []; return assessAlerts({ config: CONFIG, cwd: dir, today: TODAY, fetch: page, gitLog: () => '', inspect: async urls => urls.map(u => ({ url: u, coverageState: 'unknown', lastCrawlTime: null })), warnings, ...extra }).then(done => ({ done, warnings })); };
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-assess-'));
@@ -195,9 +195,9 @@ describe('assess', () => {
   });
 
   describe('crawl gate', () => {
-    const writeChange = (merged_at) => {
+    const writeChange = (merged_at, urls = [url('a')]) => {
       mkdirSync(join(dir, 'seo'), { recursive: true });
-      writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [{ kind: 'rewrite', slug: 'x', urls: [], merged_at }] }));
+      writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [{ kind: 'rewrite', slug: 'x', urls, merged_at }] }));
     };
     const writeCrawl = (lastCrawlTime) => {
       mkdirSync(join(dir, 'seo'), { recursive: true });
@@ -229,6 +229,48 @@ describe('assess', () => {
       expect(waiting).toEqual([]);
     });
 
+    it('opens the gate early when the live check shows a crawl after the change, without writing index-status.json', async () => {
+      seed([deindexed('a')]);
+      writeChange('2026-10-05');
+      writeCrawl('2026-10-04T00:00:00Z');
+      const before = readFileSync(join(dir, 'seo/index-status.json'), 'utf8');
+      const inspect = vi.fn(async urls => urls.map(u => ({ url: u, coverageState: 'x', lastCrawlTime: '2026-10-07T00:00:00Z' })));
+      const waiting = [];
+
+      const { done } = await assess({ waiting, inspect });
+
+      expect(inspect).toHaveBeenCalledTimes(1);
+      expect(inspect).toHaveBeenCalledWith([url('a')]);
+      expect(done).toHaveLength(1);
+      expect(waiting).toEqual([]);
+      expect(readFileSync(join(dir, 'seo/index-status.json'), 'utf8')).toBe(before);
+    });
+
+    it('keeps waiting and warns when the live check throws', async () => {
+      seed([deindexed('a')]);
+      writeChange('2026-10-05');
+      writeCrawl('2026-10-04T00:00:00Z');
+      const waiting = [];
+
+      const { done, warnings } = await assess({ waiting, inspect: async () => { throw new Error('quota'); } });
+
+      expect(done).toEqual([]);
+      expect(waiting).toHaveLength(1);
+      expect(warnings).toEqual([`Assessment: live crawl check failed for deindexed:${url('a')}`]);
+    });
+
+    it('takes the last change per alert: a merge for another URL neither waits nor makes it stale', async () => {
+      seed([deindexed('a', { assessment: { assessed_at: '2026-09-30', likely_causes: [], actions: [] } })]);
+      writeChange('2026-10-05', [url('other') + '/']);
+      const waiting = [];
+
+      const { done } = await assess({ waiting });
+
+      expect(done).toEqual([]);
+      expect(waiting).toEqual([]);
+      expect(complete).not.toHaveBeenCalled();
+    });
+
     it('stops waiting after 28 days even without a recrawl', async () => {
       seed([deindexed('a')]);
       writeChange('2026-09-08');
@@ -250,10 +292,34 @@ describe('assess', () => {
     });
   });
 
+  describe('prompt data', () => {
+    it('keeps real commits beyond a run of seo state commits and fences links and commits', async () => {
+      seed([deindexed('a')]);
+      const lines = [...Array.from({ length: 40 }, (_, i) => `2026-10-0${i % 9 + 1} seo: state ${i}`), '2026-09-30 fix: noindex', '2026-09-29 feat: menu', '2026-09-28 chore: robots'];
+
+      await assess({ gitLog: () => lines.join('\n') });
+
+      const prompt = complete.mock.calls[0][0].prompt;
+      expect(prompt).toMatch(/<<<UNTRUSTED_COMMITS_START>>>\n- 2026-09-30 fix: noindex\n- 2026-09-29 feat: menu\n- 2026-09-28 chore: robots\n<<<UNTRUSTED_COMMITS_END>>>/);
+      expect(prompt).not.toContain('seo: state');
+      expect(prompt).toMatch(/<<<UNTRUSTED_LINKS_START>>>[\s\S]*<<<UNTRUSTED_LINKS_END>>>/);
+    });
+
+    it('warns once and notes it in the prompt when the home page cannot be fetched', async () => {
+      seed([deindexed('a'), deindexed('b')]);
+      const fetch = async (u) => { if (u === 'https://a.de') throw new Error('down'); return page(); };
+
+      const { warnings } = await assess({ fetch });
+
+      expect(warnings.filter(w => w === 'Assessment: home page links unavailable')).toHaveLength(1);
+      expect(complete.mock.calls[0][0].prompt).toContain('(home page links unavailable)');
+    });
+  });
+
   describe('internalLinks', () => {
     it('keeps same-host paths, strips query and hash, skips assets and dedupes', () => {
-      const html = `<a href="/b?x=1#top">b</a><a href='/a'>a</a><a href="https://a.de/b">b</a><a href="https://other.de/c">c</a><a href="/logo.png">i</a><a href="rel">r</a><a>no</a>`;
-      expect(internalLinks(html, 'https://a.de/dir/page')).toEqual(['/a', '/b', '/dir/rel']);
+      const html = `<a href="/b?x=1#top">b</a><a href='/a'>a</a><a href="https://a.de/b">b</a><a href="https://other.de/c">c</a><a href="/logo.png">i</a><a href="/doc.pdf">d</a><a href="/old.html">o</a><a href="rel">r</a><a>no</a>`;
+      expect(internalLinks(html, 'https://a.de/dir/page')).toEqual(['/a', '/b', '/dir/rel', '/old.html']);
     });
   });
 });

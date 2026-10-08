@@ -8,7 +8,7 @@ import { format } from '../lib/date.js';
 import { addDays } from '../lib/measure.js';
 import { loadChanges } from '../lib/changes.js';
 import { fetchForDiagnosis } from '../lib/diagnose.js';
-import { isIndexed, loadIndexStatus } from '../lib/index-status.js';
+import { fetchIndexStatus, isIndexed, loadIndexStatus } from '../lib/index-status.js';
 import { stripHtml } from '../lib/site-fetch.js';
 import { fillTemplate } from '../lib/template.js';
 import { MODELS } from '../lib/models.js';
@@ -25,6 +25,7 @@ const CHANGES_WINDOW_DAYS = 56;
 const MAX_CHANGES = 20;
 const MAX_LINKS = 80;
 const MAX_COMMITS = 30;
+const ASSET_EXT = /\.(?:css|js|mjs|map|json|xml|txt|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot|pdf|zip|mp4|webm|mp3|wav)$/i;
 
 // Structured outputs reject maxLength/maxItems: the limits live in the prompt and in cleanAssessment.
 const ASSESS_SCHEMA = {
@@ -67,13 +68,23 @@ function cleanAssessment(parsed, today) {
 
 const hasNoText = (alert) => alert.diagnosis.codes?.includes('no_text') || alert.diagnosis.urls.some(u => u.findings.some(f => f.code === 'no_text'));
 
-// Newest merge of any age; null when there is none or the ledger is unreadable.
-function lastChangeDate(cwd) {
+const trimSlash = u => String(u).replace(/\/+$/, '');
+
+// Ledger entries; empty when the ledger is unreadable.
+function loadLedger(cwd) {
   try {
-    return loadChanges(cwd).entries.map(e => e.merged_at).filter(Boolean).sort().at(-1) ?? null;
+    return loadChanges(cwd).entries;
   } catch {
-    return null;
+    return [];
   }
+}
+
+// Newest merge of any age that concerns the alert: any entry for site_not_indexed, else entries touching one of its URLs. Null when there is none.
+function lastChangeDate(alert, ledger) {
+  const urls = new Set((alert.diagnosis?.urls ?? []).map(u => trimSlash(u.url)));
+  return ledger
+    .filter(e => alert.kind === 'site_not_indexed' || (e.urls ?? []).some(u => urls.has(trimSlash(u))))
+    .map(e => e.merged_at).filter(Boolean).sort().at(-1) ?? null;
 }
 
 // Bounded wait: after REASSESS_AFTER_DAYS the alert is assessed anyway, the stored crawl time can lag.
@@ -97,14 +108,14 @@ export function internalLinks(html, baseUrl) {
     try {
       const u = new URL((m[1] ?? m[2]).trim(), base);
       if (!/^https?:$/.test(u.protocol) || u.host !== base.host) continue;
-      if (/\.[a-z0-9]{2,5}$/i.test(u.pathname)) continue;
+      if (ASSET_EXT.test(u.pathname)) continue;
       paths.add(u.pathname);
     } catch { /* unparsable href */ }
   }
   return [...paths].sort().slice(0, MAX_LINKS);
 }
 
-const gitLogDefault = (cwd, since) => execFileSync('git', ['log', `--since=${since}`, '--no-merges', '--format=%cs %s', '-n', '60'], { cwd, encoding: 'utf8' });
+const gitLogDefault = (cwd, since) => execFileSync('git', ['log', `--since=${since}`, '--no-merges', '--format=%cs %s', '-n', '300'], { cwd, encoding: 'utf8' });
 
 function recentCommits(cwd, today, gitLog) {
   try {
@@ -151,16 +162,25 @@ function recentChanges(cwd, today, warnings) {
  * new assessments with their `alert_id`. Alerts that wait for a recrawl after
  * the newest change (at most 28 days) are pushed into `waiting` as `{ alert_id, last_change }`.
  */
-export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false, warnings = [], waiting = [], today = format(new Date()), fetch = fetchForDiagnosis, gitLog = gitLogDefault }) {
+export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false, warnings = [], waiting = [], today = format(new Date()), fetch = fetchForDiagnosis, gitLog = gitLogDefault, inspect = urls => fetchIndexStatus(config, urls) }) {
   const state = loadAlerts(cwd, warnings);
   // Almost no page text: the model would invent causes.
-  const lastChange = lastChangeDate(cwd);
+  const ledger = loadLedger(cwd);
   const { entries } = loadIndexStatus(cwd);
-  const dueAll = state.open.filter(a => isDue(a, today, lastChange));
   const due = [];
-  for (const a of dueAll) {
-    if (isWaiting(a, lastChange, entries, today)) waiting.push({ alert_id: a.id, last_change: lastChange });
-    else due.push(a);
+  for (const a of state.open) {
+    const lastChange = lastChangeDate(a, ledger);
+    if (!isDue(a, today, lastChange)) continue;
+    if (!isWaiting(a, lastChange, entries, today)) { due.push(a); continue; }
+    // The stored crawl time lags: look at the alert's URLs live before waiting.
+    let live = null;
+    try {
+      live = await inspect(a.diagnosis.urls.slice(0, MAX_FACT_URLS).map(u => u.url));
+    } catch {
+      warnings.push(`Assessment: live crawl check failed for ${a.id}`);
+    }
+    if (live && !isWaiting(a, lastChange, live, today)) due.push(a);
+    else waiting.push({ alert_id: a.id, last_change: lastChange });
   }
   for (const a of due.filter(hasNoText)) warnings.push(`Assessment skipped for ${a.id}: page has almost no text (no_text)`);
   const candidates = due
@@ -174,20 +194,28 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
   const recent_commits = recentCommits(cwd, today, gitLog);
   const locale = defaultLocale(config);
   let homeLinks;
+  let homeFailed = false;
   const done = [];
   for (const alert of candidates) {
     try {
       const pageUrl = alert.diagnosis.urls[0].url;
       const page = await fetch(pageUrl, { locale });
       const links = internalLinks(page.html, pageUrl);
-      const trim = u => u.replace(/\/+$/, '');
-      if (trim(pageUrl) !== trim(config.base_url)) {
+      if (trimSlash(pageUrl) !== trimSlash(config.base_url)) {
         if (homeLinks === undefined) {
-          try { homeLinks = internalLinks((await fetch(config.base_url, { locale })).html, config.base_url); } catch { homeLinks = []; }
+          try { homeLinks = internalLinks((await fetch(config.base_url, { locale })).html, config.base_url); } catch {
+            homeLinks = [];
+            homeFailed = true;
+            warnings.push('Assessment: home page links unavailable');
+          }
         }
         links.push(...homeLinks);
       }
-      const page_links = [...new Set(links)].sort().slice(0, MAX_LINKS).join('\n') || 'none';
+      const merged = [...new Set(links)].sort();
+      const lines = merged.slice(0, MAX_LINKS);
+      if (merged.length > MAX_LINKS) lines.push(`(list cut at ${MAX_LINKS} links)`);
+      if (homeFailed) lines.push('(home page links unavailable)');
+      const page_links = lines.join('\n') || 'none';
       const prompt = fillTemplate(ASSESS_PROMPT, {
         kind: alert.kind,
         site_name: config.site_name || config.project || '',
