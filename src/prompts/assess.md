@@ -17,6 +17,14 @@ days old):
 
 {{url_facts}}
 
+## Recent changes
+
+{{recent_changes}}
+
+These changes were already made on the site. Do not propose them again. When pages
+were changed in the last 4 weeks, say that Google usually needs several weeks to
+re-evaluate them before further content changes make sense.
+
 ## How to judge
 
 "Crawled - currently not indexed" usually means Google fetched the page and judged
@@ -32,6 +40,11 @@ no internal links to the pages, a very new domain) before single-page ones. Do n
 guess what you cannot see in the data. Fewer, sharper points are better than many.
 
 ## Output
+
+Write `likely_causes`, `action` and `why` in German (real umlauts ä ö ü ß, never
+ae/oe/ue). Address the site owner with "du". Use plain everyday words, no SEO
+jargon and no English terms where a German word exists (explain "Index" as
+"Google zeigt die Seite in der Suche"). No em-dashes.
 
 Return JSON with:
 - `likely_causes`: at most 3 short sentences, most likely first, each under 200 characters.

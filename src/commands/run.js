@@ -416,7 +416,7 @@ export async function runCommand(opts) {
 
   console.log(chalk.bold(`\nseo run — ${config.project} [${locales.join('+')}] ${dryRun ? '(dry run)' : ''}\n`));
 
-  const report = { status: 'idle', prs: [], budget: null, warnings: [], errors: [] };
+  const report = { status: 'idle', prs: [], site: { name: config.site_name || null, base_url: config.base_url || null, gsc_property: config.gsc_property || null }, budget: null, warnings: [], errors: [] };
   const awaiting = new Set(); // keywords marked pr_opened before their PR exists
   let keywordsData;
   report.warnings.push(...(config.config_warnings ?? []));

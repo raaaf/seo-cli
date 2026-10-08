@@ -273,7 +273,7 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   // A failed check is the loudest outcome: the report says so even when alerts opened too.
   const status = errors.length ? 'failed' : opened.length || updated.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
   return {
-    status, mode: 'watch', prs: [], alerts: { opened, updated, resolved, resubmitted }, open_alerts: next.open,
+    status, mode: 'watch', prs: [], site: { name: config.site_name || null, base_url: config.base_url || null, gsc_property: config.gsc_property || null }, alerts: { opened, updated, resolved, resubmitted }, open_alerts: next.open,
     traffic: traffic && { status: traffic.status, drop: traffic.drop }, warnings, errors,
   };
 }

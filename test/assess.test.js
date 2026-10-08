@@ -141,4 +141,27 @@ describe('assess', () => {
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/<<<UNTRUSTED_PAGE_START>>>\s+Some page text\s+<<<UNTRUSTED_PAGE_END>>>/);
   });
+
+  it('puts changes merged within 56 days into the prompt and leaves older ones out', async () => {
+    seed([deindexed('a')]);
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [
+      { kind: 'new', slug: 'recent-page', urls: [], merged_at: '2026-09-28' },
+      { kind: 'rewrite', slug: 'old-page', urls: [], merged_at: '2026-08-09' },
+    ] }));
+
+    await assess();
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('- 2026-09-28: new page recent-page');
+    expect(prompt).not.toContain('old-page');
+  });
+
+  it('says none when there is no changes.json', async () => {
+    seed([deindexed('a')]);
+
+    await assess();
+
+    expect(complete.mock.calls[0][0].prompt).toContain('## Recent changes\n\nnone\n');
+  });
 });
