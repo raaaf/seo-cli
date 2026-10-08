@@ -10,6 +10,8 @@ const TIMEOUT_MS = 15_000;
 const MAX_FAILURES = 2;
 // Bing reports a bad key as HTTP 400 with this ErrorCode (measured 2026-10-08).
 const INVALID_API_KEY = 3;
+// GetUrlInfo answers HTTP 400 with ErrorCode 5 (ThrottleHost) after 10 calls per host (measured 2026-10-08).
+const THROTTLE_HOST = 5;
 // Bing answers "never crawled" with year 0001; anything before 2000 is that.
 const EARLIEST_MS = Date.UTC(2000, 0, 1);
 
@@ -62,7 +64,9 @@ async function failureKind(res) {
   if (res.status >= 500) return 'unavailable';
   if (res.status === 400) {
     try {
-      if (JSON.parse(await res.text())?.ErrorCode === INVALID_API_KEY) return 'key_rejected';
+      const code = JSON.parse(await res.text())?.ErrorCode;
+      if (code === INVALID_API_KEY) return 'key_rejected';
+      if (code === THROTTLE_HOST) return 'rate_limited';
     } catch { /* not JSON: a plain error */ }
   }
   return 'error';

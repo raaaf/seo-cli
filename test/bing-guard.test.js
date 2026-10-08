@@ -50,4 +50,10 @@ describe('isCrawled', () => {
     expect(bing.isCrawled({ LastCrawledDate: '/Date(-62135596800000)/', HttpStatus: 0 })).toBe(false);
     expect(bing.isCrawled(null)).toBe(false);
   });
+
+  it('reads ErrorCode 5 (ThrottleHost) as rate_limited, not as a plain error', async () => {
+    safeFetch.mockResolvedValueOnce(res(400, { ErrorCode: 5, Message: 'ERROR!!! ThrottleHost' }));
+    const err = await fails(bing.bingRequest('GetUrlInfo'));
+    expect(err.kind).toBe('rate_limited');
+  });
 });
