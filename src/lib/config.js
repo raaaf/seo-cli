@@ -133,6 +133,11 @@ export function isStrict(config) {
   return config?.quality === 'strict';
 }
 
+/** Site identity (name, base URL, GSC property) for the notify mail. */
+export function siteInfo(config) {
+  return { name: config.site_name || null, base_url: config.base_url || null, gsc_property: config.gsc_property || null };
+}
+
 export function defaultLocale(config) {
   return config.locales?.[0] ?? config.locale ?? 'de';
 }

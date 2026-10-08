@@ -507,6 +507,7 @@ jobs:
             --argjson extra "$EXTRA_WARNINGS" \
             '{repo:$repo, run_url:$run_url, status:$status, mode:$mode, alerts:$alerts,
               prs: ($report.prs // [] | map({url, gate_status: ($gates[.url] // "unknown")})),
+              site: ($report.site // null),
               budget: ($report.budget // null),
               llm: ($report.llm // null),
               assessments: ($report.assessments // []),

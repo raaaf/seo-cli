@@ -129,7 +129,7 @@ describe('assess', () => {
     const { done } = await assess();
 
     expect(done[0].likely_causes).toEqual(['Thin pages, see now', 'two', 'three']);
-    expect(done[0].actions[0].action).toHaveLength(200);
+    expect(done[0].actions[0].action).toHaveLength(300);
     expect(done[0].actions[0].action).not.toContain('<');
     expect(done[0].actions[0].why).toBe('Read today');
     expect(done[0].actions.map(a => a.action).slice(1)).toEqual(['b', 'c', 'd', 'e']);
@@ -140,5 +140,54 @@ describe('assess', () => {
     await assess();
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toMatch(/<<<UNTRUSTED_PAGE_START>>>\s+Some page text\s+<<<UNTRUSTED_PAGE_END>>>/);
+  });
+
+  it('puts changes merged within 56 days into the prompt and leaves older ones out', async () => {
+    seed([deindexed('a')]);
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [
+      { kind: 'new', slug: 'recent-page', urls: [], merged_at: '2026-09-28' },
+      { kind: 'rewrite', slug: 'old-page', urls: [], merged_at: '2026-08-09' },
+    ] }));
+
+    await assess();
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('- 2026-09-28: new page recent-page');
+    expect(prompt).not.toContain('old-page');
+  });
+
+  it('marks a change that performs worse as a revert candidate', async () => {
+    seed([deindexed('a')]);
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [
+      { kind: 'rewrite', slug: 'bad-page', urls: [], merged_at: '2026-09-28', revert_candidate: true },
+      { kind: 'new', slug: 'fine-page', urls: [], merged_at: '2026-09-27' },
+    ] }));
+
+    await assess();
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('- 2026-09-28: rewrite bad-page (performs worse than before, may need reverting)');
+    expect(prompt).toContain('- 2026-09-27: new page fine-page\n');
+  });
+
+  it('warns and says the history is unknown when changes.json is unreadable', async () => {
+    seed([deindexed('a')]);
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/changes.json'), '{');
+
+    const { warnings } = await assess();
+
+    expect(warnings).toContain('Assessment: changes.json unreadable');
+    expect(complete.mock.calls[0][0].prompt).toContain('unknown (change history unreadable)');
+  });
+
+  it('says none when there is no changes.json', async () => {
+    seed([deindexed('a')]);
+
+    await assess();
+
+    expect(complete.mock.calls[0][0].prompt).toContain('## Recent changes\n\nnone\n');
   });
 });

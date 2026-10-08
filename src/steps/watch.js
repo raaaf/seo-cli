@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { defaultLocale, localeLandingPath, localeUrlPath } from '../lib/config.js';
+import { defaultLocale, localeLandingPath, localeUrlPath, siteInfo } from '../lib/config.js';
 import { format } from '../lib/date.js';
 import { queryPageTotals } from '../lib/gsc.js';
 import { getExistingSlugs } from '../lib/landings.js';
@@ -273,7 +273,7 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   // A failed check is the loudest outcome: the report says so even when alerts opened too.
   const status = errors.length ? 'failed' : opened.length || updated.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
   return {
-    status, mode: 'watch', prs: [], alerts: { opened, updated, resolved, resubmitted }, open_alerts: next.open,
+    status, mode: 'watch', prs: [], site: siteInfo(config), alerts: { opened, updated, resolved, resubmitted }, open_alerts: next.open,
     traffic: traffic && { status: traffic.status, drop: traffic.drop }, warnings, errors,
   };
 }
