@@ -135,10 +135,11 @@ async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, op
   return checks;
 }
 
-// Bing URL checks per day: the sitemap is covered section by section.
-const BING_URLS_PER_DAY = 30;
+// Bing URL checks per day: the sitemap is covered section by section. Bing throttles GetUrlInfo
+// after 10 calls per host (ThrottleHost, measured 2026-10-08), so 10 it is.
+const BING_URLS_PER_DAY = 10;
 
-// Today's section of the sorted sitemap, stateless: the start moves by 30 per day and wraps around.
+// Today's section of the sorted sitemap, stateless: the start moves by BING_URLS_PER_DAY per day and wraps around.
 function bingSection(urls, today) {
   const sorted = [...urls].sort();
   const day = Math.floor(Date.parse(`${today}T00:00:00Z`) / DAY_MS);

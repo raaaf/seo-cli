@@ -519,7 +519,7 @@ describe('watch-step: Bing', () => {
     expect(report.errors).toEqual([]);
   });
 
-  it('checks at most 30 sitemap URLs a day, a deterministic section that advances with the day', async () => {
+  it('checks at most 10 sitemap URLs a day (Bing throttles GetUrlInfo after 10 per host), a deterministic section that advances with the day', async () => {
     nextIndex.entries = Array.from({ length: 70 }, (_, i) => entry(`p${String(i).padStart(2, '0')}`, OK));
     const checked = async (today) => {
       const bingApi = api();
@@ -528,9 +528,9 @@ describe('watch-step: Bing', () => {
     };
     const sorted = nextIndex.entries.map(e => e.url).sort();
     const dayNumber = Math.floor(Date.parse('2026-10-07T00:00:00Z') / 86400000);
-    const start = (dayNumber * 30) % 70;
+    const start = (dayNumber * 10) % 70;
     const first = await checked('2026-10-07');
-    expect(first).toEqual(Array.from({ length: 30 }, (_, i) => sorted[(start + i) % 70]));
+    expect(first).toEqual(Array.from({ length: 10 }, (_, i) => sorted[(start + i) % 70]));
     expect(await checked('2026-10-07')).toEqual(first);
     expect(await checked('2026-10-08')).not.toEqual(first);
   });
