@@ -432,6 +432,7 @@ jobs:
               prs: ($report.prs // [] | map({url, gate_status: ($gates[.url] // "unknown")})),
               budget: ($report.budget // null),
               llm: ($report.llm // null),
+              assessments: ($report.assessments // []),
               warnings: (($report.warnings // []) + $extra),
               errors: ($report.errors // [])}' \
             | curl -sS --fail -X POST -H 'Content-Type: application/json' -d @- "$NOTIFY_WEBHOOK" \

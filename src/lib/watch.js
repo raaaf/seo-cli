@@ -1,8 +1,10 @@
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
 import { addDays } from './measure.js';
 import { isIndexed } from './index-status.js';
 
-// Pure rules of the watcher: traffic windows, thresholds, alert state. No I/O,
-// the files and GSC access live in steps/watch.js.
+// Rules of the watcher: traffic windows, thresholds, alert state. Pure except
+// loadAlerts/saveAlerts; GSC access lives in steps/watch.js.
 
 export const ALERTS_FILE = 'seo/alerts.json';
 
@@ -23,6 +25,26 @@ const SITE_RESOLVE_FROM = 0.5;
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
+}
+
+export function loadAlerts(cwd, warnings) {
+  const path = join(cwd, ALERTS_FILE);
+  if (!existsSync(path)) return emptyAlerts();
+  try {
+    return { ...emptyAlerts(), ...JSON.parse(readFileSync(path, 'utf8')) };
+  } catch (e) {
+    warnings.push(`${ALERTS_FILE} unreadable, starting from empty alerts: ${e.message}`);
+    return emptyAlerts();
+  }
+}
+
+// Written only when the content changes, so a quiet day leaves the file as it is.
+export function saveAlerts(state, cwd) {
+  const path = join(cwd, ALERTS_FILE);
+  const content = JSON.stringify(state, null, 2) + '\n';
+  if (existsSync(path) && readFileSync(path, 'utf8') === content) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, 'utf8');
 }
 
 /** The last 7 complete days (ending today-3) against the 7 days before them. */

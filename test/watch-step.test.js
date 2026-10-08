@@ -23,6 +23,7 @@ vi.mock('../src/lib/index-status.js', async (orig) => ({
 const { watch } = await import('../src/steps/watch.js');
 const { loadIndexStatus } = await import('../src/lib/index-status.js');
 const { trafficWindows } = await import('../src/lib/watch.js');
+const { diagnoseAlerts } = await import('../src/steps/diagnose.js');
 
 const CONFIG = { gsc_property: 'sc-domain:a.de', base_url: 'https://a.de', locales: ['de'], landing_path: 'content/de/' };
 const url = (slug) => `https://a.de/${slug}`;
@@ -33,7 +34,11 @@ const GONE = 'Crawled - currently not indexed';
 let dir;
 const alertsFile = () => JSON.parse(readFileSync(join(dir, 'seo/alerts.json'), 'utf8'));
 let todayRef;
-const go = (today, extra = {}) => { todayRef = today; return watch({ config: CONFIG, cwd: dir, today, ...extra }); };
+// Diagnosis and resubmit are network boundaries: stubbed unless a test passes its own.
+const go = (today, extra = {}) => {
+  todayRef = today;
+  return watch({ config: CONFIG, cwd: dir, today, diagnose: async () => ({ updated: [] }), submit: async () => {}, ...extra });
+};
 // GSC answers by window: the current week of `today` against the week before.
 function gsc({ current = 1000, previous = 1000 } = {}) {
   queryPageTotals.mockImplementation(async (_p, { endDate }) => [
@@ -68,7 +73,7 @@ describe('watch-step', () => {
 
     const second = await go('2026-10-09');
     expect(second.status).toBe('watch_ok');
-    expect(second.alerts).toEqual({ opened: [], resolved: [] });
+    expect(second.alerts).toMatchObject({ opened: [], updated: [], resolved: [] });
   });
 
   it('lists a site that is not indexed at all in alerts.opened on the first run', async () => {
@@ -157,5 +162,122 @@ describe('watch-step', () => {
     const report = await go('2026-10-08', { dryRun: true });
     expect(report.alerts.opened.map(a => a.id)).toEqual([`deindexed:${url('page')}`]);
     expect(loadIndexStatus(dir).entries[0].coverageState).toBe(OK);
+  });
+});
+
+describe('watch-step: diagnosis and resubmit', () => {
+  const cleanFetch = async (u) => ({ status: 200, finalUrl: u, headers: {}, html: `<html><body>${'word '.repeat(80)}</body></html>` });
+  const realDiagnose = (args) => diagnoseAlerts({ ...args, fetch: cleanFetch });
+  const dropPage = async (opts = {}) => {
+    await go('2026-10-07');
+    nextIndex.entries = [entry('page', GONE)];
+    return go('2026-10-08', { diagnose: realDiagnose, ...opts });
+  };
+
+  it('stores the diagnosis on the alert and resubmits once when the live fetch is clean', async () => {
+    const submit = vi.fn().mockResolvedValue();
+    await dropPage({ submit });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit.mock.calls[0][0].urls).toEqual([url('page')]);
+    expect(alertsFile().open[0]).toMatchObject({ diagnosis: { cause: 'clean' }, resubmitted_at: '2026-10-08' });
+    expect(alertsFile().last_resubmit).toBe('2026-10-08');
+  });
+
+  it('does not resubmit again the next day, and leaves alerts.json untouched', async () => {
+    const submit = vi.fn().mockResolvedValue();
+    await dropPage({ submit });
+    const before = readFileSync(join(dir, 'seo/alerts.json'), 'utf8');
+
+    await go('2026-10-09', { diagnose: realDiagnose, submit });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).toBe(before);
+  });
+
+  it('resubmits a later clean alert only once 7 days have passed since the last submit', async () => {
+    const submit = vi.fn().mockResolvedValue();
+    await dropPage({ submit });
+    nextIndex.entries = [entry('page', GONE), entry('other', OK)];
+    await go('2026-10-09', { diagnose: realDiagnose, submit });
+    nextIndex.entries = [entry('page', GONE), entry('other', GONE)];
+
+    await go('2026-10-10', { diagnose: realDiagnose, submit });
+    expect(submit).toHaveBeenCalledTimes(1);
+    await go('2026-10-14', { diagnose: realDiagnose, submit });
+    expect(submit).toHaveBeenCalledTimes(1);
+    await go('2026-10-15', { diagnose: realDiagnose, submit });
+    expect(submit).toHaveBeenCalledTimes(2);
+  });
+
+  it('sets nothing when the submit fails, and reports a warning instead of a failure', async () => {
+    const report = await dropPage({ submit: async () => { throw new Error('403 forbidden'); } });
+
+    expect(report.status).toBe('alert');
+    expect(report.errors).toEqual([]);
+    expect(report.warnings).toEqual(['Resubmit failed: 403 forbidden']);
+    expect(alertsFile().open[0].resubmitted_at).toBeUndefined();
+    expect(alertsFile().last_resubmit).toBeUndefined();
+  });
+
+  it('turns a diagnosis error into a warning and still keeps the alert', async () => {
+    const report = await dropPage({ diagnose: async () => { throw new Error('boom'); } });
+
+    expect(report.status).toBe('alert');
+    expect(report.errors).toEqual([]);
+    expect(report.warnings).toEqual(['Diagnosis failed: boom']);
+    expect(alertsFile().open.map(a => a.id)).toEqual([`deindexed:${url('page')}`]);
+  });
+
+  it('does not diagnose when the index check failed', async () => {
+    const diagnose = vi.fn();
+    nextIndex.error = new Error('invalid_grant');
+    await go('2026-10-07', { diagnose });
+    expect(diagnose).not.toHaveBeenCalled();
+  });
+
+  it('does not resubmit on a dry run', async () => {
+    const submit = vi.fn();
+    await go('2026-10-07');
+    nextIndex.entries = [entry('page', GONE)];
+    await go('2026-10-08', { diagnose: realDiagnose, submit, dryRun: true });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('reports an already open alert with a changed diagnosis as updated, status alert', async () => {
+    await go('2026-10-07');
+    nextIndex.entries = [entry('page', GONE)];
+    await go('2026-10-08');
+    const diagnose = async ({ alerts }) => ({ updated: alerts });
+
+    const report = await go('2026-10-09', { diagnose });
+    expect(report.status).toBe('alert');
+    expect(report.alerts.updated.map(a => a.id)).toEqual([`deindexed:${url('page')}`]);
+    expect(report.alerts.opened).toEqual([]);
+  });
+
+  it('reports an alert open from an earlier run without diagnosis as updated once diagnosed, a new one not', async () => {
+    await go('2026-10-07');
+    nextIndex.entries = [entry('page', GONE)];
+    await go('2026-10-08');
+    expect(alertsFile().open[0].diagnosis).toBeUndefined();
+    nextIndex.entries = [entry('page', GONE), entry('other', OK)];
+    await go('2026-10-09');
+    nextIndex.entries = [entry('page', GONE), entry('other', GONE)];
+
+    const report = await go('2026-10-10', { diagnose: realDiagnose });
+
+    expect(report.status).toBe('alert');
+    expect(report.alerts.opened.map(a => a.detail)).toEqual([url('other')]);
+    expect(report.alerts.updated.map(a => a.detail)).toEqual([url('page')]);
+  });
+
+  it('lists an alert opened in this run only under opened, even if its diagnosis counts as updated', async () => {
+    await go('2026-10-07');
+    nextIndex.entries = [entry('page', GONE)];
+
+    const report = await go('2026-10-08', { diagnose: async ({ alerts }) => ({ updated: alerts }) });
+    expect(report.alerts.opened).toHaveLength(1);
+    expect(report.alerts.updated).toEqual([]);
   });
 });

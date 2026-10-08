@@ -46,11 +46,14 @@ export async function fetchIndexStatus(config, urls, delayMs = INSPECTION_DELAY_
         verdict: r.verdict ?? null,
         robotsTxtState: r.robotsTxtState ?? null,
         indexingState: r.indexingState ?? null,
+        googleCanonical: r.googleCanonical ?? null,
+        userCanonical: r.userCanonical ?? null,
+        pageFetchState: r.pageFetchState ?? null,
       });
     } catch (e) {
       if (isQuotaError(e)) {
         for (const remaining of urls.slice(i)) {
-          results.push({ url: remaining, coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null });
+          results.push({ url: remaining, coverageState: 'unknown', lastCrawlTime: null, verdict: null, robotsTxtState: null, indexingState: null, googleCanonical: null, userCanonical: null, pageFetchState: null });
         }
         break;
       }
