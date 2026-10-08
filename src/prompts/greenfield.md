@@ -20,6 +20,9 @@ Suggest 6 concrete keywords for which a landing page makes sense. Each keyword s
 - Be realistically rankable (not too generic, not too niche)
 - Match the locale language
 
+Do not lower a score because a query may show an AI Overview: the code adjusts
+the order of keywords for that.
+
 `expected_entities` and `content_gaps` MUST be written in the target locale
 ({{locale}}), the same language the page will be written in. For DE use German
 terms (Tagesordnung, Einladung, Protokoll, Abstimmung), never their English
