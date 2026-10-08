@@ -332,6 +332,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
     locale: config.locale || 'de',
     catalog: formatCatalog(catalog),
     contract: pageRulesSection(config.page_contract, catalog),
+    icp: icpBlock(config, cwd),
   });
 
   let suggestions;
@@ -406,7 +407,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   }
 }
 
-function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = [], cwd = process.cwd()) {
+function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = [], cwd) {
   const vars = {
     keyword: String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200),
     impressions: row.impressions,

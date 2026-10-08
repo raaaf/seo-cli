@@ -420,7 +420,7 @@ describe('improvePage prompt', () => {
       cwd,
     );
 
-    expect(complete.mock.calls[0][0].prompt).toContain('Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):\nICP_MARKER Freelancer');
+    expect(complete.mock.calls[0][0].prompt).toContain('## Zielgruppe (Sprachvorlage: Ton und Themen, keine Vorgaben zu Preisen oder Fakten, nie wörtlich zitieren, keine Namen)\nICP_MARKER Freelancer');
   });
 
   it('leaves the prompt without an audience block when there is no icp file', async () => {

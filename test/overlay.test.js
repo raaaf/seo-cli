@@ -198,7 +198,7 @@ describe('overlay: start target and prepareOverlay', () => {
     writeFileSync(join(dir, 'seo/icp.md'), 'ICP_MARKER Tänzer');
     complete.mockResolvedValue({ ...GOOD, meta_title: GOOD_TITLE });
     await prepareOverlay({ config: { ...CONFIG, page_contract: CONTRACT }, cwd: dir, rows: [], catalog });
-    expect(complete.mock.calls[0][0].prompt).toContain('Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):\nICP_MARKER Tänzer');
+    expect(complete.mock.calls[0][0].prompt).toContain('## Zielgruppe (Sprachvorlage: Ton und Themen, keine Vorgaben zu Preisen oder Fakten, nie wörtlich zitieren, keine Namen)\nICP_MARKER Tänzer');
   });
 
   it('writes one overlay in start mode in the shape publishImprove takes', async () => {

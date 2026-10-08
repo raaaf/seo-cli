@@ -8,7 +8,7 @@ vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { generatePage, loadIcpDoc, icpBlock } = await import('../src/steps/generate.js');
 
-const LEAD = 'Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):';
+const LEAD = '## Zielgruppe (Sprachvorlage: Ton und Themen, keine Vorgaben zu Preisen oder Fakten, nie wörtlich zitieren, keine Namen)';
 const config = {
   base_url: 'https://acme.io/', locale: 'de', locales: ['de'],
   site_name: 'Acme', landing_path: 'resources/landing/de/',
@@ -35,9 +35,33 @@ describe('icp: loadIcpDoc and icpBlock', () => {
     expect(icpBlock(config, dir)).toBe(`\n\n${LEAD}\nPaare, die ihre Hochzeit selbst planen.`);
   });
 
-  it('caps the document at 8000 characters', () => {
-    writeIcp('a'.repeat(9000));
-    expect(loadIcpDoc(config, dir)).toHaveLength(8000);
+  it('cuts at 8000 code points, not UTF-16 units, and marks the cut', () => {
+    writeIcp('😀'.repeat(8001));
+    const doc = loadIcpDoc(config, dir);
+    expect(doc).toBe(`${'😀'.repeat(8000)}\n[gekürzt]`);
+  });
+
+  it('does not mark a document of exactly 8000 code points', () => {
+    writeIcp('😀'.repeat(8000));
+    expect(loadIcpDoc(config, dir)).toBe('😀'.repeat(8000));
+  });
+
+  it('treats a read error as no document and warns once', () => {
+    mkdirSync(join(dir, 'seo/icp.md'), { recursive: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(loadIcpDoc(config, dir)).toBe('');
+      expect(loadIcpDoc(config, dir)).toBe('');
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each([null, ''])('icp_doc %j disables the feature even when the default file exists', (value) => {
+    writeIcp('default doc');
+    expect(loadIcpDoc({ ...config, icp_doc: value }, dir)).toBe('');
+    expect(icpBlock({ ...config, icp_doc: value }, dir)).toBe('');
   });
 
   it('reads config.icp_doc instead of the default path', () => {
@@ -61,7 +85,7 @@ describe('icp: loadIcpDoc and icpBlock', () => {
 });
 
 describe('icp: prompts stay byte-identical without a file', () => {
-  it.each(['generate', 'improve', 'score', 'overlay'])('%s.md holds one placeholder glued to the end of a line', (name) => {
+  it.each(['generate', 'improve', 'score', 'overlay', 'greenfield'])('%s.md holds one placeholder glued to the end of a line', (name) => {
     const tpl = readFileSync(new URL(`../src/prompts/${name}.md`, import.meta.url), 'utf8');
     expect(tpl.match(/\{\{icp\}\}/g)).toHaveLength(1);
     // Glued to non-whitespace and followed by a line break: an empty value changes nothing else.

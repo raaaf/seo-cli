@@ -108,13 +108,29 @@ export function stripCodeFence(text) {
 }
 
 const ICP_MAX_CHARS = 8000;
-const ICP_LEAD = 'Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):';
+const ICP_TRUNCATED = '[gekürzt]';
+const ICP_LEAD = '## Zielgruppe (Sprachvorlage: Ton und Themen, keine Vorgaben zu Preisen oder Fakten, nie wörtlich zitieren, keine Namen)';
 
-/** Audience document of the project (`config.icp_doc`, default seo/icp.md), capped; '' when the file is missing. Cached per path. */
+/**
+ * Audience document of the project (`config.icp_doc`, default seo/icp.md), capped at 8000 code points
+ * with a visible "[gekürzt]" tail. '' when the file is missing or unreadable (one warning), or when
+ * `icp_doc` is null/'' (feature disabled). Cached per path.
+ */
 export function loadIcpDoc(config, cwd) {
-  const path = join(cwd, config.icp_doc || 'seo/icp.md');
+  const rel = config.icp_doc === undefined ? 'seo/icp.md' : config.icp_doc;
+  if (!rel) return '';
+  const path = join(cwd, rel);
   if (!icpCache.has(path)) {
-    icpCache.set(path, existsSync(path) ? readFileSync(path, 'utf8').trim().slice(0, ICP_MAX_CHARS) : '');
+    let doc = '';
+    try {
+      if (existsSync(path)) {
+        const chars = [...readFileSync(path, 'utf8').trim()];
+        doc = chars.length > ICP_MAX_CHARS ? `${chars.slice(0, ICP_MAX_CHARS).join('')}\n${ICP_TRUNCATED}` : chars.join('');
+      }
+    } catch (e) {
+      console.warn(`icp_doc could not be read at ${path}: ${e.message}`);
+    }
+    icpCache.set(path, doc);
   }
   return icpCache.get(path);
 }
