@@ -26,6 +26,18 @@ These changes were already made on the site. Do not propose them again, except a
 were changed in the last 4 weeks, say that Google usually needs several weeks to
 re-evaluate them before further content changes make sense.
 
+## Links on the page and the home page
+
+{{page_links}}
+
+These are the internal links really present on the page and on the home page. Links in the footer or main menu appear on every page. A page in this list is linked, do not propose linking it.
+
+## Recent commits in the site's repository
+
+{{recent_commits}}
+
+These are already-made changes of any kind (templates, noindex, texts). Do not propose what they already did.
+
 ## How to judge
 
 "Crawled - currently not indexed" usually means Google fetched the page and judged

@@ -6,7 +6,7 @@ import { tmpdir } from 'os';
 const complete = vi.fn();
 vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
-const { assessAlerts } = await import('../src/steps/assess.js');
+const { assessAlerts, internalLinks } = await import('../src/steps/assess.js');
 const { BudgetExceededError } = await import('../src/lib/budget.js');
 
 const CONFIG = { base_url: 'https://a.de', locales: ['de'], site_name: 'A' };
@@ -24,7 +24,8 @@ const seed = (open) => {
   writeFileSync(join(dir, 'seo/alerts.json'), JSON.stringify({ version: 1, open, known_indexed: [], traffic_pending: null, failures: 0 }));
 };
 const saved = () => JSON.parse(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).open;
-const assess = (extra = {}) => { const warnings = []; return assessAlerts({ config: CONFIG, cwd: dir, today: TODAY, fetch: page, warnings, ...extra }).then(done => ({ done, warnings })); };
+const crawledAfterChanges = () => writeFileSync(join(dir, 'seo/index-status.json'), JSON.stringify({ version: 1, updated: TODAY, entries: [{ url: url('a'), coverageState: 'Crawled - currently not indexed', lastCrawlTime: '2026-10-02T00:00:00Z' }] }));
+const assess = (extra = {}) => { const warnings = []; return assessAlerts({ config: CONFIG, cwd: dir, today: TODAY, fetch: page, gitLog: () => '', warnings, ...extra }).then(done => ({ done, warnings })); };
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'seo-assess-'));
@@ -150,6 +151,7 @@ describe('assess', () => {
       { kind: 'rewrite', slug: 'old-page', urls: [], merged_at: '2026-08-09' },
     ] }));
 
+    crawledAfterChanges();
     await assess();
 
     const prompt = complete.mock.calls[0][0].prompt;
@@ -165,6 +167,7 @@ describe('assess', () => {
       { kind: 'new', slug: 'fine-page', urls: [], merged_at: '2026-09-27' },
     ] }));
 
+    crawledAfterChanges();
     await assess();
 
     const prompt = complete.mock.calls[0][0].prompt;
@@ -189,5 +192,68 @@ describe('assess', () => {
     await assess();
 
     expect(complete.mock.calls[0][0].prompt).toContain('## Recent changes\n\nnone\n');
+  });
+
+  describe('crawl gate', () => {
+    const writeChange = (merged_at) => {
+      mkdirSync(join(dir, 'seo'), { recursive: true });
+      writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [{ kind: 'rewrite', slug: 'x', urls: [], merged_at }] }));
+    };
+    const writeCrawl = (lastCrawlTime) => {
+      mkdirSync(join(dir, 'seo'), { recursive: true });
+      writeFileSync(join(dir, 'seo/index-status.json'), JSON.stringify({ version: 1, updated: TODAY, entries: [{ url: url('a'), coverageState: 'Crawled - currently not indexed', lastCrawlTime }] }));
+    };
+
+    it('waits while no crawl followed the newest change and reports the alert', async () => {
+      seed([deindexed('a')]);
+      writeChange('2026-10-05');
+      writeCrawl('2026-10-05T22:43:52Z');
+      const waiting = [];
+
+      const { done } = await assess({ waiting });
+
+      expect(done).toEqual([]);
+      expect(complete).not.toHaveBeenCalled();
+      expect(waiting).toEqual([{ alert_id: `deindexed:${url('a')}`, last_change: '2026-10-05' }]);
+    });
+
+    it('assesses once a crawl came after the change', async () => {
+      seed([deindexed('a')]);
+      writeChange('2026-10-05');
+      writeCrawl('2026-10-06T01:00:00Z');
+      const waiting = [];
+
+      const { done } = await assess({ waiting });
+
+      expect(done).toHaveLength(1);
+      expect(waiting).toEqual([]);
+    });
+
+    it('stops waiting after 28 days even without a recrawl', async () => {
+      seed([deindexed('a')]);
+      writeChange('2026-09-08');
+      writeCrawl('2026-09-01T00:00:00Z');
+
+      const { done } = await assess();
+
+      expect(done).toHaveLength(1);
+    });
+
+    it('reassesses an assessment that predates the change once a crawl followed', async () => {
+      seed([deindexed('a', { assessment: { assessed_at: '2026-09-30', likely_causes: [], actions: [] } })]);
+      writeChange('2026-10-02');
+      writeCrawl('2026-10-04T00:00:00Z');
+
+      const { done } = await assess();
+
+      expect(done).toHaveLength(1);
+    });
+  });
+
+  describe('internalLinks', () => {
+    it('keeps same-host paths, strips query and hash, skips assets and dedupes', () => {
+      const html = `<a href="/b?x=1#top">b</a><a href='/a'>a</a><a href="https://a.de/b">b</a><a href="https://other.de/c">c</a><a href="/logo.png">i</a><a href="rel">r</a><a>no</a>`;
+      expect(internalLinks(html, 'https://a.de/dir/page')).toEqual(['/a', '/b', '/dir/rel']);
+    });
   });
 });
