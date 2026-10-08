@@ -176,6 +176,7 @@ locale: de
 locales: [de]           # [de, en] for bilingual
 primary_cta: trial_signup
 style_doc: null         # null = built-in default style
+icp_doc: seo/icp.md     # audience document, optional: missing file = prompts unchanged, injected as {{icp}} (max 8000 chars)
 score_cutoff: 7         # 0–10, keywords below this are skipped
 weekly_cap: 2           # max pages generated per run
 max_new_pages_per_month: 4  # new-page PRs per calendar month, rewrites do not count

@@ -47,7 +47,7 @@ rewrite.
 
 Where this style guide states a price or a pricing rule, it overrides whatever
 figure the current page states: rewrite the page's numbers to match it, not the
-other way round.
+other way round.{{icp}}
 
 ## What to change
 

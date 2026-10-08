@@ -71,6 +71,18 @@ describe('discover-run', () => {
     expect(complete.mock.calls[0][0].prompt).toContain('SERP features present: ai_overview, videos');
   });
 
+  it('adds the audience block to the scoring prompt only when seo/icp.md exists', async () => {
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/icp.md'), 'ICP_MARKER Paare', 'utf8');
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 },
+    ]);
+    complete.mockResolvedValue({ score: 9, type: 'guide', intent: 'informational', target_slug: 'hochzeit-planen', expected_entities: [], content_gaps: [] });
+
+    await discover(config, dir);
+    expect(complete.mock.calls[0][0].prompt).toContain('Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):\nICP_MARKER Paare');
+  });
+
   it('narrows the GSC query to the project base_url so sibling subdomains do not fill the row limit', async () => {
     querySearchAnalytics.mockResolvedValue([]);
     complete.mockResolvedValue([]);

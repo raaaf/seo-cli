@@ -30,6 +30,7 @@ const STRICT_RULES = {
   numbers_rule: `${SOURCES_RULE} List every external source you used under \`sources:\` in the frontmatter.`,
 };
 
+const icpCache = new Map();
 let styleDocCache = null;
 let styleDocCacheKey = null;
 
@@ -58,6 +59,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     related_searches: (keyword.serp?.related_searches || []).join('\n') || 'n/a',
     existing_slugs: getExistingSlugs(config, cwd, config.locale).join(', ') || 'none',
     style,
+    icp: icpBlock(config, cwd),
     today: format(new Date()),
     validator_feedback: feedbackBlock,
     ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
@@ -103,6 +105,24 @@ export function stripCodeFence(text) {
     t = t.slice(open[0].length).replace(/\n```$/, '');
   }
   return t.trim();
+}
+
+const ICP_MAX_CHARS = 8000;
+const ICP_LEAD = 'Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):';
+
+/** Audience document of the project (`config.icp_doc`, default seo/icp.md), capped; '' when the file is missing. Cached per path. */
+export function loadIcpDoc(config, cwd) {
+  const path = join(cwd, config.icp_doc || 'seo/icp.md');
+  if (!icpCache.has(path)) {
+    icpCache.set(path, existsSync(path) ? readFileSync(path, 'utf8').trim().slice(0, ICP_MAX_CHARS) : '');
+  }
+  return icpCache.get(path);
+}
+
+/** Value for `{{icp}}`: the doc as a labelled block that starts with a blank line, or '' so the prompt stays byte-identical. */
+export function icpBlock(config, cwd) {
+  const doc = loadIcpDoc(config, cwd);
+  return doc ? `\n\n${ICP_LEAD}\n${doc}` : '';
 }
 
 export function loadStyleDoc(config, cwd) {

@@ -121,6 +121,8 @@ Two cluster guards, added after an improve run pushed a page further into its ne
 - `counterpart.md` — counterpart-locale page adaptation (used with Opus, see Counterpart-locale support below)
 - `style-default.md` — built-in writing style guide, used when `config.style_doc` is null
 
+`{{icp}}` (in `generate.md`, `improve.md`, `score.md`, `overlay.md`) carries the audience document `config.icp_doc` (default `seo/icp.md`, max 8000 chars, cached per path) as a block led by `Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):`. `loadIcpDoc`/`icpBlock` live in `generate.js`. The placeholder is glued to the end of a line and the block starts with a blank line, so without the file every prompt is byte-identical to before (pinned in `test/icp.test.js`). The document is read by a human before commit and therefore trusted, not fenced as untrusted.
+
 ### State files (in target project, not this repo)
 
 | Path | Purpose | Git |

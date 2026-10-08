@@ -1,129 +1,60 @@
-# Voice of Customer: automatisches ICP-Dokument aus echten Kundenquellen
+# Voice of Customer, leichte Variante: Zielgruppen-Dokument pro Projekt (Etappe E)
 
-> **Executor instruction:** Follow step by step, check each verify
-> criterion before moving on. If a STOP condition occurs: stop and
-> report, do not improvise.
+> **Executor instruction:** Follow step by step, check each verify criterion before moving on. If a STOP condition occurs: stop and report, do not improvise.
 >
-> **Drift check (first):**
-> `git -C apps/seo-cli diff --stat 860b86d..HEAD -- src/ .github/ test/`
-> `git -C apps/feedback-widget diff --stat 138f3e5..HEAD -- src/ routes/ config/`
-> If an in-scope file has changed since the plan was created: reconcile the
-> current state against the live code; on a mismatch, that is a STOP condition.
+> **Drift check (first):** `git diff --stat fba23d8..HEAD -- src/ test/` must be empty.
 
 ## Meta
-- Planned at: seo-cli `860b86d`, feedback-widget `138f3e5`, 2026-10-06
-- Challengers: noch nicht gelaufen (Plan v1)
+- v1 2026-10-06 (volle Automatik, nie geprüft), v2 2026-10-08 (aktualisiert, Architecture und Risk liefen: 16 Punkte), **v3 2026-10-08** nach Nutzerentscheidung: leichte Variante. Branch `feature/voice-of-customer`, Worktree `apps/seo-cli-voice`, Basis `fba23d8`.
+- Grund für v3: Pro Projekt gibt es heute 5 bis 15 Kundenstimmen (events 3 App-Store- und 1 Play-Bewertung, Shop neu, portfolio 5 Testimonials). Die volle Automatik (drei Repos, zwei Export-Endpunkte, Datenschutztexte, Rechtsgrundlage für Kundentexte an Anthropic, persistente Prompt-Injection) kostet Tage für ein dünnes Ergebnis.
 - Status: Spec
 
 ## Problem
-Generierte Seiten kennen die Zielgruppe nur über eine Zeile im Style-Doc. Ohne echte Kundensprache, Einwände und Belege schreibt Claude den Durchschnitt aller Marketingtexte. Genau solche austauschbaren Seiten trifft Googles Durchsetzung gegen "scaled content abuse" seit März 2026.
+Generierte Seiten kennen die Zielgruppe nur über das Style-Doc und schreiben deshalb austauschbar.
 
 ## Goal
-Jeder wöchentliche `seo run` sammelt ohne Handarbeit neue Kundenstimmen, bereinigt sie von Personendaten und hält `seo/icp.md` aktuell. `generate`, `improve` und `score` bekommen das Dokument als `{{icp}}`. Messbar: Nach 4 Wochen hat events ein `seo/icp.md` mit mindestens 30 Corpus-Einträgen. Kein Corpus-Eintrag und keine generierte Seite enthält eine Mailadresse, Telefonnummer oder einen Kundennamen (Test plus Grep).
+- Pro Projekt ein von Rafael gegengelesenes `seo/icp.md` (Zielgruppe und Auslöser, Aufgaben, Probleme, Einwände, Kundensprache, Alternativen, Belege), nur aus öffentlichen Quellen: Website-Texte, Store-Bewertungen, Testimonials, GSC- und Bing-Suchfragen.
+- `generate`, `improve`, `score` und `overlay` bekommen es als `{{icp}}`. Ohne Datei ist der gerenderte Prompt bytegleich.
 
 ## Non-Goals
-- Keine wörtlichen Zitate aus Widget-Feedback auf öffentlichen Seiten. Store-Reviews nur paraphrasiert, ohne Namen.
-- Kein seitenspezifischer CTA (eigener Plan, baut hierauf auf).
-- Keine Mails als Quelle (kaum Aufkommen, Postfachzugriff unverhältnismäßig).
-- Keine Aufnahme von punktundpause.de in seo-cli. Das ist ein eigener Plan (Landing-Renderer, Sitemap, GSC, Config, Workflow). Dieser Plan macht nur den `endpoint`-Vertrag so allgemein, dass der Shop danach ohne neuen Adapter angebunden wird.
-- Keine Auswertung von `event_feedback` (Gäste bewerten Events, nicht die App).
-- Keine Änderung an den Datenschutzerklärungen (als Todo in Maintenance Notes).
-
-## Out of Scope (Files)
-- `apps/events/app/Models/EventFeedback.php`: falsche Quelle, siehe Non-Goals.
-- `src/prompts/counterpart.md`, `src/prompts/greenfield.md`, `src/prompts/review.md`: bekommen vorerst kein `{{icp}}`, um den Umfang klein zu halten.
-- `src/lib/serpapi.js` Quota-Logik (`MONTHLY_LIMIT`): nur nutzen, nicht ändern.
+- Kein automatisches Sammeln, keine Export-Endpunkte, kein Widget-Feedback, keine Shop-Datenbank, keine Mails.
+- Keine wörtlichen Zitate aus dem Dokument auf Seiten, keine Namen.
 
 ## Solution
+**seo-cli:** `loadIcpDoc(config, cwd)` in `src/steps/generate.js` neben `loadStyleDoc` (`:108`), liest `config.icp_doc` (Standard `seo/icp.md`), fehlende Datei = leerer String, Obergrenze 8.000 Zeichen, eigener Cache je `cwd` (nicht der Einzel-Cache von `loadStyleDoc`). Platzhalter `{{icp}}` in `src/prompts/generate.md`, `improve.md`, `score.md`, `overlay.md` als eigener Abschnitt, der nur mit Inhalt erscheint: der Code füllt `{{icp}}` mit einem fertigen Block („Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen): …“) oder mit leerem String; die Platzhalterzeile selbst steht so, dass ein leerer Wert keine Leerzeile einführt (Test bytegleich gegen den heutigen Prompt). `discover` (Bewertung über `score.md`), `improve` und `overlay` laden es über dieselbe Funktion.
 
-### Approach
-Alle Quellen werden in CI gezogen, nichts läuft lokal oder von Hand. Einmalige Einrichtung (Token, Secrets) ist erlaubt, wiederkehrende Handarbeit nicht.
-
-| Quelle | Weg | Warum so |
-|---|---|---|
-| App Store | SerpAPI-Engine `apple_reviews` | Keine Zugangsdaten pro App nötig, funktioniert auch für fremde Apps und Wettbewerber |
-| Google Play | SerpAPI-Engine `google_play_product` (Reviews) | Die offizielle Play-API liefert nur 7 Tage. Ein Play-Service-Account existiert nicht (nur FCM in `apps/events/config/services.php:101`) |
-| Google Maps | SerpAPI-Engine `google_maps_reviews` | Für übernommene Projekte mit lokalem Geschäft |
-| Eigene App-Daten (`endpoint`) | Ein fester Vertrag: `GET <url>?since=<ISO>` mit Bearer-Token liefert `[{id, body, rating?, created_at}]`, bereinigt schon auf dem Server. Erste Umsetzung im feedback-widget-Paket | Personendaten verlassen die Produktion nie. Jede App, die den Vertrag erfüllt, ist ohne neuen Adapter angebunden (später z. B. die freigegebenen Reviews im Shop punktundpause.de) |
-| Testimonials | Lokale Datei im Projekt-Repo (rafaelalex.de) | Liegen schon im Repo |
-
-Mails sind bewusst nicht dabei: Es kommen kaum Kundenmails an, und ein automatischer Zugriff auf das iCloud-Postfach wäre unverhältnismäßig.
-
-Ablauf in `seo run`, vor `discover`:
-1. Jede konfigurierte Quelle holt Einträge seit dem letzten Stand (`seo/voice/state.json`).
-2. `scrub()` entfernt Mailadressen, Telefonnummern, IBANs, URLs mit Query-Strings und Grußzeilen.
-3. Bereinigte Einträge (`{id, source, date, rating?, text}`, `id` = Hash) kommen dedupliziert in `seo/voice/corpus.jsonl`.
-4. `seo/icp.md` wird neu erzeugt, wenn mindestens 10 neue Einträge da sind, das Dokument älter als 90 Tage ist oder fehlt und mindestens 5 Einträge existieren. Ein Claude-Aufruf mit neuem Prompt `src/prompts/icp.md`, Corpus im `<<<UNTRUSTED_VOICE_START>>>`-Block. Die Ausgabe hat feste Abschnitte: Zielgruppe und Auslöser, Aufgaben, Probleme, Einwände, Kundensprache (Phrasen, max. 12 Wörter, keine Namen), Alternativen und Unterschied, Belege. Jede Aussage nennt die Zahl der stützenden Einträge. Der Prompt verbietet erfundene Aussagen ohne Beleg im Corpus.
-5. Corpus, State und `icp.md` landen im selben PR wie die Seiten (`src/steps/pr.js:33`).
-
-Ohne Quellen und ohne Corpus wird `{{icp}}` zu einem leeren Hinweis. Es wird keine Persona erfunden.
-
-**Übernommene Projekte:** `seo init` erkennt App-Store-, Play- und Google-Maps-Links auf der Website (`src/lib/detect.js`) und schreibt passende `voice.sources` in die Config. Optional nimmt `voice.competitors` Store- oder Maps-IDs von Wettbewerbern auf. Deren Reviews gehen nur in den Abschnitt "Alternativen und Unterschied" ein.
-
-Config-Beispiel (events):
-```yaml
-voice:
-  sources:
-    - { type: app_store, id: "6761116655" }
-    - { type: play, id: de.rafaelalex.events }
-    - { type: endpoint, url: https://events.rafaelalex.de/feedback/export, token_env: VOICE_FEEDBACK_TOKEN }
-  competitors: []
-```
-Secret per Umgebung: der in `token_env` genannte Name, für events `VOICE_FEEDBACK_TOKEN`.
+**Dokumente (Orchestrator, nicht Executor):** pro Projekt ein Entwurf aus Website, Store-Bewertungen (SerpAPI), Testimonials, GSC- und Bing-Anfragen der letzten 90 bzw. 180 Tage; jede Aussage mit Quelle; Rafael liest gegen; Commit nach `seo/icp.md` im Projekt-Repo.
 
 ### Steps
-0. Verifikation der externen APIs: SerpAPI `apple_reviews`, `google_play_product` (Reviews), `google_maps_reviews`. Dafür Parameter, Sortierung "neueste zuerst" und Paginierung aus der SerpAPI-Doku prüfen. → verify: Kurzbericht mit Doku-URLs in der Appendix dieses Plans
-1. `src/lib/voice/scrub.js` mit `scrub(text)` → verify: `npx vitest run test/voice-scrub.test.js`, ein Test pro Regel (Mail, Telefon, IBAN, URL-Query, Grußzeile)
-2. Quellen-Adapter `src/lib/voice/sources/{serpapi-reviews,endpoint,testimonials}.js`, alle mit derselben Rückgabe. SerpAPI-Aufrufe über die bestehende Quota-Reservierung, höchstens 1 Aufruf pro Quelle und Lauf. → verify: `npx vitest run test/voice-sources.test.js`, HTTP an der Fetch-Grenze gemockt, je ein Test für Cursor-Filter und für Fehler, die nur diese Quelle überspringen
-3. `src/steps/voice.js`: sammeln, bereinigen, deduplizieren, Rebuild-Regel, `icp.md` erzeugen. Neuer Prompt `src/prompts/icp.md`. → verify: `npx vitest run test/voice.test.js` mit Tests für die Rebuild-Regel (10 neu / 90 Tage / fehlt mit ≥5 / leer), Dedupe und dafür, dass ohne Quellen kein Claude-Aufruf passiert
-4. `loadIcpDoc()` analog zu `loadStyleDoc()` (`src/steps/generate.js:85-103`), Obergrenze 8.000 Zeichen. `{{icp}}` in `generate.md`, `improve.md` und `score.md` einfügen, mit der Regel "Phrasen als Sprachvorlage, nie wörtlich zitieren, keine Namen". → verify: `npx vitest run test/generate.test.js test/improve.test.js`, je ein Test, dass das ICP im Prompt steht, und einer, dass ohne ICP der leere Hinweis steht
-5. In `src/commands/run.js` den Voice-Step vor `discover` aufrufen. In `src/steps/pr.js:33` Corpus, State und `icp.md` mitcommitten. Neuer Befehl `seo voice [--dry-run]`. → verify: `seo voice --dry-run` in `apps/events` gibt die Zahl der Einträge pro Quelle aus
-6. `src/lib/config.js` und `src/lib/detect.js`: Default `voice: null`, Store- und Maps-Links erkennen, `seo init` schreibt `voice.sources`. → verify: `npx vitest run test/config.test.js test/detect.test.js`
-7. `.github/workflows/seo-reusable.yml`: optionales Secret `VOICE_FEEDBACK_TOKEN` (Option A über 1Password, Option B direkt). → verify: `actionlint` ohne Befund
-8. feedback-widget: `GET /feedback/export?since=<ISO>`, Bearer-Token aus `config('feedback-widget.export_token')`, 404 ohne konfigurierten Token, Rate-Limit. Liefert den `endpoint`-Vertrag `[{id, body, created_at}]` (`category` als optionales Zusatzfeld) mit serverseitiger Bereinigung von Mail, Telefon und URL-Query. → verify: Feature-Test in `apps/events/tests/Feature/` für 401 ohne und mit falschem Token, 200 mit bereinigtem `body`, `since`-Filter
-9. README und CLAUDE.md von seo-cli: Abschnitt "Voice of Customer" mit Config, Secrets und einmaliger Einrichtung → verify: `grep -n "voice" README.md`
+1. `loadIcpDoc` und `{{icp}}` in vier Prompts. → verify: `npx vitest run test/generate.test.js test/improve.test.js test/overlay.test.js test/discover.test.js test/icp.test.js` (Datei vorhanden → Block im Prompt; fehlt → Prompt bytegleich zum heutigen; Obergrenze; Cache je `cwd`)
+2. Konfigurationsschlüssel `icp_doc` (Standard `seo/icp.md`), Doku `CLAUDE.md`/`README.md`. → verify: `npx vitest run test/config.test.js`, `grep -n "icp" CLAUDE.md README.md`
+3. (Orchestrator) Entwürfe, Review durch Rafael, Commit in vier Repos.
 
 ### Affected Files
-- seo-cli neu: `src/lib/voice/scrub.js`, `src/lib/voice/sources/*.js`, `src/steps/voice.js`, `src/commands/voice.js`, `src/prompts/icp.md`, `test/voice-*.test.js`, `test/voice.test.js`
-- seo-cli geändert: `src/steps/generate.js` (85-103), `src/steps/improve.js`, `src/prompts/{generate,improve,score}.md`, `src/commands/run.js`, `src/steps/pr.js` (33), `src/lib/config.js` (DEFAULTS), `src/lib/detect.js`, `src/commands/init.js`, `bin/` (Befehl registrieren), `.github/workflows/seo-reusable.yml`, `README.md`, `CLAUDE.md`
-- feedback-widget: `routes/web.php` oder neue `routes/api.php`, neuer Controller unter `src/`, `config/` (export_token), `src/FeedbackServiceProvider.php`
-- events: `tests/Feature/FeedbackExportTest.php`, `.env.example` (nur Key-Name)
-
-### Conventions
-- Untrusted-Daten immer durch `sanitizeUntrusted()` (`src/lib/template.js:12`) und in einen `<<<UNTRUSTED_…>>>`-Block. Vorbild: `src/prompts/generate.md`, Kontext-Block.
-- Externe HTTP-Aufrufe über `safeFetch` (`src/lib/safe-fetch.js`), Vorbild `src/lib/serpapi.js`.
-- Tests mit vitest, Mocks nur an der HTTP- und Claude-Grenze (Vorbild `test/generate.test.js`).
-- Keine Secrets im Code, nur Env-Namen.
-
-## Edge Cases
-- Quelle schlägt fehl: nur diese Quelle überspringen, Lauf geht weiter, Warnung im Log.
-- SerpAPI-Quota erschöpft: Voice-Quellen zuerst überspringen, `discover` hat Vorrang.
-- Eintrag ist nach `scrub()` leer oder kürzer als 20 Zeichen: wird verworfen.
-- Endpoint liefert Felder außerhalb des Vertrags (z. B. `name`, `email`): werden vor dem Speichern verworfen, nur `id`, `body`, `rating`, `created_at` kommen in den Corpus.
-- Englische und deutsche Reviews gemischt: `icp.md` wird in der Projektsprache (`locale`) geschrieben.
-- Corpus wächst: `icp.md`-Prompt bekommt höchstens die neuesten 300 Einträge.
-
-## Known Costs
-- SerpAPI: etwa 9 Aufrufe pro Monat für events aus dem Kontingent von 240.
+- `src/steps/generate.js`, `src/steps/improve.js`, `src/steps/discover.js`, `src/steps/overlay.js`, `src/prompts/{generate,improve,score,overlay}.md`, `src/lib/config.js`, `test/icp.test.js` (neu), passende bestehende Tests, `CLAUDE.md`, `README.md`
 
 ## Done Criteria
-- [ ] `cd apps/seo-cli && npx vitest run test/voice-scrub.test.js test/voice-sources.test.js test/voice.test.js test/generate.test.js test/improve.test.js test/config.test.js test/detect.test.js` → exit 0
-- [ ] `cd apps/events && php artisan test --filter=FeedbackExportTest` → exit 0
-- [ ] `npm run lint` → exit 0
-- [ ] `grep -rnE "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}" apps/events/seo/voice/corpus.jsonl` → keine Treffer (nach einem `seo voice` gegen echte Quellen)
-- [ ] `git status` in jedem Repo: nur Dateien aus Affected Files
+- [ ] `npx vitest run test/icp.test.js test/generate.test.js test/improve.test.js test/overlay.test.js test/discover.test.js test/config.test.js` → exit 0; `npm run lint` → exit 0
+- [ ] Bestehende Tests nur ergänzt; `git status`: nur Affected Files
 
 ## STOP Conditions
-- SerpAPI liefert für Play oder App Store keine Reviews mit Datum: melden.
-- Der Fix bräuchte eine Datei außerhalb von Affected Files.
+- Ein Prompt lässt sich ohne Datei nicht bytegleich halten.
+- Verify schlägt nach ernsthaftem Fix zweimal fehl.
 
 ## Maintenance Notes
-- Einmalige Einrichtung (README): Token in events `.env` (`FEEDBACK_WIDGET_EXPORT_TOKEN`), derselbe Wert als Secret `VOICE_FEEDBACK_TOKEN` im events-Repo.
-- Todo außerhalb des Plans: Datenschutzerklärung events und zeit um die Verarbeitung bereinigter Feedback-Texte durch Anthropic ergänzen.
-- zeit hat kein feedback-widget. Wird es dort eingebaut, reicht ein Config-Eintrag.
+- Wiedervorlage volle Automatik (v2-Inhalt, siehe git-Historie dieser Datei), sobald ein Projekt etwa 50 echte Kundenstimmen hat. Dann gelten die v2-Befunde: Rohtexte nicht ins Repo, Shop nach `approved_at`, Widget nur Wünsche und allgemeines Feedback, Export-Route außerhalb des Admin-Bereichs, `{{icp}}` als nicht vertrauenswürdig markieren und prüfen, Zielgruppen-Aufruf über den API-Key, Datenschutztexte vorher.
+- `icp.md` ist von Rafael gegengelesen und deshalb vertrauenswürdig; wer es automatisch erzeugt, muss die Injection-Absicherung nachziehen.
 
-## Open Questions
-- Annahme: SerpAPI liefert Reviews mit Datum und neueste zuerst. Wird in Step 0 geprüft.
+## Challenge Result
+- v2 (Architecture, Risk): 16 Punkte, alle betrafen die volle Automatik und sind als Wiedervorlage in Maintenance Notes festgehalten. v3 ist ein reiner Lade- und Prompt-Umbau ohne neue Quellen; kein erneuter Panel-Lauf.
 
 ## Delegate spec
-Folgt nach der Challenge-Runde.
+
+## Task: Zielgruppen-Dokument als `{{icp}}` in die Prompts
+**Goal:** `seo/icp.md` (oder `config.icp_doc`) erscheint als markierter Block in den Prompts von generate, improve, score und overlay; ohne Datei sind alle Prompts bytegleich; Done Criteria grün.
+**Context:** `loadStyleDoc` in `src/steps/generate.js:108` als Muster (aber eigener Cache je `cwd`), `fillTemplate` in `src/lib/template.js`, Prompts in `src/prompts/`.
+**Affected files:** Abschnitt Affected Files.
+**Out of Scope:** alle Quellen-, Endpunkt- und Workflow-Änderungen aus v2.
+**Steps:** 1 und 2 aus Steps.
+**Done criteria (all):** Abschnitt Done Criteria.
+**STOP conditions:** Abschnitt STOP Conditions.

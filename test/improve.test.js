@@ -408,6 +408,34 @@ describe('improvePage prompt', () => {
     expect(complete.mock.calls[0][0].prompt).toContain('CANONICAL_PRICE_MARKER: 4900 EUR');
   });
 
+  it('adds the audience block only when seo/icp.md exists', async () => {
+    seedPages('preise');
+    mkdirSync(join(cwd, 'seo'), { recursive: true });
+    writeFileSync(join(cwd, 'seo/icp.md'), 'ICP_MARKER Freelancer', 'utf8');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    expect(complete.mock.calls[0][0].prompt).toContain('Zielgruppe (Sprachvorlage, nie wörtlich zitieren, keine Namen):\nICP_MARKER Freelancer');
+  });
+
+  it('leaves the prompt without an audience block when there is no icp file', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+
+    await improvePage(
+      { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] },
+      config,
+      cwd,
+    );
+
+    expect(complete.mock.calls[0][0].prompt).not.toContain('Zielgruppe');
+  });
+
   it('falls back to the default style doc when config.style_doc is not set', async () => {
     seedPages('preise');
     complete.mockResolvedValue('---\nslug: preise\n---\nbody');
