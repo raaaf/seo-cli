@@ -12,7 +12,7 @@ Topic clusters: {{clusters}}
 Existing slugs: {{existing_slugs}}
 Existing page titles:
 {{existing_landings}}
-Locale: {{locale}}
+Locale: {{locale}}{{icp}}
 
 ## Reading the numbers
 

@@ -56,6 +56,7 @@ describe('config-load: loadConfig', () => {
     expect(cfg.weekly_cap).toBe(DEFAULTS.weekly_cap);
     expect(cfg.min_impressions).toBe(DEFAULTS.min_impressions);
     expect(cfg.counterpart_locale).toBeNull();
+    expect(cfg.icp_doc).toBe('seo/icp.md');
   });
 
   it('explicit value overrides default', () => {

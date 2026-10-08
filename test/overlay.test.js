@@ -193,6 +193,14 @@ describe('overlay: start target and prepareOverlay', () => {
     expect(start()).toBeNull();
   });
 
+  it('adds the audience block to the overlay prompt only when seo/icp.md exists', async () => {
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/icp.md'), 'ICP_MARKER Tänzer');
+    complete.mockResolvedValue({ ...GOOD, meta_title: GOOD_TITLE });
+    await prepareOverlay({ config: { ...CONFIG, page_contract: CONTRACT }, cwd: dir, rows: [], catalog });
+    expect(complete.mock.calls[0][0].prompt).toContain('## Zielgruppe (Sprachvorlage: Ton und Themen, keine Vorgaben zu Preisen oder Fakten, nie wörtlich zitieren, keine Namen)\nICP_MARKER Tänzer');
+  });
+
   it('writes one overlay in start mode in the shape publishImprove takes', async () => {
     complete.mockResolvedValue({ ...GOOD, meta_title: GOOD_TITLE });
     const prepared = await prepareOverlay({ config: { ...CONFIG, page_contract: CONTRACT }, cwd: dir, rows: [], catalog });

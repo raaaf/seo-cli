@@ -30,6 +30,7 @@ const STRICT_RULES = {
   numbers_rule: `${SOURCES_RULE} List every external source you used under \`sources:\` in the frontmatter.`,
 };
 
+const icpCache = new Map();
 let styleDocCache = null;
 let styleDocCacheKey = null;
 
@@ -58,6 +59,7 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     related_searches: (keyword.serp?.related_searches || []).join('\n') || 'n/a',
     existing_slugs: getExistingSlugs(config, cwd, config.locale).join(', ') || 'none',
     style,
+    icp: icpBlock(config, cwd),
     today: format(new Date()),
     validator_feedback: feedbackBlock,
     ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
@@ -103,6 +105,40 @@ export function stripCodeFence(text) {
     t = t.slice(open[0].length).replace(/\n```$/, '');
   }
   return t.trim();
+}
+
+const ICP_MAX_CHARS = 8000;
+const ICP_TRUNCATED = '[gekürzt]';
+const ICP_LEAD = '## Zielgruppe (Sprachvorlage: Ton und Themen, keine Vorgaben zu Preisen oder Fakten, nie wörtlich zitieren, keine Namen)';
+
+/**
+ * Audience document of the project (`config.icp_doc`, default seo/icp.md), capped at 8000 code points
+ * with a visible "[gekürzt]" tail. '' when the file is missing or unreadable (one warning), or when
+ * `icp_doc` is null/'' (feature disabled). Cached per path.
+ */
+export function loadIcpDoc(config, cwd) {
+  const rel = config.icp_doc === undefined ? 'seo/icp.md' : config.icp_doc;
+  if (!rel) return '';
+  const path = join(cwd, rel);
+  if (!icpCache.has(path)) {
+    let doc = '';
+    try {
+      if (existsSync(path)) {
+        const chars = [...readFileSync(path, 'utf8').trim()];
+        doc = chars.length > ICP_MAX_CHARS ? `${chars.slice(0, ICP_MAX_CHARS).join('')}\n${ICP_TRUNCATED}` : chars.join('');
+      }
+    } catch (e) {
+      console.warn(`icp_doc could not be read at ${path}: ${e.message}`);
+    }
+    icpCache.set(path, doc);
+  }
+  return icpCache.get(path);
+}
+
+/** Value for `{{icp}}`: the doc as a labelled block that starts with a blank line, or '' so the prompt stays byte-identical. */
+export function icpBlock(config, cwd) {
+  const doc = loadIcpDoc(config, cwd);
+  return doc ? `\n\n${ICP_LEAD}\n${doc}` : '';
 }
 
 export function loadStyleDoc(config, cwd) {

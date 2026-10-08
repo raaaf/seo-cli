@@ -78,6 +78,7 @@ export const DEFAULTS = {
   locale: 'de',
   primary_cta: 'trial_signup',
   style_doc: null,
+  icp_doc: 'seo/icp.md',
   score_cutoff: 7,
   weekly_cap: 2,
   // New pages per project and calendar month, counted from the keyword log. Rewrites do not count.

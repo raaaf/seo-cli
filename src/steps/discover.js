@@ -8,6 +8,7 @@ import { loadKeywords, saveKeywords, upsertKeyword, getPending, KEYWORD_STATUS, 
 import { format } from '../lib/date.js';
 import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
+import { icpBlock } from './generate.js';
 import { findTokenSetDuplicate } from '../lib/similarity.js';
 import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
 import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
@@ -269,7 +270,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       console.log(chalk.yellow(`  SerpAPI skip (${row.keyword}): ${e.message}`));
     }
 
-    const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData, existingTitles);
+    const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData, existingTitles, cwd);
     let result;
     try {
       result = await complete({ system: 'You are an SEO expert.', prompt, json: true, schema: SCORE_SCHEMA });
@@ -331,6 +332,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
     locale: config.locale || 'de',
     catalog: formatCatalog(catalog),
     contract: pageRulesSection(config.page_contract, catalog),
+    icp: icpBlock(config, cwd),
   });
 
   let suggestions;
@@ -405,7 +407,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   }
 }
 
-function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = []) {
+function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = [], cwd) {
   const vars = {
     keyword: String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200),
     impressions: row.impressions,
@@ -420,6 +422,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existin
     serp_features: serpData.features ? Object.entries(serpData.features).filter(([, on]) => on).map(([name]) => name).join(', ') || 'none' : 'n/a',
     locale: config.locale || 'de',
     gsc_guardrail: GSC_GUARDRAIL,
+    icp: icpBlock(config, cwd),
   };
   return fillTemplate(SCORE_PROMPT, vars);
 }

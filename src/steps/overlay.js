@@ -12,7 +12,7 @@ import { loadCatalog, formatShipping } from '../lib/catalog.js';
 import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown, overlayKey, parseOverlayKey } from '../lib/improvements.js';
 import { urlToSlug } from '../lib/measure.js';
 import { scorePage } from './improve.js';
-import { loadStyleDoc } from './generate.js';
+import { loadStyleDoc, icpBlock } from './generate.js';
 import { tonalityErrors, lowercaseErrors, unbackedClaimErrors } from './validate.js';
 
 const OVERLAY_PROMPT = readFileSync(new URL('../prompts/overlay.md', import.meta.url), 'utf8');
@@ -215,6 +215,7 @@ export async function generateOverlay({ target, config, cwd, catalog, current, v
     query_table: queryTable,
     gsc_guardrail: GSC_GUARDRAIL,
     style_guide: loadStyleDoc(config, cwd),
+    icp: icpBlock(config, cwd),
     ...rulesFor(target.slug, config.page_contract),
     validator_feedback: validatorFeedback
       ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
