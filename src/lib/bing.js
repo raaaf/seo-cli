@@ -40,7 +40,10 @@ export function siteUrl(config) {
   return config.bing?.site_url || `${String(config.base_url).replace(/\/+$/, '')}/`;
 }
 
-const sameSite = (a, b) => String(a).replace(/\/+$/, '').toLowerCase() === String(b).replace(/\/+$/, '').toLowerCase();
+/** URL as compared with Bing's answers: trailing slashes dropped, lower case. */
+export const normalizeUrl = (url) => String(url).replace(/\/+$/, '').toLowerCase();
+
+const sameSite = (a, b) => normalizeUrl(a) === normalizeUrl(b);
 
 /** Whether the `GetUserSites` answer lists `site` (trailing slash and case ignored). */
 export const knowsSite = (sites, site) => sites.some(s => sameSite(s.Url, site));

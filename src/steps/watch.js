@@ -12,7 +12,7 @@ import { overlayFilePath, overlayKeyOfFile, parseOverlay } from './overlay.js';
 import { loadIndexStatus } from '../lib/index-status.js';
 import { checkIndexStatus } from './index-check.js';
 import { diagnoseAlerts, submitFixes } from './diagnose.js';
-import { siteUrl, knowsSite, getUserSites, getCrawlIssues, getUrlInfo, isCrawled } from '../lib/bing.js';
+import { siteUrl, knowsSite, getUserSites, getCrawlIssues, getUrlInfo, isCrawled, normalizeUrl } from '../lib/bing.js';
 import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
 
 // A clean alert that stays unindexed must not make Google and IndexNow hear from us every day.
@@ -137,7 +137,6 @@ async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, op
 
 // Bing URL checks per day: the sitemap is covered section by section.
 const BING_URLS_PER_DAY = 30;
-const trimSlash = (url) => String(url).replace(/\/+$/, '');
 
 // Today's section of the sorted sitemap, stateless: the start moves by 30 per day and wraps around.
 function bingSection(urls, today) {
@@ -150,10 +149,11 @@ function bingSection(urls, today) {
 // `bing` input of evaluateWatch, see there. Live calls, no cache. A site Bing does not know warns once
 // (`bing.site_missing_warned` on `state`, saved with the alerts) and costs no further calls that day.
 async function checkBing({ config, today, entries, state, warnings, api }) {
-  if (!config.bing?.enabled || !entries) return null;
+  if (!config.bing?.enabled) return { disabled: true };
+  if (!entries) return null;
   if (!process.env.BING_WEBMASTER_KEY) {
     warnings.push('bing.enabled is set but BING_WEBMASTER_KEY is missing, skipping the Bing checks');
-    return null;
+    return { disabled: true };
   }
   const site = siteUrl(config);
   try {
@@ -165,10 +165,20 @@ async function checkBing({ config, today, entries, state, warnings, api }) {
       return null;
     }
     const urls = entries.map(e => e.url);
-    const known = new Set(urls.map(trimSlash));
-    const issues = [...new Set((await api.getCrawlIssues(site)).map(i => i.Url).filter(u => known.has(trimSlash(u))))];
+    const known = new Set(urls.map(normalizeUrl));
+    const issues = [...new Set((await api.getCrawlIssues(site)).map(i => i.Url).filter(u => known.has(normalizeUrl(u))))];
     const crawled = {};
-    for (const url of bingSection(urls, today)) crawled[url] = api.isCrawled(await api.getUrlInfo(site, url));
+    let lastError = null;
+    // One failing URL keeps its previous value; a rejected key ends the check at once.
+    for (const url of bingSection(urls, today)) {
+      try {
+        crawled[url] = api.isCrawled(await api.getUrlInfo(site, url));
+      } catch (e) {
+        if (e.kind === 'key_rejected') throw e;
+        lastError = e;
+      }
+    }
+    if (lastError && !Object.keys(crawled).length) throw lastError;
     return { urls, issues, crawled };
   } catch (e) {
     warnings.push(`Bing check failed: ${e.message}`);
@@ -252,7 +262,7 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   let resubmitted = [];
   if (entries) {
     const causeBefore = new Map(next.open.map(a => [a.id, a.diagnosis?.cause]));
-    const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today, bing: bing && !bing.error ? { site: siteUrl(config), ...bingApi } : null }));
+    const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today, bing: bing?.urls ? { site: siteUrl(config), ...bingApi, crawled: bing.crawled } : null }));
     resetResubmitOnTechnical(next.open, causeBefore);
     updated = (diagnosed?.updated ?? []).filter(a => !opened.includes(a));
     if (!dryRun) resubmitted = (await guarded('Resubmit', () => resubmitClean(next, { config, today, submit }))) ?? [];

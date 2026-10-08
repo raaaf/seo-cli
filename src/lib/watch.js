@@ -31,6 +31,7 @@ const BING_OPEN_BELOW = 0.2;
 const BING_RESOLVE_FROM = 0.5;
 const BING_BLIND_AFTER_DAYS = 3;
 const BING_ISSUE_URLS_SHOWN = 3;
+const BING_ALERT_IDS = ['bing_blind', 'bing_crawl_issues', 'bing_site_not_crawled'];
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
@@ -155,7 +156,8 @@ function evaluateBing(next, bing, { today, open, close, isOpen }) {
  * repo) resolves the alert with reason `removed`. An open alert stays open until a check
  * succeeds, so the caller keeps listing it after its PR left the check window. State: `deploy_pending[key]`, present only while a check is pending.
  *
- * `bing` is null when Bing is off, has no key or does not know the site (state and alerts untouched),
+ * `bing` is null when Bing does not know the site (state and alerts untouched), `{ disabled: true }` when Bing is off or has
+ * no key (its open alerts close with reason `bing_disabled`),
  * `{ error }` for a failed Bing call, else `{ urls, issues, crawled }`: the sitemap URLs, those with
  * crawl issues and today's crawled booleans. Bing never counts towards `failures`.
  */
@@ -241,7 +243,8 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
     else delete next.deploy_pending;
   }
 
-  if (bing) evaluateBing(next, bing, { today, open, close, isOpen });
+  if (bing?.disabled) for (const id of BING_ALERT_IDS) close(id, 'bing_disabled');
+  else if (bing) evaluateBing(next, bing, { today, open, close, isOpen });
 
   if (!entries || !traffic) {
     next.failures += 1;

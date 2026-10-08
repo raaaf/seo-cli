@@ -27,11 +27,11 @@ export function aggregateQueries(rows, { now = new Date(), days = WINDOW_DAYS, l
   for (const row of rows) {
     const query = String(row.Query ?? '').trim().toLowerCase();
     const at = parseBingMs(row.Date);
-    if (!query || at === null || at < cutoff || !(row.Impressions > 0)) continue;
+    if (!query || at === null || at < cutoff || !(row.Impressions > 0) || typeof row.AvgImpressionPosition !== 'number') continue;
     const agg = byQuery.get(query) ?? { query, impressions: 0, clicks: 0, weighted: 0 };
     agg.impressions += row.Impressions;
     agg.clicks += row.Clicks ?? 0;
-    agg.weighted += row.Impressions * (row.AvgImpressionPosition ?? 0);
+    agg.weighted += row.Impressions * row.AvgImpressionPosition;
     byQuery.set(query, agg);
   }
   return [...byQuery.values()]
@@ -64,11 +64,11 @@ export function bingQuestionsFor(keyword, queries, { max = 8 } = {}) {
     .map(q => q.query);
 }
 
-/** Start mode candidates in the shape of GSC rows: page one or two, at least `max(5, min_impressions)` impressions. */
+/** Start mode candidates in the shape of GSC rows: positions 8 to 25 like the GSC candidates, at least `max(5, min_impressions)` impressions. */
 export function bingCandidates(queries, config) {
   const floor = Math.max(5, config.min_impressions ?? 5);
   return queries
-    .filter(q => q.position <= 20 && q.impressions >= floor)
+    .filter(q => q.position >= 8 && q.position <= 25 && q.impressions >= floor)
     .map(({ query, ...rest }) => ({ keyword: query, ...rest }))
     .sort((a, b) => b.impressions - a.impressions);
 }
@@ -76,10 +76,12 @@ export function bingCandidates(queries, config) {
 const isValidQueries = (v) => Array.isArray(v) && v.every(q => q && typeof q.query === 'string'
   && [q.impressions, q.clicks, q.position].every(n => typeof n === 'number'));
 
+const freshQueries = (config, cwd) => getFresh(BING_SIGNALS_NAME, bingQueriesKey(config), TTL_DAYS, new Date(), { cwd, validate: isValidQueries });
+
 /** Stored queries of the site, empty without `bing.enabled` or without a fresh entry. */
 export function readBingQueries(config, cwd) {
   if (!config.bing?.enabled) return [];
-  return getFresh(BING_SIGNALS_NAME, bingQueriesKey(config), TTL_DAYS, new Date(), { cwd, validate: isValidQueries }) ?? [];
+  return freshQueries(config, cwd) ?? [];
 }
 
 /**
@@ -87,7 +89,7 @@ export function readBingQueries(config, cwd) {
  * Bing does not know or a Bing error is a warning and leaves the old entry.
  */
 export async function refreshBingQueries({ config, cwd, warnings, now = new Date() }) {
-  if (!config.bing?.enabled || readBingQueries(config, cwd).length) return;
+  if (!config.bing?.enabled || freshQueries(config, cwd) !== null) return;
   if (!process.env.BING_WEBMASTER_KEY) {
     warnings.push('bing.enabled is set but BING_WEBMASTER_KEY is missing, skipping Bing queries');
     return;

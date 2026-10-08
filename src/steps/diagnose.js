@@ -35,8 +35,9 @@ function alertCause(urls) {
 
 const resultKey = ({ cause, codes }) => `${cause}:${codes.join(',')}`;
 
-// Bing's crawl state of one URL, null when the call fails (the watcher reports Bing trouble itself).
+// Bing's crawl state of one URL: today's value from the watcher when it has one, else a call; null when the call fails (the watcher reports Bing trouble itself).
 async function bingState(url, { site, api }) {
+  if (typeof api.crawled?.[url] === 'boolean') return { crawled: api.crawled[url] };
   try {
     return { crawled: api.isCrawled(await api.getUrlInfo(site, url)) };
   } catch {

@@ -72,8 +72,8 @@ describe('readBingQueries', () => {
 
 describe('bingCandidates', () => {
   const q = (query, impressions, position) => ({ query, impressions, clicks: 0, position });
-  it('keeps position <= 20 with at least max(5, min_impressions) impressions, as GSC-shaped rows', () => {
-    const queries = [q('a', 5, 20), q('b', 4, 3), q('c', 50, 21), q('d', 8, 2)];
+  it('keeps position 8 to 25 with at least max(5, min_impressions) impressions, as GSC-shaped rows', () => {
+    const queries = [q('a', 5, 20), q('b', 4, 10), q('c', 50, 26), q('d', 8, 8), q('e', 50, 7)];
     expect(bingCandidates(queries, { min_impressions: 5 }).map(r => r.keyword)).toEqual(['d', 'a']);
     expect(bingCandidates(queries, { min_impressions: 8 }).map(r => r.keyword)).toEqual(['d']);
   });

@@ -126,7 +126,7 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
     // check needs GSC page rows and does not apply here; the token duplicate guard and covered_by do.
     const bingRows = bingCandidates(readBingQueries(config, cwd), config).filter(r => !doneKeywords.has(r.keyword));
     if (bingRows.length > 0) {
-      console.log(chalk.gray(`  ${bingRows.length} Bing candidate(s) (pos <= 20, impr >= ${Math.max(5, minImpressions)})`));
+      console.log(chalk.gray(`  ${bingRows.length} Bing candidate(s) (pos 8–25, impr >= ${Math.max(5, minImpressions)})`));
       await scoreAndSave({ candidates: bingRows, config, data, existingSlugs, existingFiles, cwd, source: 'bing', maxScored: cap - ready });
       ready = getPending(data, config.score_cutoff).length;
     }

@@ -294,19 +294,19 @@ describe('discover-run: Bing start mode', () => {
 
   it('turns a Bing query into a candidate with source bing before greenfield runs', async () => {
     querySearchAnalytics.mockResolvedValue([]);
-    seed([q('wie plane ich eine hochzeit', 12, 7)]);
+    seed([q('wie plane ich eine hochzeit', 12, 10)]);
     complete.mockResolvedValue(scored);
 
     const data = await discover(bingConfig, dir);
     const kw = data.keywords.find(k => k.keyword === 'wie plane ich eine hochzeit');
-    expect(kw).toMatchObject({ status: 'proposed', source: 'bing', bing: { impressions: 12, position: 7 } });
+    expect(kw).toMatchObject({ status: 'proposed', source: 'bing', bing: { impressions: 12, position: 10 } });
     expect(kw).not.toHaveProperty('gsc');
     expect(complete).toHaveBeenCalledTimes(1); // scoring only: the cap is full, greenfield stays out
   });
 
-  it('applies the thresholds: position 20, at least max(5, min_impressions) impressions', async () => {
+  it('applies the thresholds: position 8 to 25, at least max(5, min_impressions) impressions', async () => {
     querySearchAnalytics.mockResolvedValue([]);
-    seed([q('zu weit hinten', 50, 21), q('zu wenig', 4, 3)]);
+    seed([q('zu weit hinten', 50, 26), q('schon vorn', 50, 5), q('zu wenig', 4, 10)]);
     complete.mockResolvedValue([]);
     await discover(bingConfig, dir);
     expect(complete).toHaveBeenCalledTimes(1); // greenfield only, no scoring call
@@ -315,7 +315,7 @@ describe('discover-run: Bing start mode', () => {
 
   it('fills the rest with greenfield when Bing candidates do not reach the cap', async () => {
     querySearchAnalytics.mockResolvedValue([]);
-    seed([q('wie plane ich eine hochzeit', 12, 7)]);
+    seed([q('wie plane ich eine hochzeit', 12, 10)]);
     complete.mockResolvedValueOnce({ ...scored, score: 3 }).mockResolvedValueOnce([
       { keyword: 'standesamt deko', target_slug: 'standesamt-deko', score: 8, type: 'guide', intent: 'informational' },
     ]);
@@ -325,7 +325,7 @@ describe('discover-run: Bing start mode', () => {
 
   it('ignores Bing queries without greenfield and without bing.enabled', async () => {
     querySearchAnalytics.mockResolvedValue([]);
-    seed([q('wie plane ich eine hochzeit', 12, 7)]);
+    seed([q('wie plane ich eine hochzeit', 12, 10)]);
     complete.mockResolvedValue([]);
     await discover({ ...bingConfig, greenfield: false }, dir);
     await discover({ ...bingConfig, bing: { enabled: false } }, dir);
@@ -335,7 +335,7 @@ describe('discover-run: Bing start mode', () => {
 
   it('keeps the token duplicate guard: a word-order variant of a known keyword is skipped', async () => {
     querySearchAnalytics.mockResolvedValue([]);
-    seed([q('planen hochzeit', 12, 7)]);
+    seed([q('planen hochzeit', 12, 10)]);
     await discover({ ...bingConfig, greenfield: false }, dir); // no-op, nothing stored
     const { upsertKeyword, loadKeywords, saveKeywords } = await import('../src/lib/keywords.js');
     const existing = loadKeywords(dir);

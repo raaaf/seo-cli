@@ -455,13 +455,15 @@ export async function runCommand(opts) {
       report.warnings.push(warning);
     }
 
-    // 1e. Bing queries for discover (start mode) and generate (FAQ questions), refreshed weekly. Never fatal.
-    await refreshBingQueries({ config, cwd, warnings: report.warnings });
-
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
     const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));
     const remaining = Math.max(0, config.max_new_pages_per_month - newPagesUsed);
-    keywordsData = remaining === 0 || catalogDown ? loadKeywords(cwd) : await discover(config, cwd, { catalog });
+    const discovering = remaining > 0 && !catalogDown;
+
+    // 1e. Bing queries for discover (start mode) and generate (FAQ questions), refreshed weekly. Never fatal.
+    // Only when discover runs, so the answer is used this run (a dry run still writes just the local signal file).
+    if (discovering) await refreshBingQueries({ config, cwd, warnings: report.warnings });
+    keywordsData = discovering ? await discover(config, cwd, { catalog }) : loadKeywords(cwd);
 
     // 3. Generate
     const pending = getPending(keywordsData, config.score_cutoff);
