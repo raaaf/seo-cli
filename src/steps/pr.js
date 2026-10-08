@@ -115,13 +115,18 @@ function mdCell(str) {
     .replace(/\]/g, '\\]');
 }
 
-function seoCheck(page) {
+// The table follows the project's page_contract where it sets its own limits (body words, a brand
+// suffix the site appends to every title), so a page the validator accepted does not show red here.
+export function seoCheck(page, config = {}) {
   const { parsed, body } = parseFrontmatter(page.markdown);
+  const contract = config.page_contract ?? null;
+  const suffixLen = contract?.meta_title_suffix?.length ?? 0;
 
   const metaTitle = String(parsed.meta_title ?? '');
   const metaDesc = String(parsed.meta_description ?? '');
   const tldr = String(parsed.tldr ?? '');
   const titleLen = metaTitle.length;
+  const shownTitleLen = titleLen + suffixLen;
   const descLen = metaDesc.length;
   const tldrWords = tldr.split(/\s+/).filter(Boolean).length;
   const bodyWords = body.split(/\s+/).filter(Boolean).length;
@@ -133,10 +138,12 @@ function seoCheck(page) {
 
   const { metaTitle: mt, metaDescription: md, tldrWords: tw, bodyWords: bw, extLinksMin } = SEO_THRESHOLDS;
   return [
-    `| meta_title (${titleLen} chars) | ${status(titleLen >= mt.idealMin && titleLen <= mt.idealMax, titleLen >= mt.okMin && titleLen <= mt.okMax)} |`,
+    `| meta_title (${titleLen} chars) | ${status(shownTitleLen >= mt.idealMin && shownTitleLen <= mt.idealMax, shownTitleLen >= mt.okMin && shownTitleLen <= mt.okMax)} |`,
     `| meta_description (${descLen} chars) | ${status(descLen >= md.idealMin && descLen <= md.idealMax, descLen >= md.okMin && descLen <= md.okMax)} |`,
     `| tldr (${tldrWords} words) | ${status(tldrWords >= tw.idealMin && tldrWords <= tw.idealMax, tldrWords >= tw.okMin && tldrWords <= tw.okMax)} |`,
-    `| body words (${bodyWords}) | ${status(bodyWords >= bw.okMin, bodyWords >= bw.warnMin)} |`,
+    `| body words (${bodyWords}) | ${contract?.body_words
+      ? status(bodyWords >= contract.body_words[0] && bodyWords <= contract.body_words[1], bodyWords >= contract.body_words[0] * 0.9)
+      : status(bodyWords >= bw.okMin, bodyWords >= bw.warnMin)} |`,
     `| external links (${extLinks}) | ${status(extLinks >= extLinksMin, extLinks === 0)} |`,
     `| FAQ entries | ${hasFaq ? '✅' : '❌'} |`,
     `| related_pages | ${hasRelated ? '✅' : '⚠️'} |`,
@@ -148,7 +155,7 @@ function buildPRBody(pages, sitemapSlugs, config) {
     `| ${mdCell(p.keyword)} | \`${mdCell(p.slug)}\` | ${mdCell(p.locale || config.locale)} | ${mdCell(p.score)} | ${mdCell(p.type)} |`
   ).join('\n');
 
-  const seoRows = pages.map(p => `### \`${p.slug}\`\n| Check | Status |\n|---|---|\n${seoCheck(p)}`).join('\n\n');
+  const seoRows = pages.map(p => `### \`${p.slug}\`\n| Check | Status |\n|---|---|\n${seoCheck(p, config)}`).join('\n\n');
 
   const sitemapNote = sitemapSlugs.length
     ? `\n## Sitemap\n\nQueued in \`seo/sitemap-pending.json\` once this PR is merged, Google picks them up via the sitemap after deploy:\n${sitemapSlugs.map(s => `- \`${s}\``).join('\n')}`
