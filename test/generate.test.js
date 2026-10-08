@@ -9,6 +9,7 @@ vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 const { generatePage } = await import('../src/steps/generate.js');
 const { MODELS, GENERATE_MAX_TOKENS } = await import('../src/lib/models.js');
 const { makeCatalog } = await import('./helpers/catalog.js');
+const { putSignal } = await import('../src/lib/signals/store.js');
 
 let dir;
 const config = {
@@ -83,3 +84,31 @@ describe('generate-page', () => {
     expect(complete.mock.calls[0][0].prompt).not.toContain('Page contract');
   });
 });
+
+describe('generate-page: Bing questions', () => {
+  const stored = [
+    { query: 'hochzeit planen im sommer', impressions: 9, clicks: 0, position: 5 },
+    { query: 'kinderschminken', impressions: 99, clicks: 0, position: 5 },
+  ];
+  const promptFor = async (cfg, withStore) => {
+    complete.mockReset().mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
+    if (withStore) putSignal('bing', 'queries:https://acme.io/', stored, new Date(), { cwd: dir });
+    await generatePage({ ...keyword, serp: { people_also_ask: ['Was kostet eine Hochzeit?'], related_searches: [] } }, cfg, dir);
+    return complete.mock.calls[0][0].prompt;
+  };
+
+  it('appends matching stored questions to the PAA slot', async () => {
+    const prompt = await promptFor({ ...config, bing: { enabled: true } }, true);
+    expect(prompt).toContain('Was kostet eine Hochzeit?');
+    expect(prompt).toContain('hochzeit planen im sommer');
+    expect(prompt).not.toContain('kinderschminken');
+  });
+
+  it('renders the prompt byte for byte as without Bing when bing.enabled is off', async () => {
+    const plain = await promptFor(config, false);
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), 'seo-gen-'));
+    expect(await promptFor({ ...config, bing: { enabled: false } }, true)).toBe(plain);
+  });
+});
+

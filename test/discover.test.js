@@ -19,6 +19,7 @@ vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 const { discover } = await import('../src/steps/discover.js');
 const { BudgetExceededError } = await import('../src/lib/budget.js');
 const { makeCatalog } = await import('./helpers/catalog.js');
+const { putSignal } = await import('../src/lib/signals/store.js');
 
 const EMPTY_SERP = { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
 const config = {
@@ -284,3 +285,65 @@ describe('discover-run', () => {
     });
   });
 });
+
+describe('discover-run: Bing start mode', () => {
+  const bingConfig = { ...config, base_url: 'https://acme.io', greenfield: true, bing: { enabled: true }, weekly_cap: 1 };
+  const seed = (queries) => putSignal('bing', 'queries:https://acme.io/', queries, new Date(), { cwd: dir });
+  const q = (query, impressions, position) => ({ query, impressions, clicks: 0, position });
+  const scored = { score: 9, type: 'guide', intent: 'informational', target_slug: 'wie-plane-ich', expected_entities: [], content_gaps: [], covered_by: null };
+
+  it('turns a Bing query into a candidate with source bing before greenfield runs', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    seed([q('wie plane ich eine hochzeit', 12, 10)]);
+    complete.mockResolvedValue(scored);
+
+    const data = await discover(bingConfig, dir);
+    const kw = data.keywords.find(k => k.keyword === 'wie plane ich eine hochzeit');
+    expect(kw).toMatchObject({ status: 'proposed', source: 'bing', bing: { impressions: 12, position: 10 } });
+    expect(kw).not.toHaveProperty('gsc');
+    expect(complete).toHaveBeenCalledTimes(1); // scoring only: the cap is full, greenfield stays out
+  });
+
+  it('applies the thresholds: position 8 to 25, at least max(5, min_impressions) impressions', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    seed([q('zu weit hinten', 50, 26), q('schon vorn', 50, 5), q('zu wenig', 4, 10)]);
+    complete.mockResolvedValue([]);
+    await discover(bingConfig, dir);
+    expect(complete).toHaveBeenCalledTimes(1); // greenfield only, no scoring call
+    expect(complete.mock.calls[0][0].schema.properties.keywords).toBeDefined();
+  });
+
+  it('fills the rest with greenfield when Bing candidates do not reach the cap', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    seed([q('wie plane ich eine hochzeit', 12, 10)]);
+    complete.mockResolvedValueOnce({ ...scored, score: 3 }).mockResolvedValueOnce([
+      { keyword: 'standesamt deko', target_slug: 'standesamt-deko', score: 8, type: 'guide', intent: 'informational' },
+    ]);
+    const data = await discover(bingConfig, dir);
+    expect(data.keywords.find(k => k.keyword === 'standesamt deko')).toMatchObject({ source: 'greenfield' });
+  });
+
+  it('ignores Bing queries without greenfield and without bing.enabled', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    seed([q('wie plane ich eine hochzeit', 12, 10)]);
+    complete.mockResolvedValue([]);
+    await discover({ ...bingConfig, greenfield: false }, dir);
+    await discover({ ...bingConfig, bing: { enabled: false } }, dir);
+    expect(complete).toHaveBeenCalledTimes(1); // the second run is greenfield with nothing from Bing
+    expect(complete.mock.calls[0][0].schema.properties.keywords).toBeDefined();
+  });
+
+  it('keeps the token duplicate guard: a word-order variant of a known keyword is skipped', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    seed([q('planen hochzeit', 12, 10)]);
+    await discover({ ...bingConfig, greenfield: false }, dir); // no-op, nothing stored
+    const { upsertKeyword, loadKeywords, saveKeywords } = await import('../src/lib/keywords.js');
+    const existing = loadKeywords(dir);
+    upsertKeyword(existing, { keyword: 'hochzeit planen', status: 'proposed', score: 8, target_slug: 'hochzeit-planen' });
+    saveKeywords(existing, dir);
+    complete.mockResolvedValue([]);
+    const data = await discover({ ...bingConfig, weekly_cap: 2 }, dir);
+    expect(data.keywords.find(k => k.keyword === 'planen hochzeit')).toMatchObject({ status: 'skip' });
+  });
+});
+

@@ -218,7 +218,10 @@ overlays:                         # shop meta and intro per product / category, 
   products: content/seo/products
   categories: content/seo/categories
 watch: { check_deploy: true }     # not_deployed alert for merged pages and overlays (opt-in)
+bing: { enabled: true }           # Bing Webmaster as a second signal (opt-in, needs BING_WEBMASTER_KEY), see below
 ```
+
+**Bing** (`bing.enabled`, optional `bing.site_url` when Bing knows the site under another URL than `base_url`): Bing feeds ChatGPT search and Copilot, so it is both an AI-visibility check and a second signal; Search Console stays the main source. The key is `BING_WEBMASTER_KEY` (workflow: `op://<op_vault>/seo-cli/BING-WEBMASTER-API`, a repo secret of the same name wins; without it Bing is skipped with a warning). `seo watch` checks `GetCrawlIssues` and `GetUrlInfo` for at most 30 sitemap URLs per day (a stateless section that advances daily), keeps `bing.crawled` per URL in `seo/alerts.json` and opens `bing_crawl_issues` (issues on sitemap URLs, 2 days in a row) and `bing_site_not_crawled` (under 20 percent crawled with at least 5 judged URLs, 2 days in a row, resolves from 50 percent). `bing_blind` opens when the key is rejected or after 3 days without a successful Bing call; Bing trouble is never an error and never `watch_blind`. The index diagnosis adds `bing: { crawled }` to each diagnosed URL (a field, not a finding). `seo run` stores the filtered Bing queries (180 days, at most 200, no emails, long digit runs or phone numbers) in `seo/signals/bing.json` for 7 days: matching ones are added to the `people_also_ask` slot of the generate prompt, and in start mode (`greenfield: true`, fewer ready keywords than `weekly_cap`) queries at position 20 or better with at least `max(5, min_impressions)` impressions become candidates (`source: bing`) before greenfield invents any. Not used by `improve`, `measure` or `traffic_drop`.
 
 **Catalog:** `loadCatalog` (`src/lib/catalog.js`) fetches `catalog_url` once per process (`safeFetch`, 10 s) and checks the shape (`version: 1`, `shipping`, `categories`, `products` with `slug`, `title`, `category`, `url`, `description`, `material`, `sizes`). `seo run` skips discover and generate with a warning while it is unreachable; `seo check` fails. The catalog goes into the generate and greenfield prompts together with the contract rules.
 
@@ -238,6 +241,7 @@ The machine state goes straight to `main` (commit message `seo: state (<reason>)
 | `seo/alerts.json` | Watcher state: `open` alerts (`deindexed:<url>`, `site_not_indexed`, `traffic_drop`, `watch_blind`; index alerts carry `diagnosis`, `resubmitted_at` and, from `seo run`, `assessment`), `known_indexed` URLs, the traffic hysteresis, the failure counter and `last_resubmit` | state commit to `main` |
 | `seo/last-run.json` | Report of the last `seo run` or `seo improve` (without the per-change lists) | state commit to `main` |
 | `seo/runs.jsonl` | One line per `seo run`/`seo improve` (`date`, `mode`, `status`, `prs`, `llm`, `budget`, warning and error counts), last 52 | state commit to `main` |
+| `seo/signals/bing.json` | Bing query cache (7 days, key `queries:<site>`), only with `bing.enabled` | state commit to `main` |
 | `seo/signals/serp.json` | SERP signal cache (30 days): top results, related searches and SERP features such as AI Overview per keyword; a cache hit costs no SerpAPI search | state commit to `main` |
 | `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage (`subscription: { calls, usd_equivalent }`) of the current month | state commit to `main` |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |

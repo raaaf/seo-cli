@@ -89,6 +89,13 @@ describe('state: commitState', () => {
     expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual(['seo/signals/serp.json']);
   });
 
+  it('treats the Bing signal cache as state', async () => {
+    mkdirSync(join(dir, 'seo', 'signals'), { recursive: true });
+    writeFileSync(join(dir, 'seo/signals/bing.json'), '{"version":1,"entries":{}}\n');
+    remoteTree({});
+    expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual(['seo/signals/bing.json']);
+  });
+
   it('limits the candidates to `files` when given, and treats the run log and alerts as state', async () => {
     write('seo/keywords.json', '{"a":1}\n');
     write('seo/alerts.json', '{}\n');

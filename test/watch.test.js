@@ -237,3 +237,102 @@ describe('watch: not_deployed alert', () => {
     expect(run(emptyAlerts(), {}).state).toEqual(emptyAlerts());
   });
 });
+
+describe('watch: Bing alerts', () => {
+  const urls = ['a', 'b', 'c', 'd', 'e'].map(s => `https://a.de/${s}`);
+  const bing = (over = {}) => ({ urls, issues: [], crawled: Object.fromEntries(urls.map(u => [u, true])), ...over });
+  const day = (state, input, today) => run(state, { bing: input }, today);
+  const ids = (r) => r.state.open.map(a => a.id);
+
+  it('opens bing_crawl_issues on the second day in a row with issues and names the first three URLs', () => {
+    const issues = urls.slice(0, 4);
+    const one = day(emptyAlerts(), bing({ issues }), '2026-10-07');
+    expect(one.opened).toEqual([]);
+    const two = day(one.state, bing({ issues }), '2026-10-08');
+    expect(two.opened.map(a => a.id)).toEqual(['bing_crawl_issues']);
+    expect(two.opened[0].detail).toContain('4 sitemap URL(s)');
+    expect(two.opened[0].detail).toContain(`${urls[0]}, ${urls[1]}, ${urls[2]}`);
+    expect(two.opened[0].detail).not.toContain(urls[3]);
+  });
+
+  it('restarts the issue count after a gap day and after a clean day', () => {
+    const one = day(emptyAlerts(), bing({ issues: [urls[0]] }), '2026-10-07');
+    expect(day(one.state, bing({ issues: [urls[0]] }), '2026-10-09').opened).toEqual([]);
+    const clean = day(one.state, bing(), '2026-10-08');
+    expect(day(clean.state, bing({ issues: [urls[0]] }), '2026-10-09').opened).toEqual([]);
+  });
+
+  it('closes bing_crawl_issues when the issues are gone', () => {
+    let state = day(day(emptyAlerts(), bing({ issues: [urls[0]] }), '2026-10-07').state, bing({ issues: [urls[0]] }), '2026-10-08').state;
+    const out = day(state, bing(), '2026-10-09');
+    expect(out.resolved.map(a => a.id)).toEqual(['bing_crawl_issues']);
+  });
+
+  const cold = Object.fromEntries(urls.map(u => [u, false]));
+  it('opens bing_site_not_crawled below 20 percent on two days in a row, needs 5 judged URLs, closes from 50 percent', () => {
+    const one = day(emptyAlerts(), bing({ crawled: cold }), '2026-10-07');
+    expect(one.opened).toEqual([]);
+    const two = day(one.state, bing({ crawled: cold }), '2026-10-08');
+    expect(two.opened).toMatchObject([{ id: 'bing_site_not_crawled', detail: { crawled: 0, total: 5 } }]);
+
+    const mid = day(two.state, bing({ crawled: { [urls[0]]: true, [urls[1]]: true, [urls[2]]: true } }), '2026-10-09');
+    expect(mid.resolved.map(a => a.id)).toEqual(['bing_site_not_crawled']);
+
+    const few = day(emptyAlerts(), bing({ urls: urls.slice(0, 4), crawled: { [urls[0]]: false, [urls[1]]: false, [urls[2]]: false, [urls[3]]: false } }), '2026-10-07');
+    expect(day(few.state, bing({ urls: urls.slice(0, 4), crawled: {} }), '2026-10-08').opened).toEqual([]);
+  });
+
+  it('keeps an open bing_site_not_crawled between 20 and 50 percent and resets the pending day above 20', () => {
+    const open = day(day(emptyAlerts(), bing({ crawled: cold }), '2026-10-07').state, bing({ crawled: cold }), '2026-10-08').state;
+    const half = { ...cold, [urls[0]]: true };
+    expect(ids(day(open, bing({ crawled: half }), '2026-10-09'))).toContain('bing_site_not_crawled');
+    const pending = day(emptyAlerts(), bing({ crawled: cold }), '2026-10-07').state;
+    const warm = day(pending, bing({ crawled: half }), '2026-10-08').state;
+    expect(day(warm, bing({ crawled: cold }), '2026-10-09').opened).toEqual([]);
+  });
+
+  it('prunes bing.crawled to the sitemap and keeps yesterday values for URLs not checked today', () => {
+    const first = day(emptyAlerts(), bing({ crawled: { [urls[0]]: true, [urls[1]]: false } }), '2026-10-07');
+    const second = day(first.state, bing({ urls: urls.slice(0, 3), crawled: { [urls[2]]: true } }), '2026-10-08');
+    expect(second.state.bing.crawled).toEqual({ [urls[0]]: true, [urls[1]]: false, [urls[2]]: true });
+    const third = day(second.state, bing({ urls: urls.slice(0, 2), crawled: {} }), '2026-10-09');
+    expect(Object.keys(third.state.bing.crawled)).toEqual([urls[0], urls[1]]);
+  });
+
+  it('opens bing_blind at once on a rejected key and closes it on the next success', () => {
+    const rejected = day(emptyAlerts(), { error: 'key_rejected' }, '2026-10-07');
+    expect(rejected.opened.map(a => a.id)).toEqual(['bing_blind']);
+    expect(day(rejected.state, bing(), '2026-10-08').resolved.map(a => a.id)).toEqual(['bing_blind']);
+  });
+
+  it('opens bing_blind after 3 days without a success, not before', () => {
+    const ok = day(emptyAlerts(), bing(), '2026-10-07').state;
+    const d2 = day(ok, { error: 'unavailable' }, '2026-10-09');
+    expect(d2.opened).toEqual([]);
+    expect(day(d2.state, { error: 'unavailable' }, '2026-10-10').opened.map(a => a.id)).toEqual(['bing_blind']);
+    expect(day(emptyAlerts(), { error: 'unavailable' }, '2026-10-07').opened).toEqual([]);
+  });
+
+  it('leaves Bing alerts and state alone on a failed call and never counts Bing as a failed check', () => {
+    const open = day(day(emptyAlerts(), bing({ issues: [urls[0]] }), '2026-10-07').state, bing({ issues: [urls[0]] }), '2026-10-08').state;
+    const failed = day(open, { error: 'unavailable' }, '2026-10-09');
+    expect(ids(failed)).toEqual(['bing_crawl_issues']);
+    expect(failed.state.failures).toBe(0);
+    expect(failed.state.bing.crawled).toEqual(open.bing.crawled);
+  });
+
+  it('with bing null changes nothing, also not the blind counter', () => {
+    const open = day(day(emptyAlerts(), bing({ issues: [urls[0]] }), '2026-10-07').state, bing({ issues: [urls[0]] }), '2026-10-08').state;
+    const off = day(open, null, '2026-10-09');
+    expect(off.state).toEqual({ ...open, failures: 0 });
+    expect(off.resolved).toEqual([]);
+    expect(run(emptyAlerts(), {}).state).toEqual(emptyAlerts());
+    const blind = evaluateWatch(emptyAlerts(), { today: '2026-10-07', entries: [], traffic: { status: 'insufficient' }, bing: null });
+    expect(blind.state.failures).toBe(0);
+  });
+
+  it('clears the site-missing marker once Bing knows the site', () => {
+    const state = { ...emptyAlerts(), bing: { site_missing_warned: true } };
+    expect(day(state, bing(), '2026-10-07').state.bing.site_missing_warned).toBeUndefined();
+  });
+});

@@ -24,6 +24,14 @@ const SITE_OPEN_BELOW = 0.2;
 const SITE_RESOLVE_FROM = 0.5;
 // A merged page that is still missing live opens `not_deployed` on the second day in a row.
 const DEPLOY_OPEN_AFTER_DAYS = 2;
+// Bing: same two-day hysteresis for crawl issues and coverage; a silent Bing gap surfaces after 3 days without a success.
+const BING_OPEN_AFTER_DAYS = 2;
+const BING_MIN_URLS = 5;
+const BING_OPEN_BELOW = 0.2;
+const BING_RESOLVE_FROM = 0.5;
+const BING_BLIND_AFTER_DAYS = 3;
+const BING_ISSUE_URLS_SHOWN = 3;
+const BING_ALERT_IDS = ['bing_blind', 'bing_crawl_issues', 'bing_site_not_crawled'];
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
@@ -90,6 +98,52 @@ export function deindexedUrls(entries, knownIndexed) {
   });
 }
 
+// Bing part of one run, on `next.bing` (`crawled` booleans per sitemap URL, `issues_pending`, `site_pending`, `last_ok`).
+// `bing.error` (a failed call) only feeds `bing_blind`; it never touches the other alerts and never counts as a failed check.
+function evaluateBing(next, bing, { today, open, close, isOpen }) {
+  const state = { ...next.bing };
+  delete state.site_missing_warned;
+  next.bing = state;
+  if (bing.error) {
+    state.last_ok ??= today;
+    if (bing.error === 'key_rejected' || addDays(state.last_ok, BING_BLIND_AFTER_DAYS) <= today) {
+      open('bing_blind', 'bing_blind', bing.error === 'key_rejected' ? 'Bing rejected the API key' : `no successful Bing call since ${state.last_ok}`);
+    }
+    return;
+  }
+  state.last_ok = today;
+  close('bing_blind');
+
+  const inSitemap = new Set(bing.urls);
+  state.crawled = Object.fromEntries(Object.entries({ ...state.crawled, ...bing.crawled }).filter(([url]) => inSitemap.has(url)).sort(([a], [b]) => (a < b ? -1 : 1)));
+
+  if (!bing.issues.length) {
+    delete state.issues_pending;
+    close('bing_crawl_issues');
+  } else if (!isOpen('bing_crawl_issues')) {
+    state.issues_pending = bumpPending(state.issues_pending, today);
+    if (state.issues_pending.count >= BING_OPEN_AFTER_DAYS) {
+      open('bing_crawl_issues', 'bing_crawl_issues', `${bing.issues.length} sitemap URL(s) with Bing crawl issues, first: ${bing.issues.slice(0, BING_ISSUE_URLS_SHOWN).join(', ')}`);
+      delete state.issues_pending;
+    }
+  }
+
+  const judged = Object.values(state.crawled);
+  if (judged.length >= BING_MIN_URLS) {
+    const crawled = judged.filter(Boolean).length;
+    const share = crawled / judged.length;
+    if (share >= BING_OPEN_BELOW) delete state.site_pending;
+    if (share >= BING_RESOLVE_FROM) close('bing_site_not_crawled');
+    if (share < BING_OPEN_BELOW && !isOpen('bing_site_not_crawled')) {
+      state.site_pending = bumpPending(state.site_pending, today);
+      if (state.site_pending.count >= BING_OPEN_AFTER_DAYS) {
+        open('bing_site_not_crawled', 'bing_site_not_crawled', { crawled, total: judged.length });
+        delete state.site_pending;
+      }
+    }
+  }
+}
+
 /**
  * Applies one watch run to the alert state. `entries` is the current index
  * snapshot, `traffic` the result of `trafficChange`; null for either means that
@@ -101,8 +155,13 @@ export function deindexedUrls(entries, knownIndexed) {
  * decide (server error, fetch failure) and changes nothing; `removed: true` (the file left the
  * repo) resolves the alert with reason `removed`. An open alert stays open until a check
  * succeeds, so the caller keeps listing it after its PR left the check window. State: `deploy_pending[key]`, present only while a check is pending.
+ *
+ * `bing` is null when Bing does not know the site (state and alerts untouched), `{ disabled: true }` when Bing is off or has
+ * no key (its open alerts close with reason `bing_disabled`),
+ * `{ error }` for a failed Bing call, else `{ urls, issues, crawled }`: the sitemap URLs, those with
+ * crawl issues and today's crawled booleans. Bing never counts towards `failures`.
  */
-export function evaluateWatch(state, { today, entries, traffic, liveChecks = null }) {
+export function evaluateWatch(state, { today, entries, traffic, liveChecks = null, bing = null }) {
   const next = { ...emptyAlerts(), ...state, open: [...(state.open ?? [])] };
   const opened = [];
   const resolved = [];
@@ -183,6 +242,9 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
     if (Object.keys(pending).length) next.deploy_pending = pending;
     else delete next.deploy_pending;
   }
+
+  if (bing?.disabled) for (const id of BING_ALERT_IDS) close(id, 'bing_disabled');
+  else if (bing) evaluateBing(next, bing, { today, open, close, isOpen });
 
   if (!entries || !traffic) {
     next.failures += 1;

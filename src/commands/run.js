@@ -24,6 +24,7 @@ import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { validate } from '../steps/validate.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
+import { refreshBingQueries } from '../lib/signals/bing.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { prepareImprove, publishImprove } from './improve.js';
 import { createPRs } from '../steps/pr.js';
@@ -457,7 +458,12 @@ export async function runCommand(opts) {
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
     const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));
     const remaining = Math.max(0, config.max_new_pages_per_month - newPagesUsed);
-    keywordsData = remaining === 0 || catalogDown ? loadKeywords(cwd) : await discover(config, cwd, { catalog });
+    const discovering = remaining > 0 && !catalogDown;
+
+    // 1e. Bing queries for discover (start mode) and generate (FAQ questions), refreshed weekly. Never fatal.
+    // Only when discover runs, so the answer is used this run (a dry run still writes just the local signal file).
+    if (discovering) await refreshBingQueries({ config, cwd, warnings: report.warnings });
+    keywordsData = discovering ? await discover(config, cwd, { catalog }) : loadKeywords(cwd);
 
     // 3. Generate
     const pending = getPending(keywordsData, config.score_cutoff);
