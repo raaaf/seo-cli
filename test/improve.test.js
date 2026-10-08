@@ -326,6 +326,34 @@ describe('improvePage prompt', () => {
     expect(prompt).toContain('not estimates');
   });
 
+  it('puts contract rules and the catalog into the prompt, and leaves the prompt without them unchanged', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+    const page = { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] };
+    const { makeCatalog } = await import('./helpers/catalog.js');
+
+    await improvePage(page, { ...config, page_contract: { lowercase: true } }, cwd, null, { catalog: makeCatalog() });
+    const shop = complete.mock.calls[0][0].prompt;
+    expect(shop).toContain('## Page contract');
+    expect(shop).toContain('<<<UNTRUSTED_CATALOG_START>>>\nshipping:');
+    expect(shop).not.toContain('{{');
+
+    await improvePage(page, config, cwd);
+    const plain = complete.mock.calls[1][0].prompt;
+    expect(plain).not.toMatch(/Page contract|UNTRUSTED_CATALOG|\{\{/);
+    expect(plain).toContain('## Validator feedback (if this is a retry)\n\n(first attempt');
+  });
+
+  it('validates the current page with the contract options it is given', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+    const opts = { contract: { lowercase: true } };
+
+    await improvePage({ slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] }, config, cwd, null, opts);
+
+    expect(validateOverride).toHaveBeenCalledWith(expect.any(String), expect.any(Object), opts);
+  });
+
   it('requests the rewrite as a batch unless batch_generation is false', async () => {
     seedPages('preise');
     complete.mockResolvedValue('---\nslug: preise\n---\nbody');

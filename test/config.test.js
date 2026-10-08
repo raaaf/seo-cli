@@ -73,6 +73,52 @@ describe('config-load: loadConfig', () => {
     expect(cfg.config_warnings).toEqual([`max_new_pages_per_month must be a number, using ${DEFAULTS.max_new_pages_per_month}`]);
   });
 
+  it('leaves the Etappe D keys inert when absent', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'project: x\n', 'utf8');
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.page_contract).toBeNull();
+    expect(cfg.overlays).toBeNull();
+    expect(cfg.catalog_url).toBeNull();
+    expect(cfg.reserved_slugs).toEqual([]);
+    expect(cfg.watch).toEqual({ check_deploy: false });
+    expect(cfg.config_warnings).toBeUndefined();
+  });
+
+  it('reads the Etappe D keys and merges watch with its defaults', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), [
+      'catalog_url: https://example.test/seo/catalog.json',
+      'reserved_slugs: [admin, up]',
+      'page_contract: { body_words: [300, 600] }',
+      'overlays: { products: content/seo/products }',
+      'watch: { check_deploy: true }',
+    ].join('\n'), 'utf8');
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.catalog_url).toBe('https://example.test/seo/catalog.json');
+    expect(cfg.reserved_slugs).toEqual(['admin', 'up']);
+    expect(cfg.page_contract.body_words).toEqual([300, 600]);
+    expect(cfg.overlays.products).toBe('content/seo/products');
+    expect(cfg.watch.check_deploy).toBe(true);
+  });
+
+  it('ignores malformed Etappe D keys with warnings', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'page_contract: nope\noverlays: [a]\nreserved_slugs: admin\nwatch: 3\n', 'utf8');
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.page_contract).toBeNull();
+    expect(cfg.overlays).toBeNull();
+    expect(cfg.reserved_slugs).toEqual([]);
+    expect(cfg.watch).toEqual({ check_deploy: false });
+    expect(cfg.config_warnings).toHaveLength(3);
+  });
+
+  it('throws a config error naming the page_contract key with a wrong shape', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'page_contract:\n  body_words: [300]\n', 'utf8');
+    expect(() => loadConfig(tmpDir)).toThrow('page_contract.body_words must be a list of two numbers');
+  });
+
   it('throws when config file is missing', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     expect(() => loadConfig(tmpDir)).toThrow('seo.config.yaml not found');

@@ -22,12 +22,14 @@ const commitState = vi.fn();
 const getPR = vi.fn();
 const deleteBranch = vi.fn();
 const getLlmStats = vi.fn();
+const loadCatalog = vi.fn();
 
 const CONFIG = {
   project: 'demo', locale: 'de', locales: ['de'], score_cutoff: 7,
   weekly_cap: 2, max_new_pages_per_month: 4, landing_path: 'resources/landing/de/', repo: 'o/demo',
 };
 
+vi.mock('../src/lib/catalog.js', async (orig) => ({ ...(await orig()), loadCatalog: (...a) => loadCatalog(...a) }));
 vi.mock('../src/steps/discover.js', () => ({ discover: (...a) => discover(...a) }));
 vi.mock('../src/steps/generate.js', () => ({ generatePage: (...a) => generatePage(...a) }));
 // linkAlternates is pure and already unit-tested in counterpart.test.js — keep the
@@ -58,6 +60,8 @@ vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig
 const { runCommand } = await import('../src/commands/run.js');
 const { loadKeywords, loadSitemapPending } = await import('../src/lib/keywords.js');
 const { loadImprovements } = await import('../src/lib/improvements.js');
+const { loadChanges } = await import('../src/lib/changes.js');
+const { makeCatalog } = await import('./helpers/catalog.js');
 const { format } = await import('../src/lib/date.js');
 const { BudgetExceededError } = await import('../src/lib/budget.js');
 
@@ -90,6 +94,8 @@ beforeEach(() => {
   reportPath = join(dir, 'report.json');
   for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, measure, assessAlerts, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
   getLlmStats.mockReset();
+  loadCatalog.mockReset();
+  loadCatalog.mockResolvedValue(null);
   getLlmStats.mockReturnValue({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] });
   commitState.mockResolvedValue([]);
   measure.mockResolvedValue({ entries: 0, due: 0, measured: 0, changed: [] });
@@ -743,5 +749,86 @@ describe('run-report', () => {
     await run();
 
     expect(report()).toMatchObject({ status: 'prs_opened', warnings: [expect.stringMatching(/State commit after the run failed: GitHub 500/)] });
+  });
+});
+
+describe('shop mode', () => {
+  const SHOP = { base_url: 'https://shop.test', catalog_url: 'https://shop.test/seo/catalog.json', page_contract: { lowercase: true }, reserved_slugs: ['admin'] };
+  const PR = (n) => `https://github.com/o/demo/pull/${n}`;
+  beforeEach(() => { Object.assign(CONFIG, SHOP); });
+  afterEach(() => { for (const k of Object.keys(SHOP)) delete CONFIG[k]; });
+
+  it('loads the catalog once and hands it to discover, generate and validate with the contract', async () => {
+    const catalog = makeCatalog();
+    loadCatalog.mockResolvedValue(catalog);
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+
+    await run();
+
+    expect(loadCatalog).toHaveBeenCalledTimes(1);
+    expect(discover).toHaveBeenCalledWith(CONFIG, process.cwd(), { catalog });
+    expect(generatePage.mock.calls[0][4]).toEqual({ catalog });
+    expect(validate.mock.calls[0][2]).toMatchObject({ contract: { lowercase: true }, catalog, reservedSlugs: ['admin'] });
+  });
+
+  it('rejects a page whose products overlap a page accepted earlier in the same run', async () => {
+    const real = await vi.importActual('../src/steps/validate.js');
+    // Only the overlap rule is under test: the fixture pages are not full landing pages.
+    validate.mockImplementation((md, kw, opts) => {
+      const errors = real.validate(md, kw, opts).errors.filter(e => e.startsWith('Product overlap'));
+      return { ok: errors.length === 0, errors, warnings: [] };
+    });
+    CONFIG.page_contract = { products: { max_overlap: 0.6 } };
+    loadCatalog.mockResolvedValue(makeCatalog());
+    discover.mockResolvedValue(manyKeywords(2));
+    generatePage.mockImplementation(async (kw) => `---\nslug: ${kw.target_slug}\nproducts: [p1, p2, p3]\n---\nbody`);
+    createPRs.mockResolvedValue({ prs: [], warnings: [], errors: [] });
+
+    await run();
+
+    const pages = createPRs.mock.calls[0][0].generatedPages;
+    expect(pages.map(p => p.slug)).toEqual(['slug-0']);
+  });
+
+  it('skips discover and generate with a warning while the shop is unreachable, and keeps improving', async () => {
+    loadCatalog.mockRejectedValue(new Error('Catalog unreachable (https://shop.test/seo/catalog.json): HTTP 503'));
+    prepareImprove.mockResolvedValue(null);
+
+    await run();
+
+    expect(discover).not.toHaveBeenCalled();
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(report().warnings.join('\n')).toMatch(/Catalog unreachable.*Skipping discover and generate/);
+    expect(prepareImprove).toHaveBeenCalledWith(expect.objectContaining({ skipOverlays: true }), process.cwd());
+  });
+
+  it('gives the improve path the catalog and lets overlays run when the shop answers', async () => {
+    const catalog = makeCatalog();
+    loadCatalog.mockResolvedValue(catalog);
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue(null);
+
+    await run();
+
+    expect(prepareImprove).toHaveBeenCalledWith(expect.objectContaining({ catalog, skipOverlays: false }), process.cwd());
+  });
+
+  it('writes a ledger entry with the shop URL for a merged overlay PR', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue(null);
+    seedState('improvements.json', { version: 1, entries: [
+      { slug: 'product:nachteule', date: '2026-10-01', pr_url: PR(5) },
+      { slug: 'category:shirts', date: '2026-10-01', pr_url: PR(6) },
+    ] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: '2026-10-03T09:00:00Z' });
+
+    await run();
+
+    const urls = Object.fromEntries(loadChanges(dir).entries.map(e => [e.slug, e.urls]));
+    expect(urls).toEqual({
+      'product:nachteule': ['https://shop.test/shop/nachteule'],
+      'category:shirts': ['https://shop.test/shop?category=shirts'],
+    });
   });
 });

@@ -16,7 +16,50 @@ export function loadConfig(cwd = process.cwd()) {
     config.max_new_pages_per_month = DEFAULTS.max_new_pages_per_month;
     config.config_warnings = [`max_new_pages_per_month must be a number, using ${DEFAULTS.max_new_pages_per_month}`];
   }
+  normalizeShopKeys(config);
   return config;
+}
+
+const isPlainObject = v => v != null && typeof v === 'object' && !Array.isArray(v);
+
+// Etappe D keys. Absent keys keep their inert defaults, so a project without
+// them behaves exactly as before. A malformed value falls back to the default
+// and warns instead of half-enabling a feature.
+function normalizeShopKeys(config) {
+  const warn = msg => { config.config_warnings = [...(config.config_warnings || []), msg]; };
+  for (const key of ['page_contract', 'overlays']) {
+    if (config[key] != null && !isPlainObject(config[key])) {
+      warn(`${key} must be a mapping, ignoring it`);
+      config[key] = DEFAULTS[key];
+    }
+  }
+  if (config.page_contract) assertPageContractShape(config.page_contract);
+  if (!Array.isArray(config.reserved_slugs)) {
+    if (config.reserved_slugs != null) warn('reserved_slugs must be a list, ignoring it');
+    config.reserved_slugs = [];
+  }
+  if (typeof config.catalog_url !== 'string' || !config.catalog_url.trim()) config.catalog_url = null;
+  config.watch = { ...DEFAULTS.watch, ...(isPlainObject(config.watch) ? config.watch : {}) };
+}
+
+const isStringList = v => Array.isArray(v) && v.every(x => typeof x === 'string');
+const isNumber = v => typeof v === 'number' && Number.isFinite(v);
+
+// A contract with a wrong shape would crash validate halfway or silently never fire, so it stops the load.
+const CONTRACT_SHAPES = {
+  body_words: [v => Array.isArray(v) && v.length === 2 && v.every(isNumber), 'a list of two numbers [min, max]'],
+  require: [isStringList, 'a list of strings'],
+  forbid: [isStringList, 'a list of strings'],
+  products: [v => isPlainObject(v) && ['min', 'max', 'max_overlap'].every(k => v[k] == null || isNumber(v[k])), 'a mapping with numeric min, max, max_overlap'],
+  lowercase: [v => typeof v === 'boolean', 'true or false'],
+  facts_denylist: [isStringList, 'a list of regex strings'],
+  meta_title_suffix: [v => typeof v === 'string', 'a string'],
+};
+
+function assertPageContractShape(contract) {
+  for (const [key, [valid, expected]] of Object.entries(CONTRACT_SHAPES)) {
+    if (contract[key] != null && !valid(contract[key])) throw new Error(`${CONFIG_FILE}: page_contract.${key} must be ${expected}`);
+  }
 }
 
 function normalizeUrlPrefix(prefix) {
@@ -67,6 +110,18 @@ export const DEFAULTS = {
   // and Anthropic call, state in seo/budget.json. 60 SerpAPI searches per
   // project keeps up to 4 projects under the shared 250/month free tier.
   budget: { usd_per_month: 30, serpapi_per_month: 60 },
+  // Page contract: project-specific rules on top of the landing format, read by
+  // validate, check, the prompts and the gate. Null keeps today's rules.
+  page_contract: null,
+  // One-segment paths the site already serves; no landing page may take them.
+  reserved_slugs: [],
+  // Machine-readable product catalog (the fact source for contract projects). Null: no catalog.
+  catalog_url: null,
+  // Directories of per-product and per-category overlay files, e.g.
+  // { products: 'content/seo/products', categories: 'content/seo/categories' }. Null: no overlays.
+  overlays: null,
+  // check_deploy: verify that merged pages and overlays are live (opt-in).
+  watch: { check_deploy: false },
 };
 
 export function isStrict(config) {

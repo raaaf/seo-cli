@@ -22,6 +22,8 @@ const GSC_LAG_DAYS = 3;
 const SITE_MIN_URLS = 5;
 const SITE_OPEN_BELOW = 0.2;
 const SITE_RESOLVE_FROM = 0.5;
+// A merged page that is still missing live opens `not_deployed` on the second day in a row.
+const DEPLOY_OPEN_AFTER_DAYS = 2;
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
@@ -46,6 +48,11 @@ export function saveAlerts(state, cwd) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content, 'utf8');
 }
+
+// One more consecutive day for a pending condition: counted once per day, restarts after a gap.
+const bumpPending = (seen, today) => (
+  seen?.date === today ? seen : { count: seen?.date === addDays(today, -1) ? seen.count + 1 : 1, date: today }
+);
 
 /** The last 7 complete days (ending today-3) against the 7 days before them. */
 export function trafficWindows(today) {
@@ -88,8 +95,14 @@ export function deindexedUrls(entries, knownIndexed) {
  * snapshot, `traffic` the result of `trafficChange`; null for either means that
  * check failed, which leaves its alerts as they are and counts towards
  * `watch_blind`. Returns { state, opened, resolved }: the caller reports only those two.
+ *
+ * `liveChecks` is `[{ key, url, ok }]` for merged pages and overlays that should be live, or
+ * null when deploy checks are off (alerts left alone). `ok: null` means the check could not
+ * decide (server error, fetch failure) and changes nothing; `removed: true` (the file left the
+ * repo) resolves the alert with reason `removed`. An open alert stays open until a check
+ * succeeds, so the caller keeps listing it after its PR left the check window. State: `deploy_pending[key]`, present only while a check is pending.
  */
-export function evaluateWatch(state, { today, entries, traffic }) {
+export function evaluateWatch(state, { today, entries, traffic, liveChecks = null }) {
   const next = { ...emptyAlerts(), ...state, open: [...(state.open ?? [])] };
   const opened = [];
   const resolved = [];
@@ -134,10 +147,7 @@ export function evaluateWatch(state, { today, entries, traffic }) {
     next.traffic_pending = null;
   } else if (traffic?.status === 'ok') {
     if (traffic.drop > DROP_OPEN) {
-      const pending = next.traffic_pending;
-      if (pending?.date !== today) {
-        next.traffic_pending = { count: pending?.date === addDays(today, -1) ? pending.count + 1 : 1, date: today };
-      }
+      next.traffic_pending = bumpPending(next.traffic_pending, today);
       if (next.traffic_pending.count >= OPEN_AFTER_DAYS) {
         open('traffic_drop', 'traffic_drop', `${Math.round(traffic.drop * 100)} percent fewer landing page impressions (${traffic.current} vs ${traffic.previous} in the 7 days before)`, { reference: traffic.previous });
         next.traffic_pending = null;
@@ -145,6 +155,33 @@ export function evaluateWatch(state, { today, entries, traffic }) {
     } else {
       next.traffic_pending = null;
     }
+  }
+
+  if (liveChecks) {
+    const pending = { ...(next.deploy_pending ?? {}) };
+    const listed = new Set(liveChecks.map(c => c.key));
+    for (const { key, url, ok, removed } of liveChecks) {
+      const id = `not_deployed:${key}`;
+      if (removed) {
+        delete pending[key];
+        close(id, 'removed');
+        continue;
+      }
+      if (ok === null) continue;
+      if (ok) {
+        delete pending[key];
+        close(id);
+      } else if (!isOpen(id)) {
+        pending[key] = bumpPending(pending[key], today);
+        if (pending[key].count >= DEPLOY_OPEN_AFTER_DAYS) {
+          open(id, 'not_deployed', url);
+          delete pending[key];
+        }
+      }
+    }
+    for (const key of Object.keys(pending).filter(k => !listed.has(k))) delete pending[key];
+    if (Object.keys(pending).length) next.deploy_pending = pending;
+    else delete next.deploy_pending;
   }
 
   if (!entries || !traffic) {

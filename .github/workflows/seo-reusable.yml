@@ -33,6 +33,16 @@ on:
         type: string
         required: false
         default: ''
+      # 1Password vault holding the shared `seo-cli` item. `development` keeps
+      # the old behaviour (only ANTHROPIC_API_KEY and SERPAPI_KEY come from
+      # 1Password, everything else from repo secrets). Any other vault (e.g.
+      # `Bots`) also supplies GSC_CREDENTIALS, GSC_TOKEN, SEO_NOTIFY_WEBHOOK and
+      # CLAUDE_CODE_OAUTH_TOKEN from op://<op_vault>/seo-cli/<FIELD>. A repo
+      # secret of the same name wins over the 1Password value.
+      op_vault:
+        type: string
+        required: false
+        default: development
     secrets:
       # Option A: 1Password (ANTHROPIC_API_KEY + SERPAPI_KEY werden aus 1Password geladen)
       OP_SERVICE_ACCOUNT_TOKEN:
@@ -45,11 +55,12 @@ on:
       # Optional: run LLM calls on the Claude subscription (`claude setup-token`). Without it every call uses ANTHROPIC_API_KEY.
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
-      # Immer projektspezifisch:
+      # Repo secrets, or from 1Password via op_vault. The Google step fails with a
+      # clear message when neither source delivers them.
       GSC_CREDENTIALS:
-        required: true
+        required: false
       GSC_TOKEN:
-        required: true
+        required: false
       # Optional: n8n-Webhook-URL fuer E-Mail-Benachrichtigung (merged / needs review)
       SEO_NOTIFY_WEBHOOK:
         required: false
@@ -78,7 +89,7 @@ jobs:
       statuses: read
     env:
       HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
-      HAVE_CC_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      SHARED_VAULT: ${{ inputs.op_vault != 'development' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -87,15 +98,44 @@ jobs:
         with:
           node-version: '22'
 
+      # Empty values are not references and are ignored by the action. Watch mode
+      # needs no LLM or SerpAPI key, so it loads only the Google pair, and only
+      # from a non-default vault (the default vault has no such fields).
       - name: Load shared secrets from 1Password
-        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true'
+        if: env.HAVE_OP_TOKEN == 'true' && (inputs.mode != 'watch' || env.SHARED_VAULT == 'true')
         uses: 1password/load-secrets-action@v4
         with:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          ANTHROPIC_API_KEY: op://development/seo-cli/ANTHROPIC_API_KEY
-          SERPAPI_KEY: op://development/seo-cli/SERPAPI_KEY
+          ANTHROPIC_API_KEY: ${{ inputs.mode != 'watch' && format('op://{0}/seo-cli/ANTHROPIC_API_KEY', inputs.op_vault) || '' }}
+          SERPAPI_KEY: ${{ inputs.mode != 'watch' && format('op://{0}/seo-cli/SERPAPI_KEY', inputs.op_vault) || '' }}
+          GSC_CREDENTIALS: ${{ env.SHARED_VAULT == 'true' && format('op://{0}/seo-cli/GSC_CREDENTIALS', inputs.op_vault) || '' }}
+          GSC_TOKEN: ${{ env.SHARED_VAULT == 'true' && format('op://{0}/seo-cli/GSC_TOKEN', inputs.op_vault) || '' }}
+
+      # Separate and non-fatal, one step per field: a field that is not in the item
+      # yet (the Claude token is added later) must neither stop the run nor drop the
+      # other field. Without the token the run uses the API key, without the webhook
+      # it reports nowhere (visible warning).
+      - name: Load notify webhook from 1Password
+        if: env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v4
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          SEO_NOTIFY_WEBHOOK: ${{ format('op://{0}/seo-cli/SEO_NOTIFY_WEBHOOK', inputs.op_vault) }}
+
+      - name: Load Claude Code token from 1Password
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v4
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ format('op://{0}/seo-cli/CLAUDE_CODE_OAUTH_TOKEN', inputs.op_vault) }}
 
       - name: Use direct secrets (no 1Password)
         if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN != 'true'
@@ -122,19 +162,33 @@ jobs:
         run: npm ci
         working-directory: .seo-cli
 
-      # Only with a token: without it seo-cli never starts `claude`.
+      # Only with a token (repo secret or 1Password): without it seo-cli never starts `claude`.
       - name: Install Claude Code
-        if: inputs.mode != 'watch' && env.HAVE_CC_TOKEN == 'true'
-        run: npm install -g @anthropic-ai/claude-code@2.1.292
+        if: inputs.mode != 'watch'
+        env:
+          SECRET_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "${SECRET_CLAUDE_CODE_OAUTH_TOKEN:-}${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "No Claude Code token, skipping the install."
+            exit 0
+          fi
+          npm install -g @anthropic-ai/claude-code@2.1.292
 
+      # A repo secret wins over the 1Password value (exported as GSC_CREDENTIALS / GSC_TOKEN).
       - name: Write Google credentials
         env:
-          GSC_CREDENTIALS: ${{ secrets.GSC_CREDENTIALS }}
-          GSC_TOKEN: ${{ secrets.GSC_TOKEN }}
+          SECRET_GSC_CREDENTIALS: ${{ secrets.GSC_CREDENTIALS }}
+          SECRET_GSC_TOKEN: ${{ secrets.GSC_TOKEN }}
         run: |
+          CREDENTIALS="${SECRET_GSC_CREDENTIALS:-${GSC_CREDENTIALS:-}}"
+          TOKEN="${SECRET_GSC_TOKEN:-${GSC_TOKEN:-}}"
+          if [ -z "$CREDENTIALS" ] || [ -z "$TOKEN" ]; then
+            echo "::error::GSC_CREDENTIALS and GSC_TOKEN are missing. Set them as repo secrets, or pass OP_SERVICE_ACCOUNT_TOKEN and an op_vault whose seo-cli item has both fields."
+            exit 1
+          fi
           umask 077
-          printf '%s' "$GSC_CREDENTIALS" > /tmp/gsc-credentials.json
-          printf '%s' "$GSC_TOKEN" > "$HOME/.seo-cli-token.json"
+          printf '%s' "$CREDENTIALS" > /tmp/gsc-credentials.json
+          printf '%s' "$TOKEN" > "$HOME/.seo-cli-token.json"
 
       - name: Run seo
         if: inputs.mode != 'watch'
@@ -142,11 +196,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
           # ANTHROPIC_API_KEY (from GITHUB_ENV) stays set: it is the fallback.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SECRET_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           SEO_SLUG: ${{ inputs.slug }}
           SEO_MERGE_FROM: ${{ inputs.merge_from }}
           SEO_BRIEF: ${{ inputs.brief }}
+        # A repo secret wins; otherwise CLAUDE_CODE_OAUTH_TOKEN may already be set from 1Password.
         run: |
+          if [ -n "${SECRET_CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then export CLAUDE_CODE_OAUTH_TOKEN="$SECRET_CLAUDE_CODE_OAUTH_TOKEN"; fi
           if [ -n "$SEO_SLUG" ]; then
             args=(improve --slug "$SEO_SLUG" --report "$RUNNER_TEMP/seo-report.json")
             [ -n "$SEO_MERGE_FROM" ] && args+=(--merge-from "$SEO_MERGE_FROM")
@@ -385,11 +441,14 @@ jobs:
       - name: Notify
         if: always()
         env:
-          NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
+          SECRET_NOTIFY_WEBHOOK: ${{ secrets.SEO_NOTIFY_WEBHOOK }}
           JOB_STATUS: ${{ job.status }}
           MODE: ${{ inputs.mode }}
         run: |
           set -uo pipefail
+
+          # A repo secret wins over the 1Password value (exported as SEO_NOTIFY_WEBHOOK).
+          NOTIFY_WEBHOOK="${SECRET_NOTIFY_WEBHOOK:-${SEO_NOTIFY_WEBHOOK:-}}"
 
           REPORT_FILE="$RUNNER_TEMP/seo-report.json"
           GATE_STATUS_FILE="$RUNNER_TEMP/gate-status.txt"

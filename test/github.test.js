@@ -4,17 +4,17 @@ const git = {
   getRef: vi.fn(), getCommit: vi.fn(), createBlob: vi.fn(),
   deleteRef: vi.fn(), createTree: vi.fn(), createCommit: vi.fn(), createRef: vi.fn(), updateRef: vi.fn(), getTree: vi.fn(),
 };
-const pulls = { create: vi.fn(), get: vi.fn() };
+const pulls = { create: vi.fn(), get: vi.fn(), list: vi.fn(), listFiles: vi.fn() };
 vi.mock('@octokit/rest', () => ({
-  Octokit: class { constructor() { this.git = git; this.pulls = pulls; } },
+  Octokit: class { constructor() { this.git = git; this.pulls = pulls; this.paginate = async (fn, args) => (await fn(args)).data; } },
 }));
 
 process.env.GITHUB_TOKEN = 'test-token';
-const { createBranchAndCommit, commitToBranch, getBlobShas, getPR, deleteBranch, openPR } = await import('../src/lib/github.js');
+const { createBranchAndCommit, commitToBranch, getBlobShas, getPR, deleteBranch, openPR, listRecentlyMergedSeoPRs } = await import('../src/lib/github.js');
 const { isoWeek } = await import('../src/lib/date.js');
 
 beforeEach(() => {
-  for (const fn of [...Object.values(git), pulls.create, pulls.get]) fn.mockReset();
+  for (const fn of [...Object.values(git), ...Object.values(pulls)]) fn.mockReset();
   git.getRef.mockResolvedValue({ data: { object: { sha: 'base-sha' } } });
   git.getCommit.mockResolvedValue({ data: { tree: { sha: 'base-tree' } } });
   git.createBlob.mockResolvedValue({ data: { sha: 'blob-sha' } });
@@ -159,5 +159,43 @@ describe('github-delete-branch', () => {
     await expect(deleteBranch({ repo: 'o/r', branch: 'b' })).resolves.toBeUndefined();
     git.deleteRef.mockRejectedValueOnce(Object.assign(new Error('forbidden'), { status: 403 }));
     await expect(deleteBranch({ repo: 'o/r', branch: 'b' })).rejects.toThrow('forbidden');
+  });
+});
+
+describe('github-list-merged-seo-prs', () => {
+  const pr = (number, ref, mergedAt) => ({ number, head: { ref }, merged_at: mergedAt });
+
+  it('keeps merged PRs of seo/new and seo/improve since the cutoff, with their changed files', async () => {
+    pulls.list.mockResolvedValue({ data: [
+      pr(1, 'seo/new/a', '2026-10-05T10:00:00Z'),
+      pr(2, 'seo/improve/product-b', '2026-10-04T10:00:00Z'),
+      pr(3, 'seo/new/old', '2026-09-01T10:00:00Z'),
+      pr(4, 'feature/x', '2026-10-05T10:00:00Z'),
+      pr(5, 'seo/new/closed', null),
+      pr(6, 'seo/2026-W40', '2026-10-05T10:00:00Z'),
+    ] });
+    pulls.listFiles.mockImplementation(async ({ pull_number }) => ({ data: [{ filename: `f${pull_number}.md` }] }));
+
+    const result = await listRecentlyMergedSeoPRs('o/r', '2026-09-25T00:00:00.000Z');
+
+    expect(result).toEqual([
+      { number: 1, headRef: 'seo/new/a', mergedAt: '2026-10-05T10:00:00Z', files: ['f1.md'] },
+      { number: 2, headRef: 'seo/improve/product-b', mergedAt: '2026-10-04T10:00:00Z', files: ['f2.md'] },
+    ]);
+    expect(pulls.list).toHaveBeenCalledWith(expect.objectContaining({ owner: 'o', repo: 'r', state: 'closed' }));
+  });
+
+  it('reads the next page while PRs are not older than the cutoff, and stops at the first older one', async () => {
+    const full = Array.from({ length: 50 }, (_, i) => ({ ...pr(100 + i, 'feature/x', null), updated_at: '2026-10-06T00:00:00Z' }));
+    pulls.list
+      .mockResolvedValueOnce({ data: full })
+      .mockResolvedValueOnce({ data: [{ ...pr(7, 'seo/new/late', '2026-10-03T10:00:00Z'), updated_at: '2026-10-03T10:00:00Z' }, { ...pr(8, 'feature/y', null), updated_at: '2026-09-01T00:00:00Z' }] });
+    pulls.listFiles.mockResolvedValue({ data: [{ filename: 'x.md' }] });
+
+    const result = await listRecentlyMergedSeoPRs('o/r', '2026-09-25T00:00:00.000Z');
+
+    expect(result.map(p => p.number)).toEqual([7]);
+    expect(pulls.list).toHaveBeenCalledTimes(2);
+    expect(pulls.list.mock.calls[1][0]).toMatchObject({ page: 2 });
   });
 });

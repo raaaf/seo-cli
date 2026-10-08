@@ -8,6 +8,7 @@ vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 
 const { generatePage } = await import('../src/steps/generate.js');
 const { MODELS, GENERATE_MAX_TOKENS } = await import('../src/lib/models.js');
+const { makeCatalog } = await import('./helpers/catalog.js');
 
 let dir;
 const config = {
@@ -64,5 +65,21 @@ describe('generate-page', () => {
     complete.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
     await generatePage(keyword, { ...config, batch_generation: false }, dir);
     expect(complete).toHaveBeenCalledWith(expect.objectContaining({ batch: false }));
+  });
+
+  it('puts the catalog and the contract rules into the prompt', async () => {
+    complete.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
+    const contractConfig = { ...config, page_contract: { forbid: ['steps'], lowercase: true } };
+    await generatePage(keyword, contractConfig, dir, null, { catalog: makeCatalog() });
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('- sonntag: sonntag');
+    expect(prompt).toContain('Forbidden frontmatter fields (never emit them): steps');
+    expect(prompt).toContain('only from the product catalog');
+  });
+
+  it('adds no contract section without configuration', async () => {
+    complete.mockResolvedValue('---\nslug: hochzeit-planen\n---\nbody');
+    await generatePage(keyword, config, dir);
+    expect(complete.mock.calls[0][0].prompt).not.toContain('Page contract');
   });
 });

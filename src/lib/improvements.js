@@ -40,3 +40,16 @@ export function slugsInCooldown(data, today = new Date()) {
       .map(e => e.slug),
   );
 }
+
+/**
+ * Overlay pages (shop product and category meta/intro) share improvements.json
+ * and changes.json with landing pages. Their key carries a namespace so it can
+ * never collide with a landing slug: `product:<slug>`, `category:<key>`.
+ */
+export const overlayKey = (type, id) => `${type}:${id}`;
+
+/** `{ type, id }` of an overlay key, null for a plain landing slug. */
+export function parseOverlayKey(key) {
+  const m = /^(product|category):(.+)$/.exec(String(key));
+  return m ? { type: m[1], id: m[2] } : null;
+}

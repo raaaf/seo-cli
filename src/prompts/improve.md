@@ -92,7 +92,7 @@ competes with the section the template renders from the frontmatter: delete it w
 it only repeats the frontmatter items, otherwise keep its content under a heading
 that names what it specifically is (for example a dated example timeline).
 
-## Validator feedback (if this is a retry)
+{{catalog}}{{contract}}## Validator feedback (if this is a retry)
 
 {{validator_feedback}}
 

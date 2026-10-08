@@ -5,6 +5,7 @@ import { complete } from '../lib/claude.js';
 import { format } from '../lib/date.js';
 import { getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
+import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
 import { isValidSlug } from '../lib/keywords.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { isStrict } from '../lib/config.js';
@@ -31,7 +32,7 @@ const STRICT_RULES = {
 let styleDocCache = null;
 let styleDocCacheKey = null;
 
-export async function generatePage(keyword, config, cwd = process.cwd(), validatorFeedback = null) {
+export async function generatePage(keyword, config, cwd = process.cwd(), validatorFeedback = null, { catalog = null } = {}) {
   if (!isValidSlug(keyword.target_slug)) {
     throw new Error(`Invalid target_slug: ${JSON.stringify(keyword.target_slug)}. Must match /^[a-z0-9][a-z0-9-]*$/.`);
   }
@@ -58,6 +59,8 @@ export async function generatePage(keyword, config, cwd = process.cwd(), validat
     today: format(new Date()),
     validator_feedback: feedbackBlock,
     ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
+    catalog: formatCatalog(catalog),
+    contract: pageRulesSection(config.page_contract, catalog),
   };
 
   const prompt = fillTemplate(GENERATE_PROMPT, vars);

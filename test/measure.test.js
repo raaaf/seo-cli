@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  windowsFor, isDue, urlToSlug, aggregatePages, quantile, selectControls, verdictFor, isOverlap, isRevertCandidate,
+  windowsFor, isDue, urlToSlug, normalizeUrl, overlayUrl, aggregatePages, quantile, selectControls, verdictFor, isOverlap, isRevertCandidate,
 } from '../src/lib/measure.js';
 
 const CONFIG = { base_url: 'https://a.de', locales: ['de'], locale: 'de', counterpart_locale: 'en', counterpart_url_prefix: '/en' };
@@ -19,6 +19,43 @@ describe('measure: windowsFor / isDue', () => {
     const w = { startDate: '2026-09-09', endDate: '2026-10-06' };
     expect(isDue(w, '2026-10-09')).toBe(true);
     expect(isDue(w, '2026-10-08')).toBe(false);
+  });
+});
+
+describe('measure: overlay URLs', () => {
+  const SHOP = { ...CONFIG, base_url: 'https://shop.test', overlays: { products: 'p', categories: 'c' } };
+
+  it('maps a product URL to its namespaced key and flags it as overlay', () => {
+    expect(urlToSlug('https://shop.test/shop/nachteule?utm=1', SHOP, SLUGS)).toEqual({ slug: 'product:nachteule', locale: 'de', overlay: true });
+  });
+
+  it('maps a category URL, keeping the category in the key', () => {
+    expect(urlToSlug('https://shop.test/shop?category=shirts', SHOP, SLUGS)).toEqual({ slug: 'category:shirts', locale: 'de', overlay: true });
+  });
+
+  it('maps only the overlay kinds that are configured', () => {
+    expect(urlToSlug('https://shop.test/shop/nachteule', { ...SHOP, overlays: { categories: 'c' } }, SLUGS)).toBeNull();
+    expect(urlToSlug('https://shop.test/shop?category=shirts', { ...SHOP, overlays: { products: 'p' } }, SLUGS)).toBeNull();
+  });
+
+  it('maps nothing without the overlays key', () => {
+    expect(urlToSlug('https://shop.test/shop/nachteule', { ...SHOP, overlays: null }, SLUGS)).toBeNull();
+  });
+
+  it('does not map the shop index or a nested path', () => {
+    expect(urlToSlug('https://shop.test/shop', SHOP, SLUGS)).toBeNull();
+    expect(urlToSlug('https://shop.test/shop/a/b', SHOP, SLUGS)).toBeNull();
+  });
+
+  it('keeps the category in a normalized shop URL and drops other queries as before', () => {
+    expect(normalizeUrl('https://shop.test/shop?category=shirts&utm=1#x')).toBe('https://shop.test/shop?category=shirts');
+    expect(normalizeUrl('https://shop.test/shop?utm=1')).toBe('https://shop.test/shop');
+    expect(normalizeUrl('https://a.de/webdesign/?category=x')).toBe('https://a.de/webdesign');
+  });
+
+  it('builds the public URL of an overlay key', () => {
+    expect(overlayUrl(SHOP, 'product:nachteule')).toBe('https://shop.test/shop/nachteule');
+    expect(overlayUrl(SHOP, 'category:shirts')).toBe('https://shop.test/shop?category=shirts');
   });
 });
 

@@ -10,6 +10,7 @@ import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { findTokenSetDuplicate } from '../lib/similarity.js';
 import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
+import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -63,7 +64,7 @@ const GREENFIELD_SCHEMA = {
   additionalProperties: false,
 };
 
-export async function discover(config, cwd = process.cwd()) {
+export async function discover(config, cwd = process.cwd(), { catalog = null } = {}) {
   console.log(chalk.blue('Discovering keywords...'));
   const quota = checkQuota();
   console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.limit} used this month`));
@@ -121,7 +122,7 @@ export async function discover(config, cwd = process.cwd()) {
   if (ready < (config.weekly_cap ?? 2)) {
     if (config.greenfield) {
       console.log(chalk.yellow(`  Only ${ready} keyword(s) from GSC (cap ${config.weekly_cap ?? 2}) — topping up via greenfield.`));
-      await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd });
+      await discoverGreenfield({ config, data, existingSlugs, existingFiles, cwd, catalog });
     } else {
       console.log(chalk.gray(`  Only ${ready} keyword(s) from GSC (cap ${config.weekly_cap ?? 2}). Greenfield is off, so no keywords are invented to fill the gap.`));
     }
@@ -138,9 +139,9 @@ export async function discover(config, cwd = process.cwd()) {
 // or if a landing page with that slug already exists on disk (a merged page).
 // The latter guards against re-proposing a slug whose keywords.json entry was
 // lost because its PR never merged.
-function isSlugTaken(targetSlug, keyword, data, existingFiles = []) {
+function isSlugTaken(targetSlug, keyword, data, existingFiles = [], reservedSlugs = []) {
   if (!targetSlug) return false;
-  if (existingFiles.includes(targetSlug)) return true;
+  if (existingFiles.includes(targetSlug) || reservedSlugs.includes(targetSlug)) return true;
   return data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword);
 }
 
@@ -178,6 +179,25 @@ async function fetchPageRows(config) {
   }
 }
 
+const isShopUrl = (url) => {
+  try {
+    const path = new URL(url).pathname;
+    return path === '/shop' || path.startsWith('/shop/');
+  } catch {
+    return false;
+  }
+};
+
+// Queries whose every GSC row sits on a /shop URL (page/query rows, keys [page, query]).
+function shopOnlyQueries(pageRows) {
+  const onShop = new Map();
+  for (const { keys: [page, query] = [] } of pageRows) {
+    if (!page || !query) continue;
+    onShop.set(query, (onShop.get(query) ?? true) && isShopUrl(page));
+  }
+  return new Set([...onShop].filter(([, only]) => only).map(([query]) => query));
+}
+
 async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], pageRows = [], cwd }) {
   const existingTitles = getExistingTitles(config.landing_path, cwd);
   const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
@@ -187,9 +207,16 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
   // stronger candidate than one with 3 clicks and 12 impressions. Rank by
   // impressions before the run's candidate budget cuts the list.
   const ranked = [...candidates].sort((a, b) => b.impressions - a.impressions);
+  const shopQueries = config.overlays ? shopOnlyQueries(pageRows) : new Set();
   for (const row of ranked.slice(0, MAX_GSC_CANDIDATES)) {
     const existing = data.keywords.find(k => k.keyword === row.keyword);
     if (existing?.score != null) continue;
+
+    // Queries that only product and category pages answer belong to the overlays, not to a new topic page.
+    if (shopQueries.has(row.keyword)) {
+      console.log(chalk.gray(`  Shop query: "${row.keyword}" is answered by a /shop page, skipping`));
+      continue;
+    }
 
     // Word-order variants of something we already have or already proposed.
     const duplicate = findTokenSetDuplicate(row.keyword, [...knownKeywords, ...existingSlugs, ...existingFiles]);
@@ -259,7 +286,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       continue;
     }
 
-    if (isSlugTaken(result.target_slug, row.keyword, data, existingFiles)) {
+    if (isSlugTaken(result.target_slug, row.keyword, data, existingFiles, config.reserved_slugs)) {
       console.log(chalk.gray(`  Slug collision: ${result.target_slug} already taken, skipping ${row.keyword}`));
       continue;
     }
@@ -282,7 +309,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
   }
 }
 
-async function discoverGreenfield({ config, data, existingSlugs, existingFiles = [], cwd }) {
+async function discoverGreenfield({ config, data, existingSlugs, existingFiles = [], cwd, catalog = null }) {
   const existingLandings = getExistingTitles(config.landing_path, cwd);
 
   const prompt = fillTemplate(GREENFIELD_PROMPT, {
@@ -290,6 +317,8 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
     existing_slugs: existingSlugs.join(', ') || 'none',
     existing_landings: existingLandings.join(', ') || 'none',
     locale: config.locale || 'de',
+    catalog: formatCatalog(catalog),
+    contract: pageRulesSection(config.page_contract, catalog),
   });
 
   let suggestions;
@@ -331,7 +360,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
       continue;
     }
 
-    if (isSlugTaken(kw.target_slug, kw.keyword, data, existingFiles)) {
+    if (isSlugTaken(kw.target_slug, kw.keyword, data, existingFiles, config.reserved_slugs)) {
       console.log(chalk.gray(`  Slug collision: ${kw.target_slug} already taken, skipping ${kw.keyword}`));
       continue;
     }

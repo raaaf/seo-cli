@@ -110,6 +110,8 @@ jobs:
 
 **Optional secret:** `SEO_NOTIFY_WEBHOOK` receives one report per run (see Run report). Without it the run ends with a visible `::warning::`.
 
+**Optional input:** `op_vault` (under `with:`, default `development`) names the 1Password vault of the shared `seo-cli` item. With the default only `ANTHROPIC_API_KEY` and `SERPAPI_KEY` come from 1Password. Any other vault (e.g. `Bots`) also supplies `GSC_CREDENTIALS`, `GSC_TOKEN`, `SEO_NOTIFY_WEBHOOK` and `CLAUDE_CODE_OAUTH_TOKEN` from `op://<op_vault>/seo-cli/<FIELD>`; a repo secret of the same name wins, and the caller then needs only `OP_SERVICE_ACCOUNT_TOKEN`. The webhook and the Claude token load in a separate non-fatal step, so a field that is not in the item yet does not stop the run. `GSC_CREDENTIALS` and `GSC_TOKEN` are no longer `required` secrets: the Google step fails with a clear message when neither a secret nor 1Password delivers them. `mode: watch` loads only the Google pair (and the webhook) from a non-default vault.
+
 **Optional input:** `mode: watch` (under `with:`, default `run`) runs the daily guard instead of the pipeline: checkout, Google credentials, `seo watch --commit --report`, notify. No 1Password or direct secrets, no Claude Code, no run, no gate. Expose it as a `workflow_dispatch` input and run it daily from the scheduler (n8n triggers it at 07:00, `mode=run` on Thursdays). The seo-cli checkout has no `ref`: the `@main` pin in the project fixes only the workflow file, the code is always `main`.
 
 **Optional input:** `require_review: true` (under `with:`) disables auto-merge
@@ -196,6 +198,31 @@ clusters:
   - event-planning
   - party-organization
 ```
+
+### Shop projects: page contract, catalog, overlays
+
+All of these are optional. Without them every rule above stays as it was.
+
+```yaml
+catalog_url: https://shop.example.com/seo/catalog.json  # machine-readable catalog, the fact source
+page_contract:                    # project rules on top of the landing format
+  body_words: [300, 600]          # replaces the 800-1400 range (both bounds are errors)
+  require: [products]             # extra required frontmatter fields
+  forbid: [steps, checklist]      # fields that must not appear
+  products: { min: 3, max: 8, max_overlap: 0.6 }  # slugs from the catalog; share shared with any existing page
+  lowercase: true                 # hero, tldr, headings, FAQ, meta in lowercase
+  meta_title_suffix: " . brand"   # the site appends this; meta_title max shrinks by its length
+  facts_denylist: ['\\d+\\s*(€|eur)']  # regexes that fail unless the catalog states the match word for word
+reserved_slugs: [admin, cart]     # one-segment paths the site already serves, never used as a slug
+overlays:                         # shop meta and intro per product / category, see below
+  products: content/seo/products
+  categories: content/seo/categories
+watch: { check_deploy: true }     # not_deployed alert for merged pages and overlays (opt-in)
+```
+
+**Catalog:** `loadCatalog` (`src/lib/catalog.js`) fetches `catalog_url` once per process (`safeFetch`, 10 s) and checks the shape (`version: 1`, `shipping`, `categories`, `products` with `slug`, `title`, `category`, `url`, `description`, `material`, `sizes`). `seo run` skips discover and generate with a warning while it is unreachable; `seo check` fails. The catalog goes into the generate and greenfield prompts together with the contract rules.
+
+**Overlays:** a product or category page of the shop gets `meta_title`, `meta_description` and `intro` from `<overlays.products>/<slug>.md` or `<overlays.categories>/<key>.md` (frontmatter only, no body). `src/steps/overlay.js` writes them with Sonnet (`overlay.md`, JSON schema, batch unless disabled), validates them with `validateOverlay` (lengths, `intro` 40 to 120 words, category at most 60, lowercase, denylist, em-dash and emoji, target still in the catalog) and opens one PR per run on `seo/improve/product-<slug>` or `seo/improve/category-<key>`. Overlays do not count against `max_new_pages_per_month`. They use the improve slot: first a rewrite of a landing page, otherwise an overlay. Once GSC shows `/shop/` traffic the overlay page with the strongest case is rewritten (same scoring as landing pages). Before that (start mode: no GSC row with `/shop/` in the path in the last 28 days) a product without an overlay gets one, in catalog order. `improvements.json` and `changes.json` key overlays as `product:<slug>` and `category:<key>`; `urlToSlug` maps `/shop/<slug>` and `/shop?category=<key>` to those keys, and overlays are measured against overlay controls only.
 
 ## State files (per project)
 

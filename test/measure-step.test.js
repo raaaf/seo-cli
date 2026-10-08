@@ -242,4 +242,38 @@ describe('measure-step: failures and dry run', () => {
     expect(report.measured).toBe(2);
     expect(readFileSync(join(dir, CHANGES_FILE), 'utf8')).toBe(before);
   });
+
+  it('measures an overlay against overlay controls only, never against landing pages', async () => {
+    const config = { ...CONFIG, overlays: { products: 'content/seo/products' } };
+    const shop = (slug) => `https://a.de/shop/${slug}`;
+    const products = Array.from({ length: 14 }, (_, i) => `p-${i}`);
+    const level = (stage) => Object.fromEntries(products.map((s, i) => [shop(s), [stage === 'baseline' ? 1000 : 1000 + i * 8]]));
+    seed(entry({ slug: 'product:target', urls: [shop('target')] }));
+    mockGsc({
+      baseline: { [shop('target')]: [1000], ...level('baseline'), ...controlsAt(1000, 'baseline') },
+      d28: { [shop('target')]: [3000], ...level('after'), ...controlsAt(1000, 'after') },
+      d56: { [shop('target')]: [1050], ...level('after'), ...controlsAt(1000, 'after') },
+    });
+
+    await run({ config });
+
+    const [saved] = loadChanges(dir).entries;
+    expect(saved.readings.d28).toMatchObject({ verdict: 'positive', controls: 14 });
+  });
+
+  it('measures a landing page rewrite without shop pages as controls', async () => {
+    const config = { ...CONFIG, overlays: { products: 'content/seo/products' } };
+    const shop = (slug) => `https://a.de/shop/${slug}`;
+    const noise = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [shop(`p-${i}`), [1000]]));
+    seed(entry());
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...noise, ...controlsAt(1000, 'baseline') },
+      d28: { [url('target')]: [3000], ...noise, ...controlsAt(1000, 'after') },
+      d56: { [url('target')]: [1050], ...noise, ...controlsAt(1000, 'after') },
+    });
+
+    await run({ config });
+
+    expect(loadChanges(dir).entries[0].readings.d28).toMatchObject({ verdict: 'positive', controls: 14 });
+  });
 });

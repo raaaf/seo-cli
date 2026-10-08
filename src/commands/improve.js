@@ -14,6 +14,8 @@ import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
+import { prepareOverlay } from '../steps/overlay.js';
+import { loadCatalog, contractOptions } from '../lib/catalog.js';
 
 /**
  * Selects the one existing page with the strongest case (or takes the one named
@@ -34,35 +36,55 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
 
   if (!opts.slug && (opts.mergeFrom?.length || opts.brief)) throw new Error('--merge-from and --brief need --slug');
 
-  let page;
-  if (opts.slug) {
-    const brief = opts.brief ? readFileSync(join(cwd, opts.brief), 'utf8') : null;
-    page = targetedPage({ slug: opts.slug, mergeFrom: opts.mergeFrom ?? [], brief }, config, cwd);
-  } else {
-    let rows;
+  // Overlays also need the performance rows, so they are fetched outside the targeted path.
+  let rows = null;
+  const targeted = Boolean(opts.slug);
+  if (!targeted) {
     try {
       rows = await fetchPagePerformance(config);
     } catch (e) {
       console.log(chalk.yellow(`  Search Console unavailable: ${e.message}`));
       return null;
     }
+  }
+
+  // Shop projects: the catalog backs the page contract. Unreachable means no overlay and no product check.
+  let catalog = opts.catalog ?? null;
+  if (!catalog && config.catalog_url) {
+    try {
+      catalog = await loadCatalog(config);
+    } catch (e) {
+      console.log(chalk.yellow(`  ${e.message}`));
+    }
+  }
+
+  let page;
+  if (targeted) {
+    const brief = opts.brief ? readFileSync(join(cwd, opts.brief), 'utf8') : null;
+    page = targetedPage({ slug: opts.slug, mergeFrom: opts.mergeFrom ?? [], brief }, config, cwd);
+  } else {
     page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)) });
   }
 
   if (!page) {
     console.log(chalk.gray('  No page qualifies: not enough impressions, or everything eligible was rewritten recently.'));
+    // Nothing to rewrite on a landing page: an overlay (shop meta and intro) takes the slot.
+    if (config.overlays && !opts.skipOverlays) return prepareOverlay({ config, cwd, rows, catalog, dryRun });
     return null;
   }
 
   const before = readMeta(page.slug, config, cwd);
   const keywordLike = keywordFor(page);
-  const validateOpts = strictValidateOpts(config, join(cwd, localeLandingPath(config, defaultLocale(config))), [page.slug, ...(page.mergeFrom ?? [])]);
+  const validateOpts = {
+    ...strictValidateOpts(config, join(cwd, localeLandingPath(config, defaultLocale(config))), [page.slug, ...(page.mergeFrom ?? [])]),
+    ...contractOptions(config, catalog, cwd, defaultLocale(config)),
+  };
 
   // Two attempts, same as generate. A rewrite costs a full Opus call, and a
   // single hard error (one word over the tldr limit) is not worth losing it.
   let filePath, markdown, result;
   for (let attempt = 1; attempt <= 2; attempt++) {
-    ({ filePath, markdown } = await improvePage(page, config, cwd, attempt > 1 ? result : null));
+    ({ filePath, markdown } = await improvePage(page, config, cwd, attempt > 1 ? result : null, validateOpts));
     result = validate(markdown, keywordLike, validateOpts);
     if (result.ok) break;
   }
@@ -131,7 +153,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
  * Returns the PR url, or null when skipped.
  */
 export async function publishImprove(prepared, { config, cwd = process.cwd(), warnings = [] }) {
-  const branch = `seo/improve/${prepared.slug}`;
+  const branch = prepared.branch ?? `seo/improve/${prepared.slug}`;
 
   try {
     await createBranchAndCommit({ files: prepared.files, message: prepared.commitMessage, cwd, repo: config.repo, branch });
