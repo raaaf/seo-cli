@@ -16,6 +16,7 @@ import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { prepareOverlay } from '../steps/overlay.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
+import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
 
 /**
  * Selects the one existing page with the strongest case (or takes the one named
@@ -63,7 +64,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     const brief = opts.brief ? readFileSync(join(cwd, opts.brief), 'utf8') : null;
     page = targetedPage({ slug: opts.slug, mergeFrom: opts.mergeFrom ?? [], brief }, config, cwd);
   } else {
-    page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)) });
+    page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)), engagement: await loadEngagement(config, cwd, dryRun) });
   }
 
   if (!page) {
@@ -142,6 +143,19 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       counterpart,
     }),
   };
+}
+
+// Rybbit stats of the default-locale pages by slug, null without Rybbit or without data (GSC alone decides then).
+async function loadEngagement(config, cwd, dryRun) {
+  const warnings = [];
+  if (!rybbitActive(config, warnings)) {
+    warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
+    return null;
+  }
+  const { report, pages } = await rybbitReport({ config, cwd, dryRun, warnings });
+  warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
+  if (report.error) return null;
+  return Object.fromEntries(pages.filter(p => p.locale === defaultLocale(config)).map(p => [p.slug, p]));
 }
 
 /**

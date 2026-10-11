@@ -309,6 +309,52 @@ describe('selectPage', () => {
   });
 });
 
+describe('selectPage with Rybbit engagement', () => {
+  // preise (snippet, 420) beats kontakt (near page one, 400) on GSC alone; a 1.25 bonus flips that.
+  const rows = [
+    { url: 'https://acme.io/preise', query: 'preise', position: 2, impressions: 140, clicks: 0 },
+    { url: 'https://acme.io/kontakt', query: 'kontakt', position: 12, impressions: 200, clicks: 2 },
+  ];
+  const stats = (over) => ({ entries: 30, macro: 0, micro: 0, ...over });
+  const pick = (kontakt, extra = {}) => { seedPages('preise', 'kontakt'); return selectPage({ rows, config, cwd, engagement: { kontakt, ...extra } }); };
+
+  it('boosts a qualified page with 30 entries and known zero conversions, and says so in the reason', () => {
+    const page = pick(stats());
+    expect(page.slug).toBe('kontakt');
+    expect(page.score).toBe(500);
+    expect(page.reason).toContain('Rybbit: 30 entries, 0 conversions, bonus x1.25');
+  });
+
+  it('gives no bonus at 29 entries and logs why', () => {
+    const page = pick(stats({ entries: 29 }), { preise: stats({ entries: 29 }) });
+    expect(page.slug).toBe('preise');
+    expect(page.reason).toContain('Rybbit: 29 entries, 0 conversions, no bonus');
+  });
+
+  it.each([
+    ['one main conversion', { macro: 1 }],
+    ['one side conversion', { micro: 1 }],
+    ['an unmeasured main goal', { macro: null }],
+    ['an unmeasured side goal', { micro: null }],
+    ['both goals unmeasured', { macro: null, micro: null }],
+  ])('gives no bonus with %s', (_name, over) => {
+    expect(pick(stats(over)).slug).toBe('preise');
+  });
+
+  it('treats a page without Rybbit entries as unknown, not as a candidate for the bonus', () => {
+    const page = pick(undefined, { preise: undefined });
+    expect(page.slug).toBe('preise');
+    expect(page.reason).toContain('Rybbit: 0 entries, unknown conversions, no bonus');
+  });
+
+  it('leaves selection and reason untouched without engagement data', () => {
+    seedPages('preise', 'kontakt');
+    const page = selectPage({ rows, config, cwd });
+    expect(page.slug).toBe('preise');
+    expect(page.reason).not.toContain('Rybbit');
+  });
+});
+
 describe('improvePage prompt', () => {
   beforeEach(() => { complete.mockReset(); validateOverride.mockReset(); });
 
@@ -324,6 +370,23 @@ describe('improvePage prompt', () => {
 
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toContain('not estimates');
+  });
+
+  it('adds the engagement block only for a page with entries, and the prompt without it has no trace of it', async () => {
+    seedPages('preise');
+    complete.mockResolvedValue('---\nslug: preise\n---\nbody');
+    const page = { slug: 'preise', kind: 'snippet', reason: 'test', impressions: 100, clicks: 0, bestPosition: 3, queries: [] };
+
+    await improvePage(page, config, cwd);
+    await improvePage({ ...page, engagement: { entries: 40, bounce_rate: 61.5, time_on_page: 12, ai_entries: 2, macro: 0, micro: null } }, config, cwd);
+    await improvePage({ ...page, engagement: { entries: 0, macro: null, micro: null } }, config, cwd);
+
+    const [plain, withData, zero] = complete.mock.calls.map(c => c[0].prompt);
+    expect(plain).not.toContain('Rybbit');
+    expect(plain).not.toContain('{{');
+    expect(withData).toContain('Entries (sessions starting here): 40, bounce rate: 61.5%, time on page: 12 s, main goal conversions: 0, side goal conversions: not measured, entries from AI search: 2.');
+    expect(withData.replace(/\n\n## What visitors do on the page[^\n]*\n\n[^\n]*/, '')).toBe(plain);
+    expect(zero).toBe(plain);
   });
 
   it('puts contract rules and the catalog into the prompt, and leaves the prompt without them unchanged', async () => {

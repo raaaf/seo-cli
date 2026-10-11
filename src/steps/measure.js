@@ -1,16 +1,18 @@
 import chalk from 'chalk';
 import { defaultLocale } from '../lib/config.js';
-import { getExistingSlugs } from '../lib/landings.js';
 import { loadChanges, saveChanges } from '../lib/changes.js';
 import { queryPageTotals } from '../lib/gsc.js';
 import { format } from '../lib/date.js';
 import { parseOverlayKey } from '../lib/improvements.js';
+import { rybbitActive, landingSlugs, getRybbitStats, readingStats } from '../lib/signals/rybbit.js';
 import {
-  windowsFor, isDue, normalizeUrl, urlToSlug, aggregatePages, sumMetrics, selectControls,
+  addDays, windowsFor, isDue, normalizeUrl, urlToSlug, aggregatePages, sumMetrics, selectControls,
   verdictFor, isOverlap, isRevertCandidate,
 } from '../lib/measure.js';
 
 const READINGS = ['d28', 'd56'];
+// Readings older than this are not completed with Rybbit values afterwards.
+const BACKFILL_DAYS = 90;
 const NONE = { clicks: 0, impressions: 0, ctr: 0, position: 0 };
 
 /**
@@ -22,10 +24,8 @@ const NONE = { clicks: 0, impressions: 0, ctr: 0, position: 0 };
 export async function measure({ config, cwd = process.cwd(), dryRun = false, warnings = [], today = format(new Date()) }) {
   const changes = loadChanges(cwd);
   const def = defaultLocale(config);
-  const slugsByLocale = { [def]: getExistingSlugs(config, cwd, def) };
-  if (config.counterpart_locale && config.counterpart_locale !== def) {
-    slugsByLocale[config.counterpart_locale] = getExistingSlugs(config, cwd, config.counterpart_locale);
-  }
+  const slugsByLocale = landingSlugs(config, cwd);
+  const rybbitOn = rybbitActive(config, warnings);
 
   // Known landing pages with their totals in one window. A window without a single
   // impression means a wrong property or an outage, never a measurement.
@@ -46,7 +46,20 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
   const isMapped = (url) => urlToSlug(url, config, slugsByLocale) !== null;
   const isUnmapped = (entry) => entry.kind === 'new' ? !entry.urls.some(isMapped) : !isMapped(entry.urls[0]);
 
+  // Rybbit values of an entry's pages in a reading window. Never throws: `null` marks a gap for the backfill.
+  async function rybbitFor(entry, window) {
+    const keys = new Set(entry.urls.map(u => urlToSlug(u, config, slugsByLocale)).filter(Boolean).map(p => `${p.locale}:${p.slug}`));
+    const stats = await getRybbitStats({ config, cwd, window, slugsByLocale, warnings, dryRun, goalKeys: keys, sources: false });
+    return stats.error ? null : readingStats(stats.pages, keys);
+  }
+
+  // Every reading carries its Rybbit values (the GSC verdict never depends on them).
   async function measureEntry(entry, key) {
+    const reading = await measureGsc(entry, key);
+    return rybbitOn ? { ...reading, rybbit: await rybbitFor(entry, reading.window) } : reading;
+  }
+
+  async function measureGsc(entry, key) {
     const windows = windowsFor(entry.merged_at);
     const window = windows[key];
     const reading = { measured_at: today, window };
@@ -86,6 +99,7 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
 
   let due = 0;
   let dirty = false;
+  const fresh = new Set();
   const changed = [];
   for (const entry of changes.entries) {
     const windows = windowsFor(entry.merged_at);
@@ -101,6 +115,7 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
       due++;
       try {
         entry.readings[key] = await measureEntry(entry, key);
+        fresh.add(entry.readings[key]);
         dirty = true;
         changed.push({ slug: entry.slug, kind: entry.kind, reading: key, verdict: entry.readings[key].verdict ?? null });
       } catch (e) {
@@ -108,6 +123,15 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
       }
       // d56 only after d28 exists, so the revert rule sees both readings in order.
       if (!entry.readings[key]) break;
+    }
+    // Gaps from an earlier Rybbit outage: only the field is filled in, verdict and GSC values stay.
+    if (rybbitOn && !entry.unmapped) {
+      for (const key of READINGS) {
+        const reading = entry.readings[key];
+        if (reading?.rybbit !== null || fresh.has(reading) || reading.window.endDate < addDays(today, -BACKFILL_DAYS)) continue;
+        reading.rybbit = await rybbitFor(entry, reading.window);
+        if (reading.rybbit !== null) dirty = true;
+      }
     }
     if (entry.kind === 'rewrite' && !entry.revert_candidate && isRevertCandidate(entry)) {
       entry.revert_candidate = true;

@@ -18,6 +18,8 @@ export function loadConfig(cwd = process.cwd()) {
   }
   normalizeShopKeys(config);
   config.bing = { ...DEFAULTS.bing, ...(isPlainObject(config.bing) ? config.bing : {}) };
+  config.rybbit = { ...DEFAULTS.rybbit, ...(isPlainObject(config.rybbit) ? config.rybbit : {}) };
+  if (!Array.isArray(config.rybbit.micro_goals)) config.rybbit.micro_goals = [];
   return config;
 }
 
@@ -127,6 +129,9 @@ export const DEFAULTS = {
   // Bing Webmaster as a second signal source (needs BING_WEBMASTER_KEY): crawl checks in the watcher,
   // query questions for discover and generate. site_url overrides base_url as Bing knows the site.
   bing: { enabled: false, site_url: null },
+  // Rybbit analytics as a signal source (needs RYBBIT_API_KEY): entries, bounce rate, goals and AI visitors per
+  // landing page. Goals are named as in Rybbit; macro_goal is the main goal, micro_goals the smaller ones.
+  rybbit: { enabled: false, url: null, site_id: null, macro_goal: null, micro_goals: [] },
 };
 
 export function isStrict(config) {

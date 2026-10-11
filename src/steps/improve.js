@@ -22,6 +22,9 @@ const STRICT_RULES = { structure_rule: '', sources_rule: `\n- ${SOURCES_RULE} Ad
 
 // A page needs enough impressions for the numbers to mean anything.
 const MIN_IMPRESSIONS = 20;
+// Rybbit: a page that is entered often and converts nowhere is worth more than its GSC score says.
+const ENGAGEMENT_MIN_ENTRIES = 30;
+const ENGAGEMENT_BONUS = 1.25;
 // Queries handed to the model. Beyond this the tail is noise.
 const MAX_QUERIES = 15;
 
@@ -139,6 +142,24 @@ export function scorePage({ impressions, clicks, bestPosition, queries }) {
 }
 
 /**
+ * Rybbit bonus on a GSC candidate: enough entries and known zero conversions (main and side goals,
+ * `null` means not measured and never counts as zero). The reason always says what Rybbit showed,
+ * also when no bonus applies, so the threshold can be judged from the logs later.
+ */
+function withEngagement(page, stats) {
+  const entries = stats?.entries ?? 0;
+  const known = stats && stats.macro !== null && stats.micro !== null;
+  const conversions = known ? stats.macro + stats.micro : 'unknown';
+  const bonus = entries >= ENGAGEMENT_MIN_ENTRIES && known && conversions === 0;
+  return {
+    ...page,
+    score: bonus ? page.score * ENGAGEMENT_BONUS : page.score,
+    reason: `${page.reason}; Rybbit: ${entries} entries, ${conversions} conversions, ${bonus ? `bonus x${ENGAGEMENT_BONUS}` : 'no bonus'}`,
+    engagement: stats ?? null,
+  };
+}
+
+/**
  * Aggregate GSC rows per landing page of the default locale and return the one
  * with the best case for a rewrite, or null when nothing qualifies.
  *
@@ -149,7 +170,7 @@ export function scorePage({ impressions, clicks, bestPosition, queries }) {
  * never touch. Service and pricing pages are written by hand and carry claims the
  * model has no way to verify, so a well-meant rewrite is pure downside there.
  */
-export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set() }) {
+export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set(), engagement = null }) {
   const locale = defaultLocale(config);
   const known = new Set(getExistingSlugs(config, cwd, locale));
   const excluded = new Set(config.exclude_slugs || []);
@@ -201,6 +222,7 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
     .filter(page => !cooldown.has(page.slug) && !excluded.has(page.slug))
     .map(page => ({ ...page, ...(scorePage(page) ?? {}) }))
     .filter(page => page.score)
+    .map(page => (engagement ? withEngagement(page, engagement[page.slug]) : page))
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];
@@ -245,6 +267,13 @@ export function targetedPage({ slug, mergeFrom = [], brief = null }, config, cwd
 /** The keyword the validator checks a rewrite of this page against. */
 export function keywordFor(page) {
   return { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
+}
+
+// Numbers only, and only when the page had entries; empty keeps the prompt byte-identical.
+function engagementBlock(stats) {
+  if (!stats?.entries) return '';
+  const count = (n) => (n === null ? 'not measured' : n);
+  return `\n\n## What visitors do on the page (Rybbit, last 4 weeks)\n\nEntries (sessions starting here): ${stats.entries}, bounce rate: ${stats.bounce_rate ?? 'n/a'}%, time on page: ${stats.time_on_page ?? 'n/a'} s, main goal conversions: ${count(stats.macro)}, side goal conversions: ${count(stats.micro)}, entries from AI search: ${stats.ai_entries}.`;
 }
 
 /** Rewrite one page against the queries it actually ranks for. */
@@ -294,6 +323,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     impressions: page.impressions,
     clicks: page.clicks,
     best_position: page.bestPosition.toFixed(1),
+    engagement: engagementBlock(page.engagement),
     gsc_guardrail: GSC_GUARDRAIL,
     ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
     style_guide: loadStyleDoc(config, cwd),

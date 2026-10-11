@@ -25,6 +25,7 @@ import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { validate } from '../steps/validate.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { refreshBingQueries } from '../lib/signals/bing.js';
+import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
 import { prepareImprove, publishImprove } from './improve.js';
 import { createPRs } from '../steps/pr.js';
@@ -434,10 +435,17 @@ export async function runCommand(opts) {
       report.warnings.push(`Measurement failed: ${e.message}`);
     }
 
+    // 1b2. Rybbit weekly signals per landing page. Never stops the run; a failure shows up in the mail as a task.
+    let rybbit = null;
+    if (rybbitActive(config, report.warnings)) {
+      rybbit = await rybbitReport({ config, cwd, dryRun, warnings: report.warnings });
+      report.rybbit = rybbit.report;
+    }
+
     // 1c. Content assessment of index alerts the daily watcher found technically clean.
     try {
       report.assessments_waiting = [];
-      report.assessments = await assessAlerts({ config, cwd, dryRun, warnings: report.warnings, waiting: report.assessments_waiting });
+      report.assessments = await assessAlerts({ config, cwd, dryRun, warnings: report.warnings, waiting: report.assessments_waiting, engagement: rybbit?.pages ?? [] });
     } catch (e) {
       rethrowIfBudget(e);
       report.warnings.push(`Assessment failed: ${e.message}`);
