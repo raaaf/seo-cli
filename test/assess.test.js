@@ -305,6 +305,26 @@ describe('assess', () => {
       expect(prompt).toMatch(/<<<UNTRUSTED_LINKS_START>>>[\s\S]*<<<UNTRUSTED_LINKS_END>>>/);
     });
 
+    it('adds the Rybbit behaviour of the first URL only when it had entries, otherwise the prompt is unchanged', async () => {
+      seed([deindexed('a')]);
+      const stat = (slug, entries) => ({ url: url(slug), entries, bounce_rate: 61.5, time_on_page: 12 });
+
+      await assess({ dryRun: true, engagement: [stat('a', 40), stat('b', 0)] });
+      await assess({ dryRun: true });
+
+      const [withData, plain] = complete.mock.calls.map(c => c[0].prompt);
+      expect(withData).toContain('Visitor behaviour on the first URL (Rybbit, last 4 weeks): 40 entries (sessions starting on the page), bounce rate 61.5%, time on page 12 s.');
+      expect(plain).not.toContain('Rybbit');
+      expect(plain).not.toContain('{{');
+      expect(withData.replace(/\n\nVisitor behaviour[^\n]*/, '')).toBe(plain);
+    });
+
+    it('adds no Rybbit text for a page with 0 entries', async () => {
+      seed([deindexed('a')]);
+      await assess({ engagement: [{ url: url('a'), entries: 0, bounce_rate: null, time_on_page: null }] });
+      expect(complete.mock.calls[0][0].prompt).not.toContain('Rybbit');
+    });
+
     it('warns once and notes it in the prompt when the home page cannot be fetched', async () => {
       seed([deindexed('a'), deindexed('b')]);
       const fetch = async (u) => { if (u === 'https://a.de') throw new Error('down'); return page(); };

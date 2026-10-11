@@ -6,6 +6,9 @@ import { tmpdir } from 'os';
 const queryPageTotals = vi.fn();
 vi.mock('../src/lib/gsc.js', () => ({ queryPageTotals: (...a) => queryPageTotals(...a) }));
 
+vi.mock('../src/lib/safe-fetch.js', () => ({ assertPublicUrl: vi.fn(async () => {}) }));
+
+const { resetRybbitGuard } = await import('../src/lib/rybbit.js');
 const { measure } = await import('../src/steps/measure.js');
 const { windowsFor } = await import('../src/lib/measure.js');
 const { loadChanges, saveChanges, CHANGES_FILE } = await import('../src/lib/changes.js');
@@ -275,5 +278,133 @@ describe('measure-step: failures and dry run', () => {
     await run({ config });
 
     expect(loadChanges(dir).entries[0].readings.d28).toMatchObject({ verdict: 'positive', controls: 14 });
+  });
+});
+
+describe('measure-step: rybbit', () => {
+  const RYBBIT = { enabled: true, url: 'https://t.example.org', site_id: 3, macro_goal: 'Signup', micro_goals: [] };
+  const goals = [{ goalId: 1, name: 'Signup', total_conversions: 4, total_sessions: 50 }];
+  let fetchMock, status;
+
+  const runWith = (over = {}) => run({ config: { ...CONFIG, rybbit: RYBBIT }, ...over });
+  const baseOf = (reading) => Object.fromEntries(Object.entries(reading).filter(([k]) => k !== 'rybbit'));
+  const readingsOf = () => loadChanges(dir).entries.map(e => e.readings.d28);
+
+  beforeEach(() => {
+    process.env.RYBBIT_API_KEY = 'k';
+    resetRybbitGuard();
+    status = 200;
+    fetchMock = vi.fn(async (rawUrl) => {
+      const u = new URL(rawUrl);
+      const body = u.pathname.endsWith('/goals')
+        ? { data: goals }
+        : { data: { data: u.searchParams.has('filters') ? [] : [{ value: '/target', count: 12, bounce_rate: 50, time_on_page_seconds: 30 }, { value: '/fresh', count: 12, bounce_rate: 50, time_on_page_seconds: 30 }] } };
+      return { status, ok: status < 300, json: async () => body };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    delete process.env.RYBBIT_API_KEY;
+    vi.unstubAllGlobals();
+  });
+
+  const scenarios = {
+    'a rewrite with a verdict': () => {
+      seed(entry());
+      mockGsc({ baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline') }, d28: { [url('target')]: [3000], ...controlsAt(1000, 'after') } });
+      return '2026-09-15';
+    },
+    'a new page': () => {
+      seed(entry({ id: 'pr3', kind: 'new', slug: 'fresh', urls: [url('fresh')], pr_url: 'pr3' }));
+      mockGsc({ d28: { [url('fresh')]: [10] } });
+      return '2026-09-15';
+    },
+    'an overlap': () => {
+      seed(entry(), entry({ id: 'pr2', urls: [url('target')], pr_url: 'pr2', merged_at: '2026-08-10' }));
+      return '2026-09-20';
+    },
+    'a missing target': () => {
+      seed(entry());
+      mockGsc({ baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline') }, d28: { ...controlsAt(1000, 'after') } });
+      return '2026-09-15';
+    },
+  };
+
+  it.each(Object.keys(scenarios))('attaches the Rybbit values to %s', async (name) => {
+    const today = scenarios[name]();
+
+    await runWith({ today });
+
+    const [first] = readingsOf();
+    expect(first.rybbit).toMatchObject({ entries: 12, macro: 4, micro: 0 });
+  });
+
+  it('adds no field without rybbit.enabled', async () => {
+    const today = scenarios['a rewrite with a verdict']();
+
+    await run({ today });
+
+    expect(readingsOf()[0]).not.toHaveProperty('rybbit');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('stores null during an outage, then fills in only the field later and never touches the verdict', async () => {
+    const today = scenarios['a rewrite with a verdict']();
+    status = 503;
+    await runWith({ today });
+    const [gap] = readingsOf();
+    expect(gap.rybbit).toBeNull();
+    expect(gap.verdict).toBe('positive');
+
+    status = 200;
+    resetRybbitGuard();
+    queryPageTotals.mockClear();
+    await runWith({ today });
+
+    const [filled] = readingsOf();
+    expect(filled.rybbit).toMatchObject({ entries: 12 });
+    expect(baseOf(filled)).toEqual(baseOf(gap));
+    expect(queryPageTotals).not.toHaveBeenCalled();
+  });
+
+  it('also refills a reading whose macro or micro is null, and leaves the verdict alone', async () => {
+    const today = scenarios['a rewrite with a verdict']();
+    await runWith({ today });
+    const [done] = readingsOf();
+    const e = loadChanges(dir);
+    e.entries[0].readings.d28.rybbit = { ...done.rybbit, macro: null, micro: null };
+    saveChanges(e, dir);
+    resetRybbitGuard();
+
+    await runWith({ today });
+
+    const [filled] = readingsOf();
+    expect(filled.rybbit).toMatchObject({ entries: 12, macro: 4, micro: 0 });
+    expect(baseOf(filled)).toEqual(baseOf(done));
+  });
+
+  it('does not retry a gap in the run that created it', async () => {
+    const today = scenarios['a rewrite with a verdict']();
+    const working = fetchMock.getMockImplementation();
+    fetchMock.mockImplementationOnce(async () => ({ status: 503, ok: false, json: async () => ({}) }));
+    fetchMock.mockImplementation(working);
+
+    await runWith({ today });
+
+    expect(readingsOf()[0].rybbit).toBeNull();
+  });
+
+  it('leaves gaps of readings whose window is older than 90 days', async () => {
+    const today = scenarios['a rewrite with a verdict']();
+    status = 503;
+    await runWith({ today });
+    status = 200;
+    resetRybbitGuard();
+    fetchMock.mockClear();
+
+    await runWith({ today: '2027-03-01' });
+
+    expect(readingsOf()[0].rybbit).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

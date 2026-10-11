@@ -124,6 +124,17 @@ describe('config-load: loadConfig', () => {
     expect(loadConfig(tmpDir).bing).toEqual({ enabled: false, site_url: null });
   });
 
+  it('keeps Rybbit off by default, merges a partial mapping and repairs a malformed goal list', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    const off = { enabled: false, url: null, site_id: null, macro_goal: null, micro_goals: [] };
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'project: x\n', 'utf8');
+    expect(loadConfig(tmpDir).rybbit).toEqual(off);
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'rybbit: { enabled: true, site_id: 3, micro_goals: Preise }\n', 'utf8');
+    expect(loadConfig(tmpDir).rybbit).toEqual({ ...off, enabled: true, site_id: 3 });
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'rybbit: 3\n', 'utf8');
+    expect(loadConfig(tmpDir).rybbit).toEqual(off);
+  });
+
   it('throws a config error naming the page_contract key with a wrong shape', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     writeFileSync(join(tmpDir, 'seo.config.yaml'), 'page_contract:\n  body_words: [300]\n', 'utf8');

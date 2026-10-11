@@ -16,7 +16,7 @@ Share of sitemap URLs indexed: {{indexed_share}}
 What Google reports for the affected URLs (Search Console URL Inspection, may be
 days old):
 
-{{url_facts}}
+{{url_facts}}{{engagement}}
 
 ## Recent changes
 

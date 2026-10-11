@@ -6,6 +6,7 @@ import { join, dirname } from 'path';
 // Paths are relative to cwd like budget.js: cwd is always the target project.
 export const SERP_SIGNALS_FILE = 'seo/signals/serp.json';
 export const BING_SIGNALS_FILE = 'seo/signals/bing.json';
+export const RYBBIT_SIGNALS_FILE = 'seo/signals/rybbit.json';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

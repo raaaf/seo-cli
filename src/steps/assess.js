@@ -138,6 +138,13 @@ function urlFacts(alert, entries) {
   }).join('\n');
 }
 
+// Visitor behaviour of the first URL from Rybbit, only when the page had entries; empty keeps the prompt unchanged.
+function engagementBlock(pageUrl, pages) {
+  const page = pages.find(p => trimSlash(p.url) === trimSlash(pageUrl));
+  if (!page?.entries) return '';
+  return `\n\nVisitor behaviour on the first URL (Rybbit, last 4 weeks): ${page.entries} entries (sessions starting on the page), bounce rate ${page.bounce_rate ?? 'n/a'}%, time on page ${page.time_on_page ?? 'n/a'} s. Visitors do arrive, so judge the content, not only the index state.`;
+}
+
 function recentChanges(cwd, today, warnings) {
   try {
     const since = addDays(today, -CHANGES_WINDOW_DAYS);
@@ -162,7 +169,7 @@ function recentChanges(cwd, today, warnings) {
  * new assessments with their `alert_id`. Alerts that wait for a recrawl after
  * the newest change (at most 28 days) are pushed into `waiting` as `{ alert_id, last_change }`.
  */
-export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false, warnings = [], waiting = [], today = format(new Date()), fetch = fetchForDiagnosis, gitLog = gitLogDefault, inspect = urls => fetchIndexStatus(config, urls) }) {
+export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false, warnings = [], waiting = [], today = format(new Date()), fetch = fetchForDiagnosis, gitLog = gitLogDefault, inspect = urls => fetchIndexStatus(config, urls), engagement = [] }) {
   const state = loadAlerts(cwd, warnings);
   // Almost no page text: the model would invent causes.
   const ledger = loadLedger(cwd);
@@ -227,6 +234,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         recent_commits,
         page_links,
         url_facts: urlFacts(alert, entries),
+        engagement: engagementBlock(pageUrl, engagement),
         page_text: stripHtml(page.html).split(/\s+/).slice(0, PAGE_WORDS).join(' '),
       });
       const parsed = await complete({

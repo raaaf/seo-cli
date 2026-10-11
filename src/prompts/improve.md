@@ -25,7 +25,7 @@ Over the last 28 days the page collected {{impressions}} impressions and
 {{query_table}}
 
 This table is the whole point of the exercise. It is what people typed, not what
-we assumed they would type when the page was written.
+we assumed they would type when the page was written.{{engagement}}
 
 ## The other pages on this site
 
