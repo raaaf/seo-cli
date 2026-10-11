@@ -71,6 +71,21 @@ describe('rybbitRequest', () => {
     expect(err).toMatchObject({ kind: 'unavailable', method: 'c' });
   });
 
+  it('plain errors (404) do not end the Rybbit calls, two 503s do', async () => {
+    fetchMock.mockResolvedValue(res(404));
+    await fails(rybbit.rybbitRequest(config, 'a'));
+    await fails(rybbit.rybbitRequest(config, 'b'));
+    await fails(rybbit.rybbitRequest(config, 'c'));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    rybbit.resetRybbitGuard();
+    fetchMock.mockClear().mockResolvedValue(res(503));
+    await fails(rybbit.rybbitRequest(config, 'a'));
+    await fails(rybbit.rybbitRequest(config, 'b'));
+    await fails(rybbit.rybbitRequest(config, 'c'));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('a success resets the failure count', async () => {
     fetchMock.mockResolvedValueOnce(res(500)).mockResolvedValueOnce(res(200, {})).mockResolvedValue(res(500));
     await fails(rybbit.rybbitRequest(config, 'a'));

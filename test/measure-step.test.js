@@ -367,6 +367,22 @@ describe('measure-step: rybbit', () => {
     expect(queryPageTotals).not.toHaveBeenCalled();
   });
 
+  it('also refills a reading whose macro or micro is null, and leaves the verdict alone', async () => {
+    const today = scenarios['a rewrite with a verdict']();
+    await runWith({ today });
+    const [done] = readingsOf();
+    const e = loadChanges(dir);
+    e.entries[0].readings.d28.rybbit = { ...done.rybbit, macro: null, micro: null };
+    saveChanges(e, dir);
+    resetRybbitGuard();
+
+    await runWith({ today });
+
+    const [filled] = readingsOf();
+    expect(filled.rybbit).toMatchObject({ entries: 12, macro: 4, micro: 0 });
+    expect(baseOf(filled)).toEqual(baseOf(done));
+  });
+
   it('does not retry a gap in the run that created it', async () => {
     const today = scenarios['a rewrite with a verdict']();
     const working = fetchMock.getMockImplementation();

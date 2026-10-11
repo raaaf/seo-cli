@@ -158,7 +158,7 @@ jobs:
 
       # Non-fatal like the others: without the field Rybbit is skipped with a warning (run mode only, the watcher does not use it).
       - name: Load Rybbit key from 1Password
-        if: env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
         continue-on-error: true
         uses: 1password/load-secrets-action@v4
         with:

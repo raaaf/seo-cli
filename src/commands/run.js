@@ -438,8 +438,14 @@ export async function runCommand(opts) {
     // 1b2. Rybbit weekly signals per landing page. Never stops the run; a failure shows up in the mail as a task.
     let rybbit = null;
     if (rybbitActive(config, report.warnings)) {
-      rybbit = await rybbitReport({ config, cwd, dryRun, warnings: report.warnings });
-      report.rybbit = rybbit.report;
+      try {
+        rybbit = await rybbitReport({ config, cwd, dryRun, warnings: report.warnings });
+        report.rybbit = rybbit.report;
+      } catch (e) {
+        rybbit = null;
+        report.warnings.push(`Rybbit: ${String(e.message).split('\n')[0]}`);
+        report.rybbit = { error: 'error' };
+      }
     }
 
     // 1c. Content assessment of index alerts the daily watcher found technically clean.

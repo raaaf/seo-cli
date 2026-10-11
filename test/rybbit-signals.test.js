@@ -197,6 +197,19 @@ describe('getRybbitStats', () => {
     expect(calls('goals').filter(([u]) => new URL(u).searchParams.has('filters'))).toHaveLength(10);
   });
 
+  it('a changed path set of a page is not served from the goals cache', async () => {
+    await run();
+    // The entry answer expires on its own (here: dropped) while the goals answers are still fresh.
+    const state = stored();
+    delete state.entries['3:2026-10-11:entry:2026-10-05'];
+    writeFileSync(join(dir, 'seo/signals/rybbit.json'), JSON.stringify(state));
+    answers.entry = [e('/alpha', 40), e('/alpha/', 5), e('/beta', 3)];
+    const before = calls('goals').filter(([u]) => new URL(u).searchParams.has('filters')).length;
+    await run({ now: new Date('2026-10-13T00:00:00Z') });
+    const after = calls('goals').filter(([u]) => new URL(u).searchParams.has('filters')).length;
+    expect(after).toBe(before + 1);
+  });
+
   it('goals for the given keys only', async () => {
     await run({ goalKeys: new Set(['de:beta']) });
     const filtered = calls('goals').filter(([u]) => new URL(u).searchParams.has('filters'));

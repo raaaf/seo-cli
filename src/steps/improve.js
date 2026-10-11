@@ -222,7 +222,7 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
     .filter(page => !cooldown.has(page.slug) && !excluded.has(page.slug))
     .map(page => ({ ...page, ...(scorePage(page) ?? {}) }))
     .filter(page => page.score)
-    .map(page => (engagement ? withEngagement(page, engagement[page.slug]) : page))
+    .map(page => (engagement ? withEngagement(page, Object.hasOwn(engagement, page.slug) ? engagement[page.slug] : undefined) : page))
     .sort((a, b) => b.score - a.score);
 
   const best = ranked[0];

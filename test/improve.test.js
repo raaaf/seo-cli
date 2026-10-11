@@ -347,6 +347,13 @@ describe('selectPage with Rybbit engagement', () => {
     expect(page.reason).toContain('Rybbit: 0 entries, unknown conversions, no bonus');
   });
 
+  it('does not read inherited object properties as engagement for a slug like constructor', () => {
+    seedPages('constructor');
+    const page = selectPage({ rows: [{ url: 'https://acme.io/constructor', query: 'x', position: 12, impressions: 200, clicks: 2 }], config, cwd, engagement: {} });
+    expect(page.engagement).toBeNull();
+    expect(page.reason).toContain('Rybbit: 0 entries, unknown conversions, no bonus');
+  });
+
   it('leaves selection and reason untouched without engagement data', () => {
     seedPages('preise', 'kontakt');
     const page = selectPage({ rows, config, cwd });

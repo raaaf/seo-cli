@@ -163,17 +163,17 @@ export function readingStats(pages, keys) {
  */
 export async function getRybbitStats({ config, cwd, window, slugsByLocale, warnings = [], dryRun = false, now = new Date(), goalKeys = null, sources = true }) {
   const site = config.rybbit.site_id;
-  const cached = async (kind, fetcher) => {
-    const key = `${site}:${window.endDate}:${kind}:${window.startDate}`;
+  const cached = async (kind, fetcher, variant = '') => {
+    const key = `${site}:${window.endDate}:${kind}:${window.startDate}${variant}`;
     const hit = getFresh(RYBBIT_SIGNALS_NAME, key, TTL_DAYS, now, { cwd, validate: Array.isArray });
     if (hit) return hit;
     const value = await fetcher();
     if (!dryRun) putSignal(RYBBIT_SIGNALS_NAME, key, value, now, { cwd, ttlDays: TTL_DAYS });
     return value;
   };
-  const optional = async (kind, fetcher) => {
+  const optional = async (kind, fetcher, variant) => {
     try {
-      return await cached(kind, fetcher);
+      return await cached(kind, fetcher, variant);
     } catch (e) {
       warnings.push(`Rybbit ${kind} unavailable: ${e.message}`);
       return null;
@@ -200,7 +200,8 @@ export async function getRybbitStats({ config, cwd, window, slugsByLocale, warni
     ? groups.filter((g, i) => (goalKeys ? goalKeys.has(g.key) : i < GOAL_TOP_PAGES || g.entries >= GOAL_MIN_ENTRIES))
     : [];
   raw.goals = {};
-  for (const g of wanted) raw.goals[g.key] = await optional(`goals:${g.key}`, () => goalsForEntry(config, window, g.paths));
+  // The paths are part of the key: a page that gained or lost a variant must not read the old answer.
+  for (const g of wanted) raw.goals[g.key] = await optional(`goals:${g.key}`, () => goalsForEntry(config, window, g.paths), `:${[...g.paths].sort().join(',')}`);
 
   const stats = pageStats(raw, config, slugsByLocale);
   const missing = `Rybbit goal(s) not found: ${stats.missing_goals.join(', ')}`;

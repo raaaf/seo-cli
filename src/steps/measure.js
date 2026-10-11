@@ -128,9 +128,13 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     if (rybbitOn && !entry.unmapped) {
       for (const key of READINGS) {
         const reading = entry.readings[key];
-        if (reading?.rybbit !== null || fresh.has(reading) || reading.window.endDate < addDays(today, -BACKFILL_DAYS)) continue;
-        reading.rybbit = await rybbitFor(entry, reading.window);
-        if (reading.rybbit !== null) dirty = true;
+        const gap = reading?.rybbit === null || (reading?.rybbit && (reading.rybbit.macro === null || reading.rybbit.micro === null));
+        if (!gap || fresh.has(reading) || reading.window.endDate < addDays(today, -BACKFILL_DAYS)) continue;
+        const filled = await rybbitFor(entry, reading.window);
+        if (filled !== null && JSON.stringify(filled) !== JSON.stringify(reading.rybbit)) {
+          reading.rybbit = filled;
+          dirty = true;
+        }
       }
     }
     if (entry.kind === 'rewrite' && !entry.revert_candidate && isRevertCandidate(entry)) {

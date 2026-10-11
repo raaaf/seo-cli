@@ -152,9 +152,15 @@ async function loadEngagement(config, cwd, dryRun) {
     warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
     return null;
   }
-  const { report, pages } = await rybbitReport({ config, cwd, dryRun, warnings });
+  let result;
+  try {
+    result = await rybbitReport({ config, cwd, dryRun, warnings });
+  } catch (e) {
+    warnings.push(`Rybbit: ${String(e.message).split('\n')[0]}`);
+  }
   warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
-  if (report.error) return null;
+  if (!result || result.report.error) return null;
+  const { pages } = result;
   return Object.fromEntries(pages.filter(p => p.locale === defaultLocale(config)).map(p => [p.slug, p]));
 }
 

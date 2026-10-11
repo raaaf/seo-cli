@@ -90,8 +90,11 @@ export async function rybbitRequest(config, method, params = {}) {
     return body;
   } catch (e) {
     const err = e instanceof RybbitError ? e : new RybbitError({ method, kind: 'error' });
-    guard.failures = err.kind === 'key_rejected' ? MAX_FAILURES : guard.failures + 1;
-    guard.last = { kind: err.kind, status: err.status };
+    // A plain `error` (400/404, bad body) says nothing about Rybbit being down: it neither counts nor resets.
+    if (err.kind !== 'error') {
+      guard.failures = err.kind === 'key_rejected' ? MAX_FAILURES : guard.failures + 1;
+      guard.last = { kind: err.kind, status: err.status };
+    }
     throw err;
   }
 }
