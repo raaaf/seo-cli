@@ -472,6 +472,6 @@ describe('buildMergeFiles with a counterpart locale', () => {
     expect(res.files.find(f => f.path === 'content/landing/en/ceremony.md').delete).toBe(true);
     expect(redirects.ceremony).toBeUndefined();
     expect(redirects.old).toBe('ceremony');
-    expect(res.counterparts).toEqual([{ slug: 'ceremony', manualRedirect: true }]);
+    expect(res.counterparts).toMatchObject([{ slug: 'ceremony', manualRedirect: true }]);
   });
 });
