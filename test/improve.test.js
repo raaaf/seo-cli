@@ -14,7 +14,7 @@ vi.mock('../src/steps/validate.js', async (orig) => {
   return { ...real, validate: (...a) => validateOverride(...a) ?? real.validate(...a) };
 });
 
-const { scorePage, selectPage, ctrDeficit, expectedCtr, improvePage } = await import('../src/steps/improve.js');
+const { scorePage, selectPage, ctrDeficit, expectedCtr, improvePage, keywordFor } = await import('../src/steps/improve.js');
 const { loadImprovements, recordImprovement, slugsInCooldown } = await import('../src/lib/improvements.js');
 
 const config = {
@@ -531,5 +531,12 @@ describe('improvement history', () => {
 
     expect(cooling.has('preise')).toBe(true);
     expect(cooling.has('alt')).toBe(false);
+  });
+});
+
+describe('keywordFor', () => {
+  it('falls back to the slug words when a targeted page has no GSC queries', () => {
+    expect(keywordFor({ slug: 'abschlussfeier-planen', queries: [] }).keyword).toBe('abschlussfeier planen');
+    expect(keywordFor({ slug: 'x', queries: [{ query: 'echte suche' }] }).keyword).toBe('echte suche');
   });
 });

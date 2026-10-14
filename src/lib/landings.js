@@ -179,6 +179,6 @@ export function buildMergeFiles({ survivor, mergeFrom, config, cwd = process.cwd
   if (cpMerged.size && existsSync(cpDir)) {
     repointDir(cpDir, cpPath, new Set([survivorAlt, ...cpMerged.keys()]), [...cpMerged.keys()], survivorAlt);
   }
-  const counterparts = [...cpMerged.keys()].map(slug => ({ slug, manualRedirect: needsManualRedirect }));
+  const counterparts = [...cpMerged].map(([slug, to]) => ({ slug, to, manualRedirect: needsManualRedirect }));
   return { files, counterparts, counterpartPrefix: config.counterpart_url_prefix || '' };
 }

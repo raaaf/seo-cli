@@ -334,7 +334,7 @@ function buildBody(page, before, after, { factCheckError = null, warnings = [], 
         `Gezielte Überarbeitung von \`${page.slug}\`.`,
         '',
         `**Befund:** ${page.reason}`,
-        ...(page.mergeFrom?.length ? ['', `Gelöscht und per \`seo/redirects.json\` auf \`${page.slug}\` umgeleitet: ${[...page.mergeFrom, ...(merged?.counterparts ?? []).filter(c => !c.manualRedirect).map(c => c.slug)].map(s => `\`${s}\``).join(', ')}. Redirects greifen erst nach dem Deploy.`] : []),
+        ...(page.mergeFrom?.length ? ['', `Gelöscht und per \`seo/redirects.json\` umgeleitet: ${[...page.mergeFrom.map(s => [s, page.slug]), ...(merged?.counterparts ?? []).filter(c => !c.manualRedirect).map(c => [c.slug, c.to])].map(([from, to]) => `\`${from}\` → \`${to}\``).join(', ')}. Redirects greifen erst nach dem Deploy.`] : []),
         ...(merged?.counterparts ?? []).filter(c => c.manualRedirect).map(c => `Gegenstück ${c.slug} gelöscht, Redirect unter ${merged.counterpartPrefix}/${c.slug} bitte von Hand anlegen.`),
         '',
       ]
