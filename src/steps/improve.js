@@ -266,7 +266,8 @@ export function targetedPage({ slug, mergeFrom = [], brief = null }, config, cwd
 
 /** The keyword the validator checks a rewrite of this page against. */
 export function keywordFor(page) {
-  return { keyword: page.queries[0]?.query ?? page.slug, expected_entities: [] };
+  // A targeted page without GSC queries falls back to the slug words, as `seo check` does.
+  return { keyword: page.queries[0]?.query ?? page.slug.replace(/-/g, ' '), expected_entities: [] };
 }
 
 // Numbers only, and only when the page had entries; empty keeps the prompt byte-identical.
