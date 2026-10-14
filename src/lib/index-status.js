@@ -15,6 +15,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A 5xx from Google ("Internal error encountered.", 2026-10-12) is usually gone seconds later;
+// one retry keeps such a blip from failing the whole daily watch.
+const RETRY_DELAY_MS = 5000;
+
+function isServerError(e) {
+  const status = Number(e?.code || e?.response?.status);
+  return status >= 500 && status < 600;
+}
+
 function isQuotaError(e) {
   const status = e?.code || e?.response?.status;
   return status === 429 || /quota/i.test(String(e?.message || ''));
@@ -26,7 +35,7 @@ function isQuotaError(e) {
  * throwing away what was already fetched — a partial snapshot still shows
  * whether pages dropped out of the index.
  */
-export async function fetchIndexStatus(config, urls, delayMs = INSPECTION_DELAY_MS) {
+export async function fetchIndexStatus(config, urls, delayMs = INSPECTION_DELAY_MS, retryDelayMs = RETRY_DELAY_MS) {
   const auth = await getAuth();
   const sc = google.searchconsole({ version: 'v1', auth });
 
@@ -35,9 +44,15 @@ export async function fetchIndexStatus(config, urls, delayMs = INSPECTION_DELAY_
     const url = urls[i];
     if (i > 0) await sleep(delayMs);
     try {
-      const res = await sc.urlInspection.index.inspect({
-        requestBody: { inspectionUrl: url, siteUrl: config.gsc_property },
-      });
+      const request = { requestBody: { inspectionUrl: url, siteUrl: config.gsc_property } };
+      let res;
+      try {
+        res = await sc.urlInspection.index.inspect(request);
+      } catch (e) {
+        if (!isServerError(e)) throw e;
+        await sleep(retryDelayMs);
+        res = await sc.urlInspection.index.inspect(request);
+      }
       const r = res.data.inspectionResult?.indexStatusResult ?? {};
       results.push({
         url,
