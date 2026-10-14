@@ -123,26 +123,51 @@ function repointRelatedPages(markdown, from, to) {
 /**
  * Extra files of a merge PR: the merged pages deleted, `seo/redirects.json` with
  * old slug -> survivor (existing targets pointing at a merged page follow along,
- * so there are no chains), and every other page's `related_pages` repointed.
+ * so there are no chains), and every other page's `related_pages` repointed. With a
+ * counterpart locale the merged pages' `alternate:` counterparts are deleted, redirected to
+ * the survivor's counterpart (else its default-locale slug) and repointed the same way.
  */
 export function buildMergeFiles({ survivor, mergeFrom, config, cwd = process.cwd() }) {
   const landingPath = localeLandingPath(config, defaultLocale(config));
   const dir = join(cwd, landingPath);
   const files = mergeFrom.map(slug => ({ path: join(landingPath, `${slug}.md`), delete: true }));
 
+  // Counterpart locale: pages linked via `alternate:` go with their default-locale page.
+  const cpLocale = config.counterpart_locale && config.counterpart_locale !== defaultLocale(config) ? config.counterpart_locale : null;
+  const cpPath = cpLocale ? localeLandingPath(config, cpLocale) : null;
+  const cpDir = cpPath ? join(cwd, cpPath) : null;
+  const alternateOf = slug => {
+    const file = join(dir, `${slug}.md`);
+    if (!cpDir || !existsSync(file)) return null;
+    const alt = parseFrontmatter(readFileSync(file, 'utf8')).parsed.alternate;
+    return typeof alt === 'string' && existsSync(join(cpDir, `${alt}.md`)) ? alt : null;
+  };
+  const survivorAlt = alternateOf(survivor);
+  const cpMerged = new Map();
+  for (const slug of mergeFrom) {
+    const alt = alternateOf(slug);
+    if (alt) { cpMerged.set(alt, survivorAlt || survivor); files.push({ path: join(cpPath, `${alt}.md`), delete: true }); }
+  }
+
   const redirectsPath = join(cwd, REDIRECTS_FILE);
   const redirects = existsSync(redirectsPath) ? JSON.parse(readFileSync(redirectsPath, 'utf8')) : {};
-  for (const [from, to] of Object.entries(redirects)) if (mergeFrom.includes(to)) redirects[from] = survivor;
+  for (const [from, to] of Object.entries(redirects)) {
+    if (mergeFrom.includes(to)) redirects[from] = survivor;
+    else if (cpMerged.has(to)) redirects[from] = cpMerged.get(to);
+  }
   for (const slug of mergeFrom) redirects[slug] = survivor;
+  for (const [alt, to] of cpMerged) redirects[alt] = to;
   files.push({ path: REDIRECTS_FILE, content: JSON.stringify(redirects, null, 2) + '\n' });
 
-  const touched = new Set([survivor, ...mergeFrom]);
-  for (const name of readdirSync(dir).filter(f => f.endsWith('.md'))) {
-    const slug = name.replace(/\.md$/, '');
-    if (touched.has(slug)) continue;
-    const current = readFileSync(join(dir, name), 'utf8');
-    const updated = repointRelatedPages(current, mergeFrom, survivor);
-    if (updated !== current) files.push({ path: join(landingPath, name), content: updated });
-  }
+  const repointDir = (dirPath, relPath, touched, from, to) => {
+    for (const name of readdirSync(dirPath).filter(f => f.endsWith('.md'))) {
+      if (touched.has(name.replace(/\.md$/, ''))) continue;
+      const current = readFileSync(join(dirPath, name), 'utf8');
+      const updated = repointRelatedPages(current, from, to);
+      if (updated !== current) files.push({ path: join(relPath, name), content: updated });
+    }
+  };
+  repointDir(dir, landingPath, new Set([survivor, ...mergeFrom]), mergeFrom, survivor);
+  if (survivorAlt && existsSync(cpDir)) repointDir(cpDir, cpPath, new Set([survivorAlt, ...cpMerged.keys()]), [...cpMerged.keys()], survivorAlt);
   return files;
 }
