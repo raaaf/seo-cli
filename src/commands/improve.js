@@ -127,12 +127,13 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
 
   const week = isoWeek();
   const mergeFrom = page.mergeFrom ?? [];
+  const merge = mergeFrom.length ? buildMergeFiles({ survivor: page.slug, mergeFrom, config, cwd }) : null;
   return {
     slug: page.slug,
     files: [
       { path: filePath, content: finalMarkdown },
       ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
-      ...(mergeFrom.length ? buildMergeFiles({ survivor: page.slug, mergeFrom, config, cwd }) : []),
+      ...(merge ? merge.files : []),
     ],
     record: { slug: page.slug, queries: page.queries.map(q => q.query) },
     commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
@@ -141,6 +142,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       factCheckError,
       warnings: validate(finalMarkdown, keywordLike, validateOpts).warnings,
       counterpart,
+      merged: merge,
     }),
   };
 }
@@ -297,7 +299,7 @@ function readMetaFrom(markdown) {
   }
 }
 
-function buildBody(page, before, after, { factCheckError = null, warnings = [], counterpart = null } = {}) {
+function buildBody(page, before, after, { factCheckError = null, warnings = [], counterpart = null, merged = null } = {}) {
   const queries = page.queries
     .slice(0, 8)
     .map(q => `| ${q.query} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`)
@@ -332,7 +334,8 @@ function buildBody(page, before, after, { factCheckError = null, warnings = [], 
         `Gezielte Überarbeitung von \`${page.slug}\`.`,
         '',
         `**Befund:** ${page.reason}`,
-        ...(page.mergeFrom?.length ? ['', `Gelöscht und per \`seo/redirects.json\` auf \`${page.slug}\` umgeleitet: ${page.mergeFrom.map(s => `\`${s}\``).join(', ')}. Redirects greifen erst nach dem Deploy.`] : []),
+        ...(page.mergeFrom?.length ? ['', `Gelöscht und per \`seo/redirects.json\` auf \`${page.slug}\` umgeleitet: ${[...page.mergeFrom, ...(merged?.counterparts ?? []).filter(c => !c.manualRedirect).map(c => c.slug)].map(s => `\`${s}\``).join(', ')}. Redirects greifen erst nach dem Deploy.`] : []),
+        ...(merged?.counterparts ?? []).filter(c => c.manualRedirect).map(c => `Gegenstück ${c.slug} gelöscht, Redirect unter ${merged.counterpartPrefix}/${c.slug} bitte von Hand anlegen.`),
         '',
       ]
       : [
