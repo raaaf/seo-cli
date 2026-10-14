@@ -173,3 +173,22 @@ describe('index-status: saveIndexStatus', () => {
     expect(loadIndexStatus(dir).entries.map(e => [e.url, e.coverageState])).toEqual([['a', 'Submitted and indexed'], ['b', 'unknown']]);
   });
 });
+
+describe('index-status: fetchIndexStatus retries a Google server error once', () => {
+  beforeEach(() => { inspect.mockReset(); getAuth.mockClear(); });
+  const serverError = () => Object.assign(new Error('Internal error encountered.'), { code: 500 });
+
+  it('recovers when the retry succeeds', async () => {
+    inspect.mockRejectedValueOnce(serverError());
+    inspect.mockResolvedValueOnce(inspected('Submitted and indexed'));
+    const results = await fetchIndexStatus(CONFIG, ['https://s/a'], 0, 0);
+    expect(results.map(r => r.coverageState)).toEqual(['Submitted and indexed']);
+    expect(inspect).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails when the retry fails too', async () => {
+    inspect.mockRejectedValue(serverError());
+    await expect(fetchIndexStatus(CONFIG, ['https://s/a'], 0, 0)).rejects.toThrow(/Internal error/);
+    expect(inspect).toHaveBeenCalledTimes(2);
+  });
+});
