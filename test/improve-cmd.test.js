@@ -388,3 +388,90 @@ describe('improve --slug', () => {
     expect(prepared.files.map(f => f.path)).toEqual(['content/landing/de/preise.md']);
   });
 });
+
+describe('buildMergeFiles with a counterpart locale', () => {
+  const EN_CONFIG = { ...CONFIG, locales: ['de', 'en'], counterpart_locale: 'en' };
+  const page = (loc, name, content) => {
+    mkdirSync(join(dir, `content/landing/${loc}`), { recursive: true });
+    writeFileSync(join(dir, `content/landing/${loc}`, `${name}.md`), content);
+  };
+
+  beforeEach(() => {
+    page('de', 'planen', '---\nslug: planen\nalternate: party\n---\nS');
+    page('de', 'ideen', '---\nslug: ideen\nalternate: ceremony\n---\nM');
+    page('de', 'lonely', '---\nslug: lonely\n---\nL');
+    page('de', 'other', '---\nslug: other\nrelated_pages:\n  - ideen\n---\nO');
+    page('en', 'party', '---\nslug: party\nalternate: planen\n---\nS');
+    page('en', 'ceremony', '---\nslug: ceremony\nalternate: ideen\n---\nM');
+    page('en', 'en-other', '---\nslug: en-other\nrelated_pages:\n  - ceremony\n  - x\n---\nO');
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/redirects.json'), JSON.stringify({ old: 'ceremony' }));
+  });
+
+  it('deletes the merged counterpart, redirects it to the survivor counterpart and repoints en related pages', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    const { files } = buildMergeFiles({ survivor: 'planen', mergeFrom: ['ideen'], config: EN_CONFIG, cwd: dir });
+    const byPath = Object.fromEntries(files.map(f => [f.path, f]));
+
+    expect(byPath['content/landing/de/ideen.md'].delete).toBe(true);
+    expect(byPath['content/landing/en/ceremony.md'].delete).toBe(true);
+    expect(JSON.parse(byPath['seo/redirects.json'].content)).toEqual({ old: 'party', ideen: 'planen', ceremony: 'party' });
+    expect(byPath['content/landing/en/en-other.md'].content).toContain('  - party\n  - x');
+  });
+
+  it('redirects to the survivor DE slug when the survivor has no counterpart', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    page('de', 'planen', '---\nslug: planen\n---\nS');
+    const { files } = buildMergeFiles({ survivor: 'planen', mergeFrom: ['ideen'], config: EN_CONFIG, cwd: dir });
+    const redirects = JSON.parse(files.find(f => f.path === 'seo/redirects.json').content);
+
+    expect(redirects.ceremony).toBe('planen');
+  });
+
+  it('leaves a merged page without alternate alone', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    const { files } = buildMergeFiles({ survivor: 'planen', mergeFrom: ['lonely'], config: EN_CONFIG, cwd: dir });
+
+    expect(files.filter(f => f.delete).map(f => f.path)).toEqual(['content/landing/de/lonely.md']);
+  });
+
+  it('ignores an alternate that is not a slug', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    page('de', 'ideen', '---\nslug: ideen\nalternate: ../de/planen\n---\nM');
+    const { files } = buildMergeFiles({ survivor: 'planen', mergeFrom: ['ideen'], config: EN_CONFIG, cwd: dir });
+
+    expect(files.filter(f => f.delete).map(f => f.path)).toEqual(['content/landing/de/ideen.md']);
+  });
+
+  it('never deletes the survivor counterpart and handles a shared alternate once', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    page('de', 'ideen', '---\nslug: ideen\nalternate: party\n---\nM');
+    page('de', 'zwei', '---\nslug: zwei\nalternate: ceremony\n---\nM');
+    page('de', 'drei', '---\nslug: drei\nalternate: ceremony\n---\nM');
+    const { files } = buildMergeFiles({ survivor: 'planen', mergeFrom: ['ideen', 'zwei', 'drei'], config: EN_CONFIG, cwd: dir });
+    const deletes = files.filter(f => f.delete).map(f => f.path);
+
+    expect(deletes).not.toContain('content/landing/en/party.md');
+    expect(deletes.filter(p => p === 'content/landing/en/ceremony.md')).toHaveLength(1);
+    expect(JSON.parse(files.find(f => f.path === 'seo/redirects.json').content).party).toBeUndefined();
+  });
+
+  it('drops the deleted counterpart from en related_pages when the survivor has none', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    page('de', 'planen', '---\nslug: planen\n---\nS');
+    const { files } = buildMergeFiles({ survivor: 'planen', mergeFrom: ['ideen'], config: EN_CONFIG, cwd: dir });
+
+    expect(files.find(f => f.path === 'content/landing/en/en-other.md').content).toBe('---\nslug: en-other\nrelated_pages:\n  - x\n---\nO');
+  });
+
+  it('deletes a prefixed counterpart without a redirect and reports it', async () => {
+    const { buildMergeFiles } = await import('../src/lib/landings.js');
+    const res = buildMergeFiles({ survivor: 'planen', mergeFrom: ['ideen'], config: { ...EN_CONFIG, counterpart_url_prefix: '/en' }, cwd: dir });
+    const redirects = JSON.parse(res.files.find(f => f.path === 'seo/redirects.json').content);
+
+    expect(res.files.find(f => f.path === 'content/landing/en/ceremony.md').delete).toBe(true);
+    expect(redirects.ceremony).toBeUndefined();
+    expect(redirects.old).toBe('ceremony');
+    expect(res.counterparts).toEqual([{ slug: 'ceremony', manualRedirect: true }]);
+  });
+});

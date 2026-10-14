@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from './frontmatter.js';
+import { isValidSlug } from './keywords.js';
 import { defaultLocale, localeLandingPath, isStrict } from './config.js';
 
 const slugsCache = new Map();
@@ -100,7 +101,7 @@ export function strictValidateOpts(config, dir, exclude = [], strict = isStrict(
 export const REDIRECTS_FILE = 'seo/redirects.json';
 
 // Rewrites the `related_pages:` list entries named in `from` to `to`, keeping the
-// list free of duplicates. Text edit, not a YAML round
+// list free of duplicates; `to` null drops the entries instead. Text edit, not a YAML round
 // trip, so the rest of the file stays byte for byte.
 function repointRelatedPages(markdown, from, to) {
   const lines = markdown.split('\n');
@@ -112,6 +113,7 @@ function repointRelatedPages(markdown, from, to) {
     if (inList && !/^\s*-\s/.test(line)) inList = false;
     const item = inList ? line.match(/^(\s*-\s*)(['"]?)([^'"\s#]+)\2(\s*(?:#.*)?)$/) : null;
     if (!item) { out.push(line); continue; }
+    if (to === null && from.includes(item[3])) continue;
     const slug = from.includes(item[3]) ? to : item[3];
     if (seen.has(slug)) continue;
     seen.add(slug);
@@ -123,26 +125,60 @@ function repointRelatedPages(markdown, from, to) {
 /**
  * Extra files of a merge PR: the merged pages deleted, `seo/redirects.json` with
  * old slug -> survivor (existing targets pointing at a merged page follow along,
- * so there are no chains), and every other page's `related_pages` repointed.
+ * so there are no chains), and every other page's `related_pages` repointed. With a
+ * counterpart locale the merged pages' `alternate:` counterparts are deleted, redirected to
+ * the survivor's counterpart (else its default-locale slug) and repointed the same way (dropped
+ * from `related_pages` when the survivor has none). With `counterpart_url_prefix` the counterpart is
+ * deleted without a redirect. Returns `{ files, counterparts, counterpartPrefix }`.
  */
 export function buildMergeFiles({ survivor, mergeFrom, config, cwd = process.cwd() }) {
   const landingPath = localeLandingPath(config, defaultLocale(config));
   const dir = join(cwd, landingPath);
   const files = mergeFrom.map(slug => ({ path: join(landingPath, `${slug}.md`), delete: true }));
 
+  // Counterpart locale: pages linked via `alternate:` go with their default-locale page.
+  const cpLocale = config.counterpart_locale && config.counterpart_locale !== defaultLocale(config) ? config.counterpart_locale : null;
+  const cpPath = cpLocale ? localeLandingPath(config, cpLocale) : null;
+  const cpDir = cpPath ? join(cwd, cpPath) : null;
+  const alternateOf = slug => {
+    const file = join(dir, `${slug}.md`);
+    if (!cpDir || !existsSync(file)) return null;
+    const alt = parseFrontmatter(readFileSync(file, 'utf8')).parsed.alternate;
+    return isValidSlug(alt) && existsSync(join(cpDir, `${alt}.md`)) ? alt : null;
+  };
+  const survivorAlt = alternateOf(survivor);
+  // Keyed by counterpart slug, so an alternate shared by several merged pages is handled once.
+  const cpMerged = new Map();
+  for (const slug of mergeFrom) {
+    const alt = alternateOf(slug);
+    if (alt && alt !== survivorAlt) cpMerged.set(alt, survivorAlt || survivor);
+  }
+  // A prefixed counterpart URL (/en/slug) is not matched by the flat slug key of redirects.json.
+  const needsManualRedirect = Boolean(config.counterpart_url_prefix);
+  for (const alt of cpMerged.keys()) files.push({ path: join(cpPath, `${alt}.md`), delete: true });
+
   const redirectsPath = join(cwd, REDIRECTS_FILE);
   const redirects = existsSync(redirectsPath) ? JSON.parse(readFileSync(redirectsPath, 'utf8')) : {};
-  for (const [from, to] of Object.entries(redirects)) if (mergeFrom.includes(to)) redirects[from] = survivor;
+  for (const [from, to] of Object.entries(redirects)) {
+    if (mergeFrom.includes(to)) redirects[from] = survivor;
+    else if (cpMerged.has(to) && !needsManualRedirect) redirects[from] = cpMerged.get(to);
+  }
   for (const slug of mergeFrom) redirects[slug] = survivor;
+  if (!needsManualRedirect) for (const [alt, to] of cpMerged) redirects[alt] = to;
   files.push({ path: REDIRECTS_FILE, content: JSON.stringify(redirects, null, 2) + '\n' });
 
-  const touched = new Set([survivor, ...mergeFrom]);
-  for (const name of readdirSync(dir).filter(f => f.endsWith('.md'))) {
-    const slug = name.replace(/\.md$/, '');
-    if (touched.has(slug)) continue;
-    const current = readFileSync(join(dir, name), 'utf8');
-    const updated = repointRelatedPages(current, mergeFrom, survivor);
-    if (updated !== current) files.push({ path: join(landingPath, name), content: updated });
+  const repointDir = (dirPath, relPath, touched, from, to) => {
+    for (const name of readdirSync(dirPath).filter(f => f.endsWith('.md'))) {
+      if (touched.has(name.replace(/\.md$/, ''))) continue;
+      const current = readFileSync(join(dirPath, name), 'utf8');
+      const updated = repointRelatedPages(current, from, to);
+      if (updated !== current) files.push({ path: join(relPath, name), content: updated });
+    }
+  };
+  repointDir(dir, landingPath, new Set([survivor, ...mergeFrom]), mergeFrom, survivor);
+  if (cpMerged.size && existsSync(cpDir)) {
+    repointDir(cpDir, cpPath, new Set([survivorAlt, ...cpMerged.keys()]), [...cpMerged.keys()], survivorAlt);
   }
-  return files;
+  const counterparts = [...cpMerged.keys()].map(slug => ({ slug, manualRedirect: needsManualRedirect }));
+  return { files, counterparts, counterpartPrefix: config.counterpart_url_prefix || '' };
 }
