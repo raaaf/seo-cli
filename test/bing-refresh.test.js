@@ -10,7 +10,8 @@ const { refreshBingQueries, readBingQueries, bingCandidates } = await import('..
 const { putSignal } = await import('../src/lib/signals/store.js');
 
 const config = { base_url: 'https://x.de', bing: { enabled: true } };
-const now = new Date('2026-10-08T00:00:00Z');
+// The freshness check reads the real clock, so a fixed date here expires the cache after 7 days.
+const now = new Date();
 const stat = { Query: 'Wie geht das', Impressions: 9, Clicks: 1, AvgImpressionPosition: 4, Date: `/Date(${now.getTime() - 86400000})/` };
 let dir;
 let warnings;

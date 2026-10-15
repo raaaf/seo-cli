@@ -76,7 +76,7 @@ export function bingCandidates(queries, config) {
 const isValidQueries = (v) => Array.isArray(v) && v.every(q => q && typeof q.query === 'string'
   && [q.impressions, q.clicks, q.position].every(n => typeof n === 'number'));
 
-const freshQueries = (config, cwd) => getFresh(BING_SIGNALS_NAME, bingQueriesKey(config), TTL_DAYS, new Date(), { cwd, validate: isValidQueries });
+const freshQueries = (config, cwd, now = new Date()) => getFresh(BING_SIGNALS_NAME, bingQueriesKey(config), TTL_DAYS, now, { cwd, validate: isValidQueries });
 
 /** Stored queries of the site, empty without `bing.enabled` or without a fresh entry. */
 export function readBingQueries(config, cwd) {
@@ -89,7 +89,7 @@ export function readBingQueries(config, cwd) {
  * Bing does not know or a Bing error is a warning and leaves the old entry.
  */
 export async function refreshBingQueries({ config, cwd, warnings, now = new Date() }) {
-  if (!config.bing?.enabled || freshQueries(config, cwd) !== null) return;
+  if (!config.bing?.enabled || freshQueries(config, cwd, now) !== null) return;
   if (!process.env.BING_WEBMASTER_KEY) {
     warnings.push('bing.enabled is set but BING_WEBMASTER_KEY is missing, skipping Bing queries');
     return;
