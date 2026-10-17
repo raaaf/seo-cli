@@ -159,6 +159,18 @@ export async function commitToBranch({ files, message, repo, branch = 'main' }) 
   }
 }
 
+// Default branch of a repo, read once per process. State commits go there, and
+// not every target repo calls it main (raaaf/sprachverliebt uses master).
+const defaultBranches = {};
+export async function getDefaultBranch({ repo }) {
+  if (!defaultBranches[repo]) {
+    const [owner, name] = repo.split('/');
+    const { data } = await getOctokit(owner).repos.get({ owner, repo: name });
+    defaultBranches[repo] = data.default_branch;
+  }
+  return defaultBranches[repo];
+}
+
 // Git blob SHA per file path at the head of a branch, from the remote tree.
 export async function getBlobShas({ repo, branch = 'main' }) {
   const [owner, name] = repo.split('/');
