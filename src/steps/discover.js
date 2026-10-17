@@ -355,21 +355,12 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   const keywords = Array.isArray(suggestions) ? suggestions : suggestions.keywords || [];
   console.log(chalk.gray(`  Greenfield: ${keywords.length} suggestions from Claude`));
 
-  const serpResults = await Promise.all(
-    keywords.map(async (kw) => {
-      if (!kw.keyword) return null;
-      try {
-        return await getSerp(kw.keyword, { locale: config.locale, baseUrl: config.base_url });
-      } catch (e) {
-        rethrowIfBudget(e);
-        console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
-        return { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
-      }
-    })
-  );
-
-  for (let i = 0; i < keywords.length; i++) {
-    const kw = keywords[i];
+  // Filtered before SerpAPI: a suggestion that is dropped as a slug collision or word-order variant
+  // must not cost one of the month's searches. Accepted suggestions join the comparison lists, so two
+  // variants in the same answer are caught too.
+  const accepted = [];
+  const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
+  for (const kw of keywords) {
     if (!kw.keyword) continue;
 
     if (!isValidSlug(kw.target_slug)) {
@@ -377,13 +368,15 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
       continue;
     }
 
-    if (isSlugTaken(kw.target_slug, kw.keyword, data, existingFiles, config.reserved_slugs)) {
+    if (isSlugTaken(kw.target_slug, kw.keyword, data, existingFiles, config.reserved_slugs)
+      || accepted.some(a => a.target_slug === kw.target_slug && a.keyword !== kw.keyword)) {
       console.log(chalk.gray(`  Slug collision: ${kw.target_slug} already taken, skipping ${kw.keyword}`));
       continue;
     }
 
     const duplicate = findTokenSetDuplicate(kw.keyword, [
-      ...data.keywords.map(k => k.keyword).filter(Boolean),
+      ...knownKeywords,
+      ...accepted.map(a => a.keyword),
       ...existingSlugs,
       ...existingFiles,
     ]);
@@ -391,7 +384,23 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
       console.log(chalk.gray(`  Duplicate intent: "${kw.keyword}" is a word-order variant of "${duplicate}", skipping`));
       continue;
     }
+    accepted.push(kw);
+  }
 
+  const serpResults = await Promise.all(
+    accepted.map(async (kw) => {
+      try {
+        return await getSerp(kw.keyword, { locale: config.locale, baseUrl: config.base_url });
+      } catch (e) {
+        rethrowIfBudget(e);
+        console.log(chalk.yellow(`    SerpAPI skip (${kw.keyword}): ${e.message}`));
+        return null;
+      }
+    })
+  );
+
+  for (let i = 0; i < accepted.length; i++) {
+    const kw = accepted[i];
     const serpData = serpResults[i] || { top_titles: [], top_snippets: [], people_also_ask: [], related_searches: [] };
     console.log(chalk.gray(`    SerpAPI: ${serpData.people_also_ask.length} PAA, ${serpData.related_searches.length} related for "${kw.keyword}"`));
 

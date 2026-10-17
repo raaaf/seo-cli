@@ -34,12 +34,18 @@ const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 const FALLBACK_MODELS = 'default';
 
 // Builds the params object shared by the interactive request, its pause_turn
-// resume, and the batch request.
+// resume, and the batch request. The top-level cache_control puts the cache
+// marker on the last cacheable block: the system prompts are a few dozen
+// tokens, under the minimum a cache entry needs, so a marker on them alone
+// never cached anything. With the marker at the end, a pause_turn resume (the
+// fact check's web search) and a retry after a 529 read the prompt they just
+// sent from the cache instead of paying for it again.
 function buildParams({ model, maxTokens, system, messages, thinking, outputConfig, tools }) {
   return {
     model,
     max_tokens: maxTokens,
-    system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+    cache_control: { type: 'ephemeral' },
+    system,
     messages,
     ...(thinking ? { thinking } : {}),
     ...(outputConfig ? outputConfig : {}),

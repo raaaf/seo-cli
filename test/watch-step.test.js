@@ -522,6 +522,7 @@ describe('watch-step: Bing', () => {
   it('checks at most 10 sitemap URLs a day (Bing throttles GetUrlInfo after 10 per host), a deterministic section that advances with the day', async () => {
     nextIndex.entries = Array.from({ length: 70 }, (_, i) => entry(`p${String(i).padStart(2, '0')}`, OK));
     const checked = async (today) => {
+      rmSync(join(dir, 'seo', 'alerts.json'), { force: true });
       const bingApi = api();
       await run(today, bingApi);
       return bingApi.getUrlInfo.mock.calls.map(c => c[1]);
@@ -533,6 +534,20 @@ describe('watch-step: Bing', () => {
     expect(first).toEqual(Array.from({ length: 10 }, (_, i) => sorted[(start + i) % 70]));
     expect(await checked('2026-10-07')).toEqual(first);
     expect(await checked('2026-10-08')).not.toEqual(first);
+  });
+
+  it('asks Bing about unchecked URLs first and keeps two slots for rechecking crawled ones', async () => {
+    nextIndex.entries = Array.from({ length: 30 }, (_, i) => entry(`p${String(i).padStart(2, '0')}`, OK));
+    const asked = [];
+    const bingApi = api({ getUrlInfo: vi.fn(async (site, u) => { asked.push(u); return { LastCrawledDate: seen }; }) });
+    for (const today of ['2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10']) await run(today, bingApi);
+    expect(new Set(asked).size).toBe(30);
+    asked.length = 0;
+    // All 30 known crawled now; a newly added URL is asked about at once, next to rechecks.
+    nextIndex.entries = [...nextIndex.entries, entry('neu', OK)];
+    await run('2026-10-11', bingApi);
+    expect(asked).toContain(url('neu'));
+    expect(asked).toHaveLength(10);
   });
 
   it('hands the Bing client to the diagnosis only when the Bing check ran', async () => {

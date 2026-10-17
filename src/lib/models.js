@@ -14,7 +14,7 @@ export const GENERATE_MAX_TOKENS = 32000;
 
 // USD per million tokens, from https://platform.claude.com/docs/en/about-claude/pricing
 // (checked 2026-10-06). `cacheWrite` is the 5-minute write price, the only one
-// the pipeline uses (system prompt cache_control: ephemeral).
+// the pipeline uses (top-level cache_control: ephemeral in claude.js).
 export const PRICES = Object.freeze({
   'claude-opus-5-5': { input: 4, cacheWrite: 5, cacheRead: 0.2, output: 20 },
   'claude-sonnet-5-5': { input: 2, cacheWrite: 2.5, cacheRead: 0.2, output: 10 },
