@@ -336,3 +336,117 @@ describe('watch: Bing alerts', () => {
     expect(day(state, bing(), '2026-10-07').state.bing.site_missing_warned).toBeUndefined();
   });
 });
+
+describe('watch: AI crawler alert', () => {
+  const bot = (token, over = {}) => ({ token, kind: 'search', robots: 'allowed', paths: [], live: 'ok', status: 200, ...over });
+  const inp = (bots, ignore = []) => ({ bots, ignore });
+  const day = (state, input, today) => run(state, { aiCrawlers: input }, today);
+  const OAI = 'OAI-SearchBot';
+  const robotsBlocked = (token = OAI) => bot(token, { robots: 'blocked', paths: ['/'] });
+
+  it('opens at once for a robots.txt block and lists the paths', () => {
+    const out = day(emptyAlerts(), inp([bot(OAI, { robots: 'blocked', paths: ['/', '/a'] })]), '2026-10-07');
+    expect(out.opened).toMatchObject([{ id: 'ai_crawler_blocked', detail: [{ token: OAI, via: 'robots', paths: ['/', '/a'] }] }]);
+  });
+
+  it('opens a live block on the second day only, and only for a bot that was ok before', () => {
+    const blocked = inp([bot(OAI, { live: 'blocked', status: 403 })]);
+    const never = day(day(emptyAlerts(), blocked, '2026-10-07').state, blocked, '2026-10-08');
+    expect(never.opened).toEqual([]);
+    expect(never.state.ai_crawlers).toBeUndefined();
+
+    const seen = day(emptyAlerts(), inp([bot(OAI)]), '2026-10-06').state;
+    expect(seen.ai_crawlers).toEqual({ ok_seen: { [OAI]: true } });
+    const one = day(seen, blocked, '2026-10-07');
+    expect(one.opened).toEqual([]);
+    const two = day(one.state, blocked, '2026-10-08');
+    expect(two.opened).toMatchObject([{ detail: [{ token: OAI, via: 'live', status: 403 }] }]);
+    expect(two.state.ai_crawlers).toEqual({ ok_seen: { [OAI]: true } });
+  });
+
+  it('clears the pending live count when the bot gets through again', () => {
+    const seen = day(emptyAlerts(), inp([bot(OAI)]), '2026-10-06').state;
+    const one = day(seen, inp([bot(OAI, { live: 'blocked' })]), '2026-10-07');
+    const ok = day(one.state, inp([bot(OAI)]), '2026-10-08');
+    expect(ok.state.ai_crawlers.pending).toBeUndefined();
+    expect(day(ok.state, inp([bot(OAI, { live: 'blocked' })]), '2026-10-09').opened).toEqual([]);
+  });
+
+  it('never alerts for a bot on the ignore list or a training bot', () => {
+    expect(day(emptyAlerts(), inp([robotsBlocked()], [OAI]), '2026-10-07').opened).toEqual([]);
+    expect(day(emptyAlerts(), inp([{ ...robotsBlocked('GPTBot'), kind: 'training' }]), '2026-10-07').opened).toEqual([]);
+  });
+
+  it('keeps an open alert on unknown and resolves when no bot is blocked', () => {
+    const open = day(emptyAlerts(), inp([robotsBlocked()]), '2026-10-07').state;
+    const unknown = day(open, inp([bot(OAI, { robots: 'unknown', live: 'unknown' })]), '2026-10-08');
+    expect(unknown.state.open.map(a => a.id)).toEqual(['ai_crawler_blocked']);
+    expect(unknown.resolved).toEqual([]);
+    expect(day(open, inp([bot(OAI)]), '2026-10-08').resolved.map(a => a.id)).toEqual(['ai_crawler_blocked']);
+  });
+
+  it('updates the detail of an open alert when the blocked set changes, and lists it as updated', () => {
+    const open = day(emptyAlerts(), inp([robotsBlocked()]), '2026-10-07').state;
+    const more = day(open, inp([robotsBlocked(), robotsBlocked('PerplexityBot')]), '2026-10-08');
+    expect(more.updated).toMatchObject([{ id: 'ai_crawler_blocked', detail: [{ token: OAI }, { token: 'PerplexityBot' }] }]);
+    expect(more.opened).toEqual([]);
+    expect(open.open[0].detail).toHaveLength(1);
+  });
+
+  it('closes its alert by kind when switched off, and leaves everything alone for null', () => {
+    const open = day(emptyAlerts(), inp([robotsBlocked()]), '2026-10-07').state;
+    expect(day(open, null, '2026-10-08').state).toEqual(open);
+    const off = day(open, { disabled: true }, '2026-10-08');
+    expect(off.resolved).toMatchObject([{ id: 'ai_crawler_blocked', reason: 'ai_crawlers_disabled' }]);
+    expect(off.state.ai_crawlers).toBeUndefined();
+  });
+
+  it('leaves the state byte-identical for two identical runs', () => {
+    const input = inp([bot(OAI), bot('PerplexityBot', { live: 'blocked' })]);
+    const one = day(emptyAlerts(), input, '2026-10-07').state;
+    expect(JSON.stringify(day(one, input, '2026-10-07').state)).toBe(JSON.stringify(one));
+    const open = day(emptyAlerts(), inp([robotsBlocked()]), '2026-10-07').state;
+    expect(JSON.stringify(day(open, inp([robotsBlocked()]), '2026-10-08').state)).toBe(JSON.stringify(open));
+  });
+});
+
+describe('watch: structured data alert', () => {
+  const day = (state, results, today, slugs = ['a', 'b', 'c']) => run(state, { structuredData: { slugs, results } }, today);
+  const bad = (slug, codes = ['jsonld_missing']) => ({ slug, codes });
+  const opened = () => day(day(emptyAlerts(), [bad('a')], '2026-10-07').state, [bad('a')], '2026-10-08').state;
+
+  it('opens a page on its second run in a row with a finding', () => {
+    const one = day(emptyAlerts(), [bad('a')], '2026-10-07');
+    expect(one.opened).toEqual([]);
+    expect(one.state.structured_data.pending.a.count).toBe(1);
+    const two = day(one.state, [bad('a')], '2026-10-08');
+    expect(two.opened).toMatchObject([{ id: 'structured_data', detail: [{ slug: 'a', codes: ['jsonld_missing'] }] }]);
+    expect(two.state.structured_data).toBeUndefined();
+  });
+
+  it('forgets a pending page that turned clean, and holds state on unknown', () => {
+    const one = day(emptyAlerts(), [bad('a')], '2026-10-07');
+    expect(day(one.state, [{ slug: 'a', codes: null }], '2026-10-08').state.structured_data.pending.a.count).toBe(1);
+    expect(day(one.state, [{ slug: 'a', codes: [] }], '2026-10-08').state.structured_data).toBeUndefined();
+  });
+
+  it('adds a second page to the open alert as an update and resolves when all are clean', () => {
+    const pend = day(opened(), [bad('b', ['faqpage_missing'])], '2026-10-09').state;
+    const more = day(pend, [bad('b', ['faqpage_missing'])], '2026-10-10');
+    expect(more.updated).toMatchObject([{ detail: [{ slug: 'a' }, { slug: 'b', codes: ['faqpage_missing'] }] }]);
+    const clean = day(more.state, [{ slug: 'a', codes: [] }, { slug: 'b', codes: [] }], '2026-10-11');
+    expect(clean.resolved.map(a => a.id)).toEqual(['structured_data']);
+  });
+
+  it('drops a slug that left the disk from detail and state', () => {
+    expect(day(opened(), [], '2026-10-09', ['b']).resolved.map(a => a.id)).toEqual(['structured_data']);
+    const pend = day(emptyAlerts(), [bad('a')], '2026-10-07').state;
+    expect(day(pend, [], '2026-10-08', ['b']).state.structured_data).toBeUndefined();
+  });
+
+  it('is byte-identical for two identical runs and closes by kind when switched off', () => {
+    const open = opened();
+    expect(JSON.stringify(day(open, [bad('a')], '2026-10-09').state)).toBe(JSON.stringify(open));
+    expect(run(open, { structuredData: { disabled: true } }).resolved).toMatchObject([{ id: 'structured_data', reason: 'structured_data_disabled' }]);
+  });
+});
