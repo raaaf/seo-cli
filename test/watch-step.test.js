@@ -628,6 +628,13 @@ describe('watch-step: AI crawlers and structured data', () => {
     expect(fixed.alerts.resolved.map(a => a.id)).toEqual(['structured_data']);
   });
 
+  it('runs both checks for a watch-only project without landing_path', async () => {
+    const report = await go('2026-10-07', { config: { ...CONFIG, landing_path: undefined, watch: { ai_crawlers: true, structured_data: true } }, fetchBot: fake() });
+    expect(report.ai_crawlers.search.length + report.ai_crawlers.training.length).toBe(10);
+    expect(report.structured_data).toEqual({ checked: 0, findings: [] });
+    expect(report.warnings).toEqual([]);
+  });
+
   it('reports FAQ items in the frontmatter without a FAQPage type', async () => {
     writeFileSync(join(dir, 'content/de/page.md'), '---\nfaq:\n  - q: Q\n    a: A\n---\n');
     const report = await go('2026-10-07', { config: DATA, fetchBot: fake() });

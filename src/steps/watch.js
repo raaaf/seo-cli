@@ -186,6 +186,7 @@ async function fetchPool(jobs, { fetchBot, deadlineMs }) {
 
 // Landing pages of the default and the counterpart locale with their public URL and whether the frontmatter has FAQ items.
 function landingPages(config, cwd, base) {
+  if (!config.landing_path) return [];
   const def = defaultLocale(config);
   const locales = [def, ...(config.counterpart_locale && config.counterpart_locale !== def ? [config.counterpart_locale] : [])];
   return locales.flatMap(locale => getExistingPages(config, cwd, locale).map(p => ({
