@@ -83,7 +83,7 @@ Use the reusable workflow. Each project only needs its own GSC secrets.
 
 ### Option A: with 1Password
 
-Store `ANTHROPIC_API_KEY` and `SERPAPI_KEY` in 1Password at `op://development/seo-cli/`.
+Store the shared fields (`ANTHROPIC_API_KEY`, `SERPAPI_KEY`, `GSC_CREDENTIALS`, `GSC_TOKEN`, `SEO_NOTIFY_WEBHOOK`, `CLAUDE_CODE_OAUTH_TOKEN`, `BING-WEBMASTER-API`, `RYBBIT_API_KEY`) in 1Password at `op://development/seo-cli/`. The service account behind `OP_SERVICE_ACCOUNT_TOKEN` needs read access to that vault.
 
 ```yaml
 # .github/workflows/seo.yml
@@ -110,7 +110,7 @@ jobs:
 
 **Optional secret:** `SEO_NOTIFY_WEBHOOK` receives one report per run (see Run report). Without it the run ends with a visible `::warning::`.
 
-**Optional input:** `op_vault` (under `with:`, default `development`) names the 1Password vault of the shared `seo-cli` item. With the default only `ANTHROPIC_API_KEY` and `SERPAPI_KEY` come from 1Password. Any other vault (e.g. `Bots`) also supplies `GSC_CREDENTIALS`, `GSC_TOKEN`, `SEO_NOTIFY_WEBHOOK` and `CLAUDE_CODE_OAUTH_TOKEN` from `op://<op_vault>/seo-cli/<FIELD>`; a repo secret of the same name wins, and the caller then needs only `OP_SERVICE_ACCOUNT_TOKEN`. The webhook and the Claude token load in a separate non-fatal step, so a field that is not in the item yet does not stop the run. `GSC_CREDENTIALS` and `GSC_TOKEN` are no longer `required` secrets: the Google step fails with a clear message when neither a secret nor 1Password delivers them. `mode: watch` loads only the Google pair (and the webhook) from a non-default vault.
+**Optional input:** `op_vault` (under `with:`, default `development`) names the 1Password vault of the shared `seo-cli` item. Every vault supplies `ANTHROPIC_API_KEY`, `SERPAPI_KEY`, `GSC_CREDENTIALS`, `GSC_TOKEN`, `SEO_NOTIFY_WEBHOOK` and `CLAUDE_CODE_OAUTH_TOKEN` from `op://<op_vault>/seo-cli/<FIELD>`, so the item must carry the Google pair; a repo secret of the same name wins, and the caller then needs only `OP_SERVICE_ACCOUNT_TOKEN`. The webhook and the Claude token load in a separate non-fatal step, so a field that is not in the item yet does not stop the run. `GSC_CREDENTIALS` and `GSC_TOKEN` are no longer `required` secrets: the Google step fails with a clear message when neither a secret nor 1Password delivers them. `mode: watch` loads only the Google pair, the webhook and the Bing key.
 
 **Optional input:** `mode: watch` (under `with:`, default `run`) runs the daily guard instead of the pipeline: checkout, Google credentials, `seo watch --commit --report`, notify. No 1Password or direct secrets, no Claude Code, no run, no gate. Expose it as a `workflow_dispatch` input and run it daily from the scheduler (n8n triggers it at 07:00, `mode=run` on Thursdays). The seo-cli checkout has no `ref`: the `@main` pin in the project fixes only the workflow file, the code is always `main`.
 
