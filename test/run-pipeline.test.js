@@ -339,8 +339,26 @@ describe('run-pipeline', () => {
       expect(enPage.slug).toBe('wedding-planning');
       expect(enPage.markdown).toContain('alternate: hochzeit-planen');
       expect(enPage.filePath).toBe('resources/landing/en/wedding-planning.md');
+      // The source page's own slug is taken: both pages would claim the bare /slug URL.
+      expect(generateCounterpart.mock.calls[0][4].extraExistingSlugs).toContain('hochzeit-planen');
     } finally {
       delete CONFIG.counterpart_locale;
+    }
+  });
+
+  it('hands every locale the configured landing_path, so its own directory resolves once', async () => {
+    const { localeLandingPath } = await import('../src/lib/config.js');
+    CONFIG.locales = ['de', 'en'];
+    try {
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/5'));
+
+      await run();
+
+      const enCall = reviewPage.mock.calls.find(c => c[2].locale === 'en');
+      expect(localeLandingPath(enCall[2], 'en')).toBe('resources/landing/en/');
+    } finally {
+      CONFIG.locales = ['de'];
     }
   });
 

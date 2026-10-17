@@ -96,6 +96,18 @@ describe('diagnose-step', () => {
     expect(alert.pending_codes).toBeUndefined();
   });
 
+  it('does not take a changed result across an unknown run in between', async () => {
+    const alert = deindexed('page');
+    await run([alert], [entry('page')], clean, '2026-10-08');
+    await run([alert], [entry('page')], noindex, '2026-10-09');
+    await run([alert], [entry('page')], async () => { throw new Error('timeout'); }, '2026-10-10');
+
+    const third = await run([alert], [entry('page')], noindex, '2026-10-11');
+    expect(third.updated).toEqual([]);
+    expect(alert.diagnosis.cause).toBe('clean');
+    expect(alert.pending_codes).toMatchObject({ date: '2026-10-11' });
+  });
+
   it('drops a pending result that does not repeat', async () => {
     const alert = deindexed('page');
     await run([alert], [entry('page')], clean, '2026-10-08');

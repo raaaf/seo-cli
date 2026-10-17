@@ -103,27 +103,36 @@ async function runBatch(params, batchWaitMs, batchPollMs) {
 
   console.log(chalk.blue(`  Batch ${batch.id} submitted, waiting up to ${Math.round(batchWaitMs / 60000)} min ...`));
 
-  const deadline = Date.now() + batchWaitMs;
-  let status = batch.processing_status;
-  while (status !== 'ended' && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, batchPollMs));
-    ({ processing_status: status } = await getClient().messages.batches.retrieve(batch.id));
-  }
-
-  if (status !== 'ended') {
-    try { await getClient().messages.batches.cancel(batch.id); } catch { /* ignore */ }
-    console.log(chalk.yellow(`  Batch ${batch.id} not finished after ${Math.round(batchWaitMs / 60000)} min, falling back to the interactive request`));
-    return null;
-  }
-
-  for await (const r of await getClient().messages.batches.results(batch.id)) {
-    if (r.custom_id !== 'seo-1') continue;
-    if (r.result.type === 'succeeded') {
-      const { usage, stop_reason } = r.result.message;
-      console.log(chalk.green(`  Batch ${batch.id} succeeded (${usage.input_tokens} in / ${usage.output_tokens} out tokens, stop_reason: ${stop_reason})`));
-      return r.result.message;
+  // A failing poll or result read (a 529 included) ends the batch here: cancel it and
+  // fall back to the interactive call. Thrown out of here, it would reach the retry
+  // loop in complete() and submit a second batch while the first one still runs.
+  try {
+    const deadline = Date.now() + batchWaitMs;
+    let status = batch.processing_status;
+    while (status !== 'ended' && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, batchPollMs));
+      ({ processing_status: status } = await getClient().messages.batches.retrieve(batch.id));
     }
-    console.log(chalk.yellow(`  Batch ${batch.id} result: ${r.result.type}, falling back to the interactive request`));
+
+    if (status !== 'ended') {
+      try { await getClient().messages.batches.cancel(batch.id); } catch { /* ignore */ }
+      console.log(chalk.yellow(`  Batch ${batch.id} not finished after ${Math.round(batchWaitMs / 60000)} min, falling back to the interactive request`));
+      return null;
+    }
+
+    for await (const r of await getClient().messages.batches.results(batch.id)) {
+      if (r.custom_id !== 'seo-1') continue;
+      if (r.result.type === 'succeeded') {
+        const { usage, stop_reason } = r.result.message;
+        console.log(chalk.green(`  Batch ${batch.id} succeeded (${usage.input_tokens} in / ${usage.output_tokens} out tokens, stop_reason: ${stop_reason})`));
+        return r.result.message;
+      }
+      console.log(chalk.yellow(`  Batch ${batch.id} result: ${r.result.type}, falling back to the interactive request`));
+      return null;
+    }
+  } catch (e) {
+    try { await getClient().messages.batches.cancel(batch.id); } catch { /* ignore */ }
+    console.log(chalk.yellow(`  Batch ${batch.id} could not be read (${e.message}), falling back to the interactive request`));
     return null;
   }
 
@@ -244,12 +253,16 @@ export async function complete({
   };
   const outputConfig = Object.keys(outputConfigFields).length ? { output_config: outputConfigFields } : undefined;
 
+  // The batch is tried once per call: a retry after a 529 on the interactive
+  // fallback must not wait on a second batch (and the workflow's time limit).
+  let batchTried = false;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const params = buildParams({ model, maxTokens, system, messages, thinking, outputConfig, tools });
 
       let res = null;
-      if (batch) {
+      if (batch && !batchTried) {
+        batchTried = true;
         assertBudget('anthropic');
         res = await runBatch(params, batchWaitMs, batchPollMs);
         if (res) recordUsage(res, { requestedModel: model, batch: true });

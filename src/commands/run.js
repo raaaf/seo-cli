@@ -87,7 +87,10 @@ async function generateCounterpartPage(kw, sourceMarkdown, config, cwd, dryRun, 
 // ({ keyword, slug, score, type, locale, filePath, markdown }).
 async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleVal, generatedKeys, catalog, acceptedPages = []) {
   const localeLandingPathStr = getLocaleLandingPath(config, locale);
-  const localeConfig = { ...config, locale, landing_path: localeLandingPathStr };
+  // landing_path stays the configured one: every consumer resolves the locale
+  // directory itself (localeLandingPath), and a pre-rewritten path made that
+  // content/en/en/ for non-default locales.
+  const localeConfig = { ...config, locale };
   const label = (config.locales?.length ?? 1) > 1 ? ` [${locale}]` : '';
 
   const targetFile = join(cwd, localeLandingPathStr, `${kw.target_slug}.md`);
@@ -162,7 +165,7 @@ async function generateForLocale(kw, locale, config, cwd, dryRun, defaultLocaleV
     && config.counterpart_locale !== defaultLocaleVal;
 
   const counterpart = hasCounterpart
-    ? await generateCounterpartPage(kw, markdown, config, cwd, dryRun, [...generatedKeys].map(k => k.split('::')[0]))
+    ? await generateCounterpartPage(kw, markdown, config, cwd, dryRun, [kw.target_slug, ...[...generatedKeys].map(k => k.split('::')[0])])
     : null;
 
   if (dryRun) {

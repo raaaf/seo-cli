@@ -71,7 +71,7 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
   const quota = checkQuota();
   console.log(chalk.gray(`  SerpAPI: ${quota.used}/${quota.limit} used this month`));
   if (quota.remaining <= 0) {
-    console.log(chalk.yellow('  SerpAPI quota exhausted — keywords will be scored/generated without SERP context (no PAA/related searches).'));
+    console.log(chalk.yellow('  SerpAPI quota exhausted: cached SERPs still work, the first keyword without one ends the run as budget_exceeded.'));
   }
 
   const data = loadKeywords(cwd);
@@ -80,11 +80,14 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
     data.keywords.filter(k => [KEYWORD_STATUS.DONE, KEYWORD_STATUS.SKIP, KEYWORD_STATUS.PR_OPENED].includes(k.status)).map(k => k.keyword)
   );
 
-  // Mark as done any keywords whose file already exists locally (merged PR)
+  // Mark as done any keywords whose file already exists locally (merged PR). Only for
+  // keywords without a pr_url: those with one belong to the reconcile step, which
+  // publishes them (sitemap, ledger, monthly cap) once it can read the PR; a PR it
+  // could not read this run must stay pr_opened for the next try.
   const existingFiles = getExistingSlugs(config, cwd, config.locale);
   let markedDone = 0;
   for (const kw of data.keywords) {
-    if (kw.status === KEYWORD_STATUS.PR_OPENED && kw.target_slug && existingFiles.includes(kw.target_slug)) {
+    if (kw.status === KEYWORD_STATUS.PR_OPENED && !kw.pr_url && kw.target_slug && existingFiles.includes(kw.target_slug)) {
       kw.status = KEYWORD_STATUS.DONE;
       markedDone++;
     }
