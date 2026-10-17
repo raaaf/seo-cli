@@ -140,6 +140,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     prTitle: `SEO: improve ${page.slug} (${week})`,
     prBody: buildBody(page, before, readMetaFrom(finalMarkdown), {
       factCheckError,
+      factChecked: config.fact_check !== false,
       warnings: validate(finalMarkdown, keywordLike, validateOpts).warnings,
       counterpart,
       merged: merge,
@@ -299,7 +300,7 @@ function readMetaFrom(markdown) {
   }
 }
 
-function buildBody(page, before, after, { factCheckError = null, warnings = [], counterpart = null, merged = null } = {}) {
+function buildBody(page, before, after, { factCheckError = null, factChecked = true, warnings = [], counterpart = null, merged = null } = {}) {
   const queries = page.queries
     .slice(0, 8)
     .map(q => `| ${q.query} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`)
@@ -354,7 +355,7 @@ function buildBody(page, before, after, { factCheckError = null, warnings = [], 
       ]),
     metaBlock,
     '',
-    factCheckError
+    factCheckError || !factChecked
       ? 'Die Seite wurde nach der Überarbeitung erneut validiert, aber nicht faktengeprüft.'
       : 'Die Seite wurde nach der Überarbeitung erneut validiert und faktengeprüft.',
     '',

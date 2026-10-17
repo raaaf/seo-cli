@@ -31,6 +31,15 @@ describe('index-status: isIndexed', () => {
     expect(isIndexed('URL is unknown to Google')).toBe(false);
   });
 
+  it('judges an entry by its verdict when Google sent one', () => {
+    expect(isIndexed({ coverageState: 'Submitted and indexed', verdict: 'PASS' })).toBe(true);
+    expect(isIndexed({ coverageState: "Excluded by 'noindex' tag", verdict: 'NEUTRAL' })).toBe(false);
+    expect(isIndexed({ coverageState: 'Not found (404)', verdict: 'FAIL' })).toBe(false);
+    expect(isIndexed({ coverageState: 'Page with redirect', verdict: 'NEUTRAL' })).toBe(false);
+    expect(isIndexed({ coverageState: 'Submitted and indexed', verdict: null })).toBe(true);
+    expect(isIndexed({ coverageState: 'unknown', verdict: null })).toBe(true);
+  });
+
   it('treats a real indexed state as indexed', () => {
     expect(isIndexed('Submitted and indexed')).toBe(true);
   });

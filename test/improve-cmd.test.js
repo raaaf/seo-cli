@@ -256,6 +256,14 @@ describe('improveCommand', () => {
     expect(openPR.mock.calls[0][0].body).not.toContain('ACHTUNG');
   });
 
+  it('does not claim a fact check when fact_check is off', async () => {
+    await improveCommand({ config: { ...CONFIG, fact_check: false } });
+
+    const body = openPR.mock.calls[0][0].body;
+    expect(body).toContain('aber nicht faktengeprüft');
+    expect(reviewPage).not.toHaveBeenCalled();
+  });
+
   it('lists the validator warnings that remain on the rewrite in the PR body', async () => {
     validate.mockReturnValue({ ok: true, errors: [], warnings: ['hero.headline may not contain target keyword (missing: preise)'] });
 

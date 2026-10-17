@@ -18,9 +18,11 @@ function getOctokit(owner) {
   return octokits[token];
 }
 
-export async function openPR({ repo, branch, title, body, baseBranch = 'main' }) {
+// Without a baseBranch the PR targets the repo's default branch, the one commitState writes to.
+export async function openPR({ repo, branch, title, body, baseBranch }) {
   const [owner, name] = repo.split('/');
   const octokit = getOctokit(owner);
+  baseBranch ??= await getDefaultBranch({ repo });
 
   const res = await octokit.pulls.create({
     owner,
@@ -115,10 +117,11 @@ async function buildCommit(octokit, { owner, name, files, message, parentSha }) 
 
 // Creates a new branch off baseBranch. Never overwrites: an existing branch
 // throws with code BRANCH_EXISTS so the caller can skip instead of clobbering
-// an open PR's history.
-export async function createBranchAndCommit({ files, message, cwd: _cwd, repo, baseBranch = 'main', branch = `seo/${isoWeek()}` }) {
+// an open PR's history. Without a baseBranch it starts from the repo's default branch.
+export async function createBranchAndCommit({ files, message, cwd: _cwd, repo, baseBranch, branch = `seo/${isoWeek()}` }) {
   const [owner, name] = repo.split('/');
   const octokit = getOctokit(owner);
+  baseBranch ??= await getDefaultBranch({ repo });
 
   const { data: ref } = await octokit.git.getRef({ owner, repo: name, ref: `heads/${baseBranch}` });
   const sha = await buildCommit(octokit, { owner, name, files, message, parentSha: ref.object.sha });

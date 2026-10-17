@@ -196,7 +196,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
     .slice(0, MAX_ASSESSMENTS);
   if (!candidates.length) return [];
 
-  const indexed = entries.filter(e => isIndexed(e.coverageState)).length;
+  const indexed = entries.filter(e => isIndexed(e)).length;
   const recent_changes = recentChanges(cwd, today, warnings);
   const recent_commits = recentCommits(cwd, today, gitLog);
   const locale = defaultLocale(config);

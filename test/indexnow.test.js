@@ -27,6 +27,16 @@ describe('fetchSitemapUrls', () => {
       expect.objectContaining({ headers: { 'Accept-Language': 'de' } })
     );
   });
+
+  it('throws on an error status instead of returning an empty sitemap', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503, text: async () => '<html>Maintenance</html>' });
+    await expect(fetchSitemapUrls('https://acme.io', fetchImpl)).rejects.toThrow('503');
+  });
+
+  it('throws on a 200 that is no sitemap', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '<html><title>Maintenance</title></html>' });
+    await expect(fetchSitemapUrls('https://acme.io', fetchImpl)).rejects.toThrow('not a sitemap');
+  });
 });
 
 describe('submitIndexNow', () => {

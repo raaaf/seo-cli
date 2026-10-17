@@ -94,14 +94,14 @@ function trafficRecovered(alert, traffic) {
   return traffic.status === 'ok' && traffic.drop < 1 - RESOLVE_SHARE;
 }
 
-const seenIndexed = (e) => e.coverageState !== 'unknown' && isIndexed(e.coverageState);
+const seenIndexed = (e) => e.coverageState !== 'unknown' && isIndexed(e);
 
 /** URLs that were seen indexed once and are not indexed now. A URL without an entry or with an unknown one is not judged. */
 export function deindexedUrls(entries, knownIndexed) {
   const byUrl = new Map(entries.map(e => [e.url, e]));
   return knownIndexed.filter((url) => {
     const e = byUrl.get(url);
-    return e && !isIndexed(e.coverageState);
+    return e && !isIndexed(e);
   });
 }
 
@@ -309,7 +309,7 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
     // Independent of known_indexed: a site that was never indexed has nothing to lose per URL.
     const judged = entries.filter(e => e.coverageState !== 'unknown');
     if (judged.length >= SITE_MIN_URLS) {
-      const indexed = judged.filter(e => isIndexed(e.coverageState)).length;
+      const indexed = judged.filter(e => isIndexed(e)).length;
       const share = indexed / judged.length;
       if (share < SITE_OPEN_BELOW) open('site_not_indexed', 'site_not_indexed', { indexed, total: judged.length });
       else if (share >= SITE_RESOLVE_FROM) close('site_not_indexed');

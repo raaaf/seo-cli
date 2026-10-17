@@ -5,8 +5,9 @@ const git = {
   deleteRef: vi.fn(), createTree: vi.fn(), createCommit: vi.fn(), createRef: vi.fn(), updateRef: vi.fn(), getTree: vi.fn(),
 };
 const pulls = { create: vi.fn(), get: vi.fn(), list: vi.fn(), listFiles: vi.fn() };
+const repos = { get: vi.fn(async ({ repo }) => ({ data: { default_branch: repo === 'master-repo' ? 'master' : 'main' } })) };
 vi.mock('@octokit/rest', () => ({
-  Octokit: class { constructor() { this.git = git; this.pulls = pulls; this.paginate = async (fn, args) => (await fn(args)).data; } },
+  Octokit: class { constructor() { this.git = git; this.pulls = pulls; this.repos = repos; this.paginate = async (fn, args) => (await fn(args)).data; } },
 }));
 
 process.env.GITHUB_TOKEN = 'test-token';
@@ -25,6 +26,13 @@ beforeEach(() => {
 });
 
 describe('github-commit', () => {
+  it('branches off and targets the default branch when none is given (sprachverliebt uses master)', async () => {
+    await createBranchAndCommit({ files: [{ path: 'a.md', content: 'A' }], message: 'msg', repo: 'o/master-repo', branch: 'seo/new/x' });
+    expect(git.getRef).toHaveBeenCalledWith(expect.objectContaining({ ref: 'heads/master' }));
+    await openPR({ repo: 'o/master-repo', branch: 'seo/new/x', title: 't', body: 'b' });
+    expect(pulls.create).toHaveBeenCalledWith(expect.objectContaining({ base: 'master' }));
+  });
+
   it('builds blobs/tree/commit and creates the weekly branch ref', async () => {
     const files = [{ path: 'a.md', content: 'A' }, { path: 'b.md', content: 'B' }];
     const branch = await createBranchAndCommit({ files, message: 'msg', repo: 'o/r' });
