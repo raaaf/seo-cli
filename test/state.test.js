@@ -8,8 +8,9 @@ const git = {
   getRef: vi.fn(), getCommit: vi.fn(), getTree: vi.fn(), createBlob: vi.fn(),
   createTree: vi.fn(), createCommit: vi.fn(), updateRef: vi.fn(),
 };
+const repos = { get: vi.fn() };
 vi.mock('@octokit/rest', () => ({
-  Octokit: class { constructor() { this.git = git; } },
+  Octokit: class { constructor() { this.git = git; this.repos = repos; } },
 }));
 
 process.env.GITHUB_TOKEN = 'test-token';
@@ -33,6 +34,8 @@ beforeEach(() => {
   git.createTree.mockResolvedValue({ data: { sha: 'new-tree' } });
   git.createCommit.mockResolvedValue({ data: { sha: 'commit' } });
   git.updateRef.mockResolvedValue({ data: {} });
+  repos.get.mockReset();
+  repos.get.mockResolvedValue({ data: { default_branch: 'main' } });
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -49,6 +52,17 @@ describe('state: gitBlobSha', () => {
 });
 
 describe('state: commitState', () => {
+  it('compares against and commits to the default branch when it is not main', async () => {
+    // raaaf/sprachverliebt defaults to master; a hard-coded main made every state commit 404.
+    repos.get.mockResolvedValue({ data: { default_branch: 'master' } });
+    write('seo/alerts.json', '{"open":[]}\n');
+    remoteTree({});
+    expect(await commitState({ cwd: dir, repo: 'o/master-repo', reason: 'watch' })).toEqual(['seo/alerts.json']);
+    expect(git.getRef).toHaveBeenCalledWith(expect.objectContaining({ ref: 'heads/master' }));
+    expect(git.updateRef).toHaveBeenCalledWith(expect.objectContaining({ ref: 'heads/master' }));
+    expect(git.getRef).not.toHaveBeenCalledWith(expect.objectContaining({ ref: 'heads/main' }));
+  });
+
   it('makes no commit when every state file matches main', async () => {
     write('seo/keywords.json', '{}\n');
     remoteTree({ 'seo/keywords.json': gitBlobSha('{}\n') });
