@@ -43,7 +43,7 @@ export async function watchCommand(opts = {}) {
   if (opts.commit && !dryRun) {
     try {
       const committed = await commitState({ cwd, repo: config.repo, reason: 'watch', files: [ALERTS_FILE, INDEX_STATUS_FILE] });
-      console.log(chalk.green(`  state committed to main: ${committed.length ? committed.join(', ') : 'nothing changed'}.`));
+      console.log(chalk.green(`  state committed to the default branch: ${committed.length ? committed.join(', ') : 'nothing changed'}.`));
     } catch (e) {
       report.warnings.push(`State commit failed: ${e.message}`);
       console.error(chalk.red(`  watch commit failed (non-fatal): ${e.message}`));

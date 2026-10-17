@@ -11,7 +11,11 @@ export async function fetchSitemapUrls(baseUrl, fetchImpl = fetch, locale) {
   // locale explicitly so we get the full URL set.
   const headers = locale ? { 'Accept-Language': locale } : undefined;
   const res = await fetchImpl(`${base}/sitemap.xml`, headers ? { headers } : undefined);
+  // A 404, a 5xx or a maintenance page must not read as an empty sitemap: the watcher
+  // would prune its state to nothing and resolve every open index alert.
+  if (res.ok === false) throw new Error(`sitemap.xml answered ${res.status}`);
   const xml = await res.text();
+  if (!/<(?:urlset|sitemapindex)[\s>]/.test(xml)) throw new Error('sitemap.xml is not a sitemap (no <urlset> or <sitemapindex>)');
   return extractSitemapUrls(xml);
 }
 

@@ -38,7 +38,7 @@ export async function indexStatusCommand(opts = {}) {
     try {
       const week = loadIndexStatus(cwd).updated;
       const committed = await commitState({ cwd, repo: config.repo, reason: `index-status ${week}` });
-      console.log(chalk.green(`  state committed to main: ${committed.length ? committed.join(', ') : 'nothing changed'}.`));
+      console.log(chalk.green(`  state committed to the default branch: ${committed.length ? committed.join(', ') : 'nothing changed'}.`));
     } catch (e) {
       console.error(chalk.red(`  index-status commit failed (non-fatal): ${e.message}`));
     }

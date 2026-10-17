@@ -114,8 +114,12 @@ export function saveIndexStatus(data, cwd = process.cwd()) {
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
-// The exact wording is Google's, not ours, and has drifted before: a page is
-// "not indexed" when coverageState starts with one of
+// Takes an inspection entry or a bare coverageState. The entry's `verdict` decides when
+// Google sent one: PASS is "Valid" (indexed), NEUTRAL "Excluded" and FAIL "Error", so a
+// noindex, a 404, a redirect or another canonical are not indexed either.
+// Without a verdict (old snapshots, quota placeholders) the wording decides, and that
+// wording is Google's, not ours, and has drifted before: a page is "not indexed" when
+// coverageState starts with one of
 //   - "Crawled - currently not indexed"
 //   - "Discovered - currently not indexed"
 //   - "URL is unknown to Google"
@@ -125,9 +129,12 @@ const NOT_INDEXED_PREFIXES = [
   'Discovered - currently not indexed',
   'URL is unknown to Google',
 ];
+const VERDICTS = ['PASS', 'NEUTRAL', 'FAIL'];
 
-export function isIndexed(coverageState) {
-  const state = String(coverageState ?? '');
+export function isIndexed(entryOrState) {
+  const entry = typeof entryOrState === 'object' && entryOrState !== null ? entryOrState : { coverageState: entryOrState };
+  if (VERDICTS.includes(entry.verdict)) return entry.verdict === 'PASS';
+  const state = String(entry.coverageState ?? '');
   return !NOT_INDEXED_PREFIXES.some(prefix => state.startsWith(prefix));
 }
 
@@ -145,14 +152,14 @@ export function diffIndexStatus(previous, current) {
     // `previous` has no entries at all) — nothing to compare against, so it
     // cannot be "newly dropped".
     const prev = previousByUrl.get(entry.url);
-    const nowIndexed = isIndexed(entry.coverageState);
+    const nowIndexed = isIndexed(entry);
 
     if (!prev) {
       result.unchanged++;
       continue;
     }
 
-    const wasIndexed = isIndexed(prev.coverageState);
+    const wasIndexed = isIndexed(prev);
     if (nowIndexed && !wasIndexed) {
       result.newlyIndexed.push(entry.url);
     } else if (!nowIndexed && wasIndexed) {

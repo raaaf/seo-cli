@@ -12,7 +12,7 @@ const INDEX_KINDS = ['deindexed', 'site_not_indexed'];
 // alarm every URL that is not indexed (base_url first, then sitemap order).
 function alertUrls(alert, entries, config) {
   if (alert.kind === 'deindexed') return [alert.detail];
-  const missing = entries.filter(e => !isIndexed(e.coverageState)).map(e => e.url);
+  const missing = entries.filter(e => !isIndexed(e)).map(e => e.url);
   return [...missing.filter(u => sameUrl(u, config.base_url)), ...missing.filter(u => !sameUrl(u, config.base_url))];
 }
 

@@ -280,6 +280,9 @@ jobs:
           REPORT_FILE="$RUNNER_TEMP/seo-report.json"
           GATE_STATUS_FILE="$RUNNER_TEMP/gate-status.txt"
           : > "$GATE_STATUS_FILE"
+          # The branch this run checked out (the repo's default branch, not always
+          # main: sprachverliebt uses master). Every PR goes back to it.
+          BASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
           # Gates one PR. Ends with `return`, never `exit`, so the next PR still
           # runs, always goes back to main, and appends "<url> <status>" to the
@@ -317,7 +320,7 @@ jobs:
             # Check out the PR branch so its pages are present
             if ! gh pr checkout "$PR_NUM"; then
               echo "$PR_URL checkout_failed" >> "$GATE_STATUS_FILE"
-              git checkout main 2>/dev/null || true
+              git checkout "$BASE_BRANCH" 2>/dev/null || true
               return 1
             fi
 
@@ -432,7 +435,7 @@ jobs:
                 STATUS=merged
                 # A merge by GITHUB_TOKEN does not trigger other workflows (incl. deploy).
                 # Dispatch the deploy explicitly so the merged pages go live.
-                if gh workflow run deploy.yml --ref main; then
+                if gh workflow run deploy.yml --ref "$BASE_BRANCH"; then
                   echo "Deploy workflow dispatched."
                 else
                   echo "Deploy dispatch skipped (no deploy.yml or no workflow_dispatch trigger)."
@@ -450,7 +453,7 @@ jobs:
             echo "Gate result: $STATUS"
 
             echo "$PR_URL $STATUS" >> "$GATE_STATUS_FILE"
-            git checkout main 2>/dev/null || true
+            git checkout "$BASE_BRANCH" 2>/dev/null || true
           }
 
           PR_URLS=()
