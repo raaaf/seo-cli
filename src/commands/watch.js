@@ -3,7 +3,7 @@ import { loadConfig } from '../lib/config.js';
 import { commitState } from '../lib/state.js';
 import { writeReport } from '../lib/runlog.js';
 import { INDEX_STATUS_FILE } from '../lib/index-status.js';
-import { ALERTS_FILE } from '../lib/watch.js';
+import { ALERTS_FILE, formatAlertDetail } from '../lib/watch.js';
 import { watch } from '../steps/watch.js';
 
 /**
@@ -30,8 +30,11 @@ export async function watchCommand(opts = {}) {
   const dryRun = opts.dryRun ?? false;
   const report = await watch({ config, cwd, dryRun });
   report.warnings.forEach(w => console.log(chalk.yellow(`  ${w}`)));
-  report.alerts.opened.forEach(a => console.log(chalk.red(`  ALERT ${a.id}: ${a.detail}`)));
-  report.alerts.updated.forEach(a => console.log(chalk.yellow(`  diagnosis changed ${a.id}: ${a.diagnosis.cause} (${a.diagnosis.codes.join(', ') || 'no findings'})`)));
+  report.alerts.opened.forEach(a => console.log(chalk.red(`  ALERT ${a.id}: ${formatAlertDetail(a.detail)}`)));
+  // `updated` holds diagnosed index alerts and aggregated alerts whose detail changed; only the former have a diagnosis.
+  report.alerts.updated.forEach(a => console.log(chalk.yellow(a.diagnosis
+    ? `  diagnosis changed ${a.id}: ${a.diagnosis.cause} (${a.diagnosis.codes.join(', ') || 'no findings'})`
+    : `  changed ${a.id}: ${formatAlertDetail(a.detail)}`)));
   if (report.alerts.resubmitted.length) console.log(chalk.green(`  resubmitted for ${report.alerts.resubmitted.length} clean alert(s).`));
   report.alerts.resolved.forEach(a => console.log(chalk.green(`  resolved ${a.id}${a.reason ? ` (${a.reason})` : ''}`)));
   report.errors.forEach(e => console.log(chalk.red(`  ${e}`)));

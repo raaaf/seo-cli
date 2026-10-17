@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../src/lib/gsc.js', () => ({ getAuth: vi.fn(), rethrowWithAuthHint: (e) => { throw e; } }));
 
-const { trafficWindows, trafficChange, deindexedUrls, evaluateWatch, emptyAlerts } = await import('../src/lib/watch.js');
+const { trafficWindows, trafficChange, deindexedUrls, evaluateWatch, emptyAlerts, formatAlertDetail } = await import('../src/lib/watch.js');
 
 const IDX = (url, coverageState) => ({ url, coverageState });
 const OK = 'Submitted and indexed';
@@ -465,5 +465,22 @@ describe('watch: structured data alert', () => {
     const open = opened();
     expect(JSON.stringify(day(open, [bad('a')], '2026-10-09').state)).toBe(JSON.stringify(open));
     expect(run(open, { structuredData: { disabled: true } }).resolved).toMatchObject([{ id: 'structured_data', reason: 'structured_data_disabled' }]);
+  });
+});
+
+describe('formatAlertDetail', () => {
+  it('prints the site-level counts instead of [object Object]', () => {
+    expect(formatAlertDetail({ indexed: 4, total: 16 })).toBe('4 of 16 URLs indexed');
+    expect(formatAlertDetail({ crawled: 0, total: 10 })).toBe('0 of 10 URLs crawled');
+  });
+
+  it('lists aggregated crawl findings', () => {
+    expect(formatAlertDetail([{ token: 'GPTBot', via: 'robots', paths: ['/'] }, { token: 'PerplexityBot', via: 'live', status: 403 }]))
+      .toBe('GPTBot via robots /; PerplexityBot via live (403)');
+    expect(formatAlertDetail([{ slug: 'a', codes: ['jsonld_missing', 'faqpage_missing'] }])).toBe('a: jsonld_missing, faqpage_missing');
+  });
+
+  it('passes strings through', () => {
+    expect(formatAlertDetail('https://example.com/a')).toBe('https://example.com/a');
   });
 });
