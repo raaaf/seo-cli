@@ -592,6 +592,21 @@ describe('watch-step: AI crawlers and structured data', () => {
     expect(report.ai_crawlers.training.find(b => b.token === 'GPTBot')).toMatchObject({ robots: 'blocked' });
   });
 
+  it('keeps a robots alert for a sitemap path open on a day the index check failed', async () => {
+    const robots = 'User-agent: OAI-SearchBot\nDisallow: /a\n';
+    nextIndex.entries = [entry('a', OK)];
+    const first = await go('2026-10-07', { config: AI, fetchBot: fake({ robots }) });
+    expect(first.alerts.opened).toMatchObject([{ id: 'ai_crawler_blocked', detail: [{ token: OAI, via: 'robots', paths: ['/a'] }] }]);
+    nextIndex.error = new Error('quota');
+    try {
+      const second = await go('2026-10-08', { config: AI, fetchBot: fake({ robots }) });
+      expect(second.alerts.resolved).toEqual([]);
+      expect(second.open_alerts.map(a => a.id)).toContain('ai_crawler_blocked');
+    } finally {
+      nextIndex.error = null;
+    }
+  });
+
   it('fetches nothing with both switches off and leaves alerts.json as it is', async () => {
     const fetchBot = fake();
     await go('2026-10-07', { fetchBot });

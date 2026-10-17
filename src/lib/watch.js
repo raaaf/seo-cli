@@ -38,6 +38,7 @@ const CRAWL_OPEN_AFTER_RUNS = 2;
 const SEARCH_BOTS = AI_BOTS.filter(b => b.kind === 'search').map(b => b.token);
 const BLOCKED_PATHS_SHOWN = 5;
 const byKey = (key) => (a, b) => (a[key] < b[key] ? -1 : 1);
+const sortedEntries = (obj) => Object.fromEntries(Object.entries(obj).sort(([a], [b]) => (a < b ? -1 : 1)));
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
@@ -193,8 +194,9 @@ function evaluateAiCrawlers(next, { bots, ignore }, { today, settle, alertDetail
     }
     if (entry) blocked.push(entry);
   }
-  const keep = (map) => Object.fromEntries(Object.entries(map).filter(([t]) => SEARCH_BOTS.includes(t) && !ignore.includes(t)).sort(([a], [b]) => (a < b ? -1 : 1)));
-  putState(next, 'ai_crawlers', { pending: keep(pending), ok_seen: keep(okSeen) });
+  // `ok_seen` survives an ignore, so un-ignoring a bot keeps its history; only the pending count is dropped.
+  const keep = (map, skip = []) => sortedEntries(Object.fromEntries(Object.entries(map).filter(([t]) => SEARCH_BOTS.includes(t) && !skip.includes(t))));
+  putState(next, 'ai_crawlers', { pending: keep(pending, ignore), ok_seen: keep(okSeen) });
   settle('ai_crawler_blocked', blocked.sort(byKey('token')));
 }
 
@@ -221,7 +223,7 @@ function evaluateStructuredData(next, { slugs, results }, { today, settle, alert
       }
     }
   }
-  putState(next, 'structured_data', { pending: Object.fromEntries(Object.entries(pending).sort(([a], [b]) => (a < b ? -1 : 1))) });
+  putState(next, 'structured_data', { pending: sortedEntries(pending) });
   settle('structured_data', [...findings.values()].sort(byKey('slug')));
 }
 

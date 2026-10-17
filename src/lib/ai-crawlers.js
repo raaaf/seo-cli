@@ -40,9 +40,9 @@ export function parseRobots(text) {
       if (!lastWasAgent) groups.push((current = { agents: [], rules: [] }));
       current.agents.push(value.toLowerCase());
       lastWasAgent = true;
-    } else if ((directive === 'allow' || directive === 'disallow') && current) {
-      current.rules.push({ allow: directive === 'allow', path: value });
+    } else {
       lastWasAgent = false;
+      if ((directive === 'allow' || directive === 'disallow') && current) current.rules.push({ allow: directive === 'allow', path: value });
     }
   }
   return groups;
@@ -96,9 +96,13 @@ export function robotsAccess(groups, token, paths) {
   return { verdict: verdicts.some(([, v]) => v === 'unknown') ? 'unknown' : 'allowed', paths: [] };
 }
 
-/** A bot challenge page (Cloudflare) instead of the content. `headers` has lowercase keys. */
-export function isChallenge({ headers = {}, html = '' }) {
-  return headers['cf-mitigated'] === 'challenge' || html.includes('challenges.cloudflare.com') || /just a moment/i.test(html);
+/**
+ * A bot challenge page (Cloudflare) instead of the content: the `cf-mitigated: challenge` header, or an error status
+ * with the challenge markup. A 200 page that merely embeds Turnstile or says "just a moment" is content. `headers` has lowercase keys.
+ */
+export function isChallenge({ status, headers = {}, html = '' }) {
+  if (headers['cf-mitigated'] === 'challenge') return true;
+  return [403, 429, 503].includes(status) && (html.includes('challenges.cloudflare.com') || /<title[^>]*>[^<]*just a moment/i.test(html));
 }
 
 /**

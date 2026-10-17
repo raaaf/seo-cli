@@ -392,6 +392,16 @@ describe('watch: AI crawler alert', () => {
     expect(day(open, inp([bot(OAI, { robots: 'allowed', live: 'blocked', status: 403 })]), '2026-10-08').resolved.map(a => a.id)).toEqual(['ai_crawler_blocked']);
   });
 
+  it('keeps ok_seen of an ignored bot, so un-ignoring it needs no new ok run', () => {
+    const seen = day(emptyAlerts(), inp([bot(OAI)]), '2026-10-05').state;
+    const ignored = day(seen, inp([bot(OAI, { live: 'blocked', status: 403 })], [OAI]), '2026-10-06').state;
+    expect(ignored.ai_crawlers.ok_seen).toEqual({ [OAI]: true });
+    const blocked = inp([bot(OAI, { live: 'blocked', status: 403 })]);
+    const one = day(ignored, blocked, '2026-10-07');
+    expect(one.opened).toEqual([]);
+    expect(day(one.state, blocked, '2026-10-08').opened).toMatchObject([{ id: 'ai_crawler_blocked' }]);
+  });
+
   it('updates the detail of an open alert when the blocked set changes, and lists it as updated', () => {
     const open = day(emptyAlerts(), inp([robotsBlocked()]), '2026-10-07').state;
     const more = day(open, inp([robotsBlocked(), robotsBlocked('PerplexityBot')]), '2026-10-08');

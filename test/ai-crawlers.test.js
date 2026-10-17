@@ -60,6 +60,12 @@ describe('robots.txt (RFC 9309)', () => {
     expect(robotsVerdict(robotsRules(null, ''), 'X', '/')).toBe('unknown');
   });
 
+  it('ends a run of User-agent lines at any other directive, Crawl-delay included', () => {
+    const groups = parseRobots('User-agent: a\nCrawl-delay: 5\nUser-agent: b\nDisallow: /\n');
+    expect(robotsVerdict(groups, 'a', '/')).toBe('allowed');
+    expect(robotsVerdict(groups, 'b', '/')).toBe('blocked');
+  });
+
   it('collects the blocked paths over several paths', () => {
     const groups = parseRobots('User-agent: *\nDisallow: /b\nDisallow: /a\n');
     expect(robotsAccess(groups, 'X', ['/', '/b/x', '/a/y'])).toEqual({ verdict: 'blocked', paths: ['/a/y', '/b/x'] });
@@ -79,8 +85,15 @@ describe('live verdict', () => {
   it('blocks on a challenge header and on challenge HTML', () => {
     expect(isChallenge({ headers: { 'cf-mitigated': 'challenge' }, html: '' })).toBe(true);
     expect(liveVerdict({ bot: res(200, { headers: { 'cf-mitigated': 'challenge' } }), browser: res(200) }).verdict).toBe('blocked');
-    expect(liveVerdict({ bot: res(200, { html: '<title>Just a moment...</title>' }), browser: res(200) }).verdict).toBe('blocked');
-    expect(liveVerdict({ bot: res(200, { html: '<script src="https://challenges.cloudflare.com/x"></script>' }), browser: res(200) }).verdict).toBe('blocked');
+    expect(liveVerdict({ bot: res(403, { html: '<title>Just a moment...</title>' }), browser: res(200) }).verdict).toBe('blocked');
+    expect(liveVerdict({ bot: res(503, { html: '<script src="https://challenges.cloudflare.com/x"></script>' }), browser: res(200) }).verdict).toBe('blocked');
+    expect(isChallenge({ status: 403, headers: {}, html: '<title>Just a moment...</title>' })).toBe(true);
+  });
+
+  it('does not take a 200 page for a challenge because it embeds Turnstile or says "just a moment"', () => {
+    expect(isChallenge({ status: 200, headers: {}, html: '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>' })).toBe(false);
+    expect(isChallenge({ status: 200, headers: {}, html: '<html><title>Blog</title><p>Just a moment, please read on.</p></html>' })).toBe(false);
+    expect(liveVerdict({ bot: res(200, { html: '<p>just a moment</p>' }), browser: res(200) }).verdict).toBe('ok');
   });
 
   it('is ok when the bot gets through', () => {

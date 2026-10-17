@@ -236,6 +236,8 @@ async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchB
     const paths = [...new Set(['/', ...sitemapUrls.map(u => { const x = new URL(u); return x.pathname + x.search; })])];
     const bots = AI_BOTS.map((bot) => {
       const access = bot.robots ? robotsAccess(groups, bot.token, paths) : null;
+      // Without the sitemap only `/` was judged: `allowed` there says nothing about the sitemap paths of an open alert.
+      if (access && !entries && access.verdict === 'allowed') access.verdict = 'unknown';
       const live = bot.live ? liveSummary(liveUrls.map(url => liveVerdict({ bot: results.get(`${bot.token}:${url}`) ?? null, browser: results.get(`browser:${url}`) ?? null }))) : null;
       return { token: bot.token, kind: bot.kind, robots: access?.verdict ?? null, paths: access?.paths ?? [], live: live?.verdict ?? null, status: live?.status ?? null };
     });
