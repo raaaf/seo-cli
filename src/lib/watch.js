@@ -227,6 +227,24 @@ function evaluateStructuredData(next, { slugs, results }, { today, settle, alert
   settle('structured_data', [...findings.values()].sort(byKey('slug')));
 }
 
+// One log line for an alert. `detail` is a string for most alerts, `{ indexed|crawled, total }` for the site-level ones
+// and an array of `{ token, via, ... }` / `{ slug, codes }` for the aggregated crawl alerts.
+export function formatAlertDetail(detail) {
+  if (Array.isArray(detail)) return detail.map(d => (typeof d === 'object' && d ? formatEntry(d) : String(d))).join('; ');
+  if (detail && typeof detail === 'object') {
+    const done = detail.indexed ?? detail.crawled;
+    if (done !== undefined && detail.total !== undefined) return `${done} of ${detail.total} URLs ${'indexed' in detail ? 'indexed' : 'crawled'}`;
+    return JSON.stringify(detail);
+  }
+  return String(detail);
+}
+
+function formatEntry(entry) {
+  if (entry.token) return `${entry.token} via ${entry.via}${entry.status ? ` (${entry.status})` : ''}${entry.paths?.length ? ` ${entry.paths.join(', ')}` : ''}`;
+  if (entry.slug) return `${entry.slug}: ${(entry.codes ?? []).join(', ')}`;
+  return JSON.stringify(entry);
+}
+
 /**
  * Applies one watch run to the alert state. `entries` is the current index
  * snapshot, `traffic` the result of `trafficChange`; null for either means that
