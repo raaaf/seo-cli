@@ -33,12 +33,11 @@ on:
         type: string
         required: false
         default: ''
-      # 1Password vault holding the shared `seo-cli` item. `development` keeps
-      # the old behaviour (only ANTHROPIC_API_KEY and SERPAPI_KEY come from
-      # 1Password, everything else from repo secrets). Any other vault (e.g.
-      # `Bots`) also supplies GSC_CREDENTIALS, GSC_TOKEN, SEO_NOTIFY_WEBHOOK and
-      # CLAUDE_CODE_OAUTH_TOKEN from op://<op_vault>/seo-cli/<FIELD>. A repo
-      # secret of the same name wins over the 1Password value.
+      # 1Password vault holding the shared `seo-cli` item. Every field comes from
+      # op://<op_vault>/seo-cli/<FIELD> (ANTHROPIC_API_KEY, SERPAPI_KEY,
+      # GSC_CREDENTIALS, GSC_TOKEN, SEO_NOTIFY_WEBHOOK, CLAUDE_CODE_OAUTH_TOKEN,
+      # BING-WEBMASTER-API, RYBBIT_API_KEY). A repo secret of the same name wins
+      # over the 1Password value.
       op_vault:
         type: string
         required: false
@@ -95,7 +94,6 @@ jobs:
       statuses: read
     env:
       HAVE_OP_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN != '' }}
-      SHARED_VAULT: ${{ inputs.op_vault != 'development' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -107,10 +105,9 @@ jobs:
           node-version: '22'
 
       # Empty values are not references and are ignored by the action. Watch mode
-      # needs no LLM or SerpAPI key, so it loads only the Google pair, and only
-      # from a non-default vault (the default vault has no such fields).
+      # needs no LLM or SerpAPI key, so it loads only the Google pair.
       - name: Load shared secrets from 1Password
-        if: env.HAVE_OP_TOKEN == 'true' && (inputs.mode != 'watch' || env.SHARED_VAULT == 'true')
+        if: env.HAVE_OP_TOKEN == 'true'
         uses: 1password/load-secrets-action@v4
         with:
           export-env: true
@@ -118,15 +115,15 @@ jobs:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           ANTHROPIC_API_KEY: ${{ inputs.mode != 'watch' && format('op://{0}/seo-cli/ANTHROPIC_API_KEY', inputs.op_vault) || '' }}
           SERPAPI_KEY: ${{ inputs.mode != 'watch' && format('op://{0}/seo-cli/SERPAPI_KEY', inputs.op_vault) || '' }}
-          GSC_CREDENTIALS: ${{ env.SHARED_VAULT == 'true' && format('op://{0}/seo-cli/GSC_CREDENTIALS', inputs.op_vault) || '' }}
-          GSC_TOKEN: ${{ env.SHARED_VAULT == 'true' && format('op://{0}/seo-cli/GSC_TOKEN', inputs.op_vault) || '' }}
+          GSC_CREDENTIALS: ${{ format('op://{0}/seo-cli/GSC_CREDENTIALS', inputs.op_vault) }}
+          GSC_TOKEN: ${{ format('op://{0}/seo-cli/GSC_TOKEN', inputs.op_vault) }}
 
       # Separate and non-fatal, one step per field: a field that is not in the item
       # yet (the Claude token is added later) must neither stop the run nor drop the
       # other field. Without the token the run uses the API key, without the webhook
       # it reports nowhere (visible warning).
       - name: Load notify webhook from 1Password
-        if: env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        if: env.HAVE_OP_TOKEN == 'true'
         continue-on-error: true
         uses: 1password/load-secrets-action@v4
         with:
@@ -136,7 +133,7 @@ jobs:
           SEO_NOTIFY_WEBHOOK: ${{ format('op://{0}/seo-cli/SEO_NOTIFY_WEBHOOK', inputs.op_vault) }}
 
       - name: Load Claude Code token from 1Password
-        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true'
         continue-on-error: true
         uses: 1password/load-secrets-action@v4
         with:
@@ -147,7 +144,7 @@ jobs:
 
       # Non-fatal like the others: without the field Bing is skipped with a warning. Run and watch mode.
       - name: Load Bing key from 1Password
-        if: env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        if: env.HAVE_OP_TOKEN == 'true'
         continue-on-error: true
         uses: 1password/load-secrets-action@v4
         with:
@@ -158,7 +155,7 @@ jobs:
 
       # Non-fatal like the others: without the field Rybbit is skipped with a warning (run mode only, the watcher does not use it).
       - name: Load Rybbit key from 1Password
-        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true' && env.SHARED_VAULT == 'true'
+        if: inputs.mode != 'watch' && env.HAVE_OP_TOKEN == 'true'
         continue-on-error: true
         uses: 1password/load-secrets-action@v4
         with:
