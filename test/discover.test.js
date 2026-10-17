@@ -38,6 +38,22 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('discover-run', () => {
+  it('leaves a pr_opened keyword with a pr_url to the reconcile step, even when its file is on disk', async () => {
+    mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+    writeFileSync(join(dir, 'resources/landing/de/a.md'), '---\nslug: a\n---\n');
+    writeFileSync(join(dir, 'resources/landing/de/b.md'), '---\nslug: b\n---\n');
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/keywords.json'), JSON.stringify({ keywords: [
+      { keyword: 'a', status: 'pr_opened', target_slug: 'a', pr_url: 'https://github.com/o/r/pull/1' },
+      { keyword: 'b', status: 'pr_opened', target_slug: 'b' },
+    ] }));
+    querySearchAnalytics.mockResolvedValue([]);
+
+    const data = await discover(config, dir);
+    expect(data.keywords.find(k => k.keyword === 'a').status).toBe('pr_opened');
+    expect(data.keywords.find(k => k.keyword === 'b').status).toBe('done');
+  });
+
   it('scores GSC candidates and proposes those above the cutoff', async () => {
     querySearchAnalytics.mockResolvedValue([
       { keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 },

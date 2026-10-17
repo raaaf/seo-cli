@@ -1,4 +1,5 @@
 import { defaultLocale } from '../lib/config.js';
+import { addDays } from '../lib/measure.js';
 import { fetchForDiagnosis, diagnoseUrl, sameUrl } from '../lib/diagnose.js';
 import { isIndexed } from '../lib/index-status.js';
 import { submitSitemap } from '../lib/gsc.js';
@@ -101,7 +102,8 @@ export async function diagnoseAlerts({ alerts, entries, config, today, fetch = f
     } else if (resultKey(previous) === resultKey(result)) {
       delete alert.pending_codes;
     } else if (result.cause !== 'unknown') {
-      if (alert.pending_codes && resultKey(alert.pending_codes) === resultKey(result)) {
+      // Two runs in a row: the pending result must be yesterday's, an `unknown` day in between starts over.
+      if (alert.pending_codes && resultKey(alert.pending_codes) === resultKey(result) && alert.pending_codes.date === addDays(today, -1)) {
         delete alert.pending_codes;
         write();
         updated.push(alert);

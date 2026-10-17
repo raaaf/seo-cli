@@ -144,6 +144,18 @@ describe('claude-complete', () => {
       .rejects.toThrow(/max_tokens.*4096.*4096/s);
   });
 
+  it('a failing batch poll cancels the batch and falls back once, without a second batch', async () => {
+    batchCreate.mockResolvedValue({ id: 'batch_poll', processing_status: 'in_progress' });
+    batchRetrieve.mockRejectedValue(Object.assign(new Error('overloaded'), { status: 529 }));
+    batchCancel.mockResolvedValue({});
+    stream.mockReturnValue(streamsTo(reply('interactive text')));
+    const text = await complete({ system: 's', prompt: 'p', batch: true, batchPollMs: 1 });
+    expect(text).toBe('interactive text');
+    expect(batchCreate).toHaveBeenCalledTimes(1);
+    expect(batchCancel).toHaveBeenCalledWith('batch_poll');
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
   it('batch success returns the batch result text and never calls messages.stream', async () => {
     batchCreate.mockResolvedValue({ id: 'batch_1', processing_status: 'ended' });
     batchRetrieve.mockResolvedValue({ processing_status: 'ended' });
