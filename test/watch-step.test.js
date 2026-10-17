@@ -546,3 +546,113 @@ describe('watch-step: Bing', () => {
     expect(diagnose.mock.calls[2][0].bing).toBeNull();
   });
 });
+
+describe('watch-step: AI crawlers and structured data', () => {
+  const PAGE = url('page');
+  const LD = '<html><head><title>T</title><script type="application/ld+json">{"@type":"Organization"}</script></head></html>';
+  const BARE = '<html><head><title>T</title></head></html>';
+  const AI = { ...CONFIG, watch: { ai_crawlers: true, structured_data: false } };
+  const DATA = { ...CONFIG, watch: { ai_crawlers: false, structured_data: true } };
+  // Answers by user agent: `blocked` bot tokens get 403, everyone else (and the browser) the page.
+  const fake = ({ blocked = [], browser = 200, robots = 'User-agent: *\nAllow: /\n', html = LD } = {}) => vi.fn(async (u, { ua }) => {
+    if (u.endsWith('/robots.txt')) return { status: 200, headers: {}, html: robots };
+    if (blocked.some(t => ua.includes(t))) return { status: 403, headers: {}, html: '<html>no</html>' };
+    return { status: browser, headers: {}, html };
+  });
+  const alertsText = () => readFileSync(join(dir, 'seo/alerts.json'), 'utf8');
+  const OAI = 'OAI-SearchBot';
+
+  it('opens ai_crawler_blocked on the second day of a live block, after the bot was ok once', async () => {
+    await go('2026-10-07', { config: AI, fetchBot: fake() });
+    const blocked = fake({ blocked: [OAI] });
+    expect((await go('2026-10-08', { config: AI, fetchBot: blocked })).alerts.opened).toEqual([]);
+    const report = await go('2026-10-09', { config: AI, fetchBot: blocked });
+    expect(report.alerts.opened).toMatchObject([{ id: 'ai_crawler_blocked', detail: [{ token: OAI, via: 'live', status: 403 }] }]);
+    expect(report.ai_crawlers.search).toHaveLength(6);
+    expect(report.ai_crawlers.training).toHaveLength(4);
+    expect(report.errors).toEqual([]);
+  });
+
+  it('only warns for a bot that was never ok, and for a firewall that turns the browser away too', async () => {
+    const report = await go('2026-10-07', { config: AI, fetchBot: fake({ blocked: [OAI] }) });
+    expect(report.warnings.join()).toMatch(/never seen ok from this runner, report only: OAI-SearchBot/);
+    await go('2026-10-08', { config: AI, fetchBot: fake({ blocked: [OAI] }) });
+    const third = await go('2026-10-09', { config: AI, fetchBot: fake({ blocked: [OAI] }) });
+    expect(third.alerts.opened).toEqual([]);
+
+    const both = await go('2026-10-10', { config: AI, fetchBot: fake({ blocked: ['Mozilla'], browser: 403 }) });
+    expect(both.alerts.opened).toEqual([]);
+    expect(both.warnings.join()).toMatch(/could not decide for bots/);
+  });
+
+  it('opens at once for a robots.txt block of a search bot and reports a blocked training bot without alerting', async () => {
+    const robots = 'User-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: GPTBot\nDisallow: /\n';
+    const report = await go('2026-10-07', { config: AI, fetchBot: fake({ robots }) });
+    expect(report.alerts.opened).toMatchObject([{ id: 'ai_crawler_blocked', detail: [{ token: OAI, via: 'robots' }] }]);
+    expect(report.ai_crawlers.training.find(b => b.token === 'GPTBot')).toMatchObject({ robots: 'blocked' });
+  });
+
+  it('keeps a robots alert for a sitemap path open on a day the index check failed', async () => {
+    const robots = 'User-agent: OAI-SearchBot\nDisallow: /a\n';
+    nextIndex.entries = [entry('a', OK)];
+    const first = await go('2026-10-07', { config: AI, fetchBot: fake({ robots }) });
+    expect(first.alerts.opened).toMatchObject([{ id: 'ai_crawler_blocked', detail: [{ token: OAI, via: 'robots', paths: ['/a'] }] }]);
+    nextIndex.error = new Error('quota');
+    try {
+      const second = await go('2026-10-08', { config: AI, fetchBot: fake({ robots }) });
+      expect(second.alerts.resolved).toEqual([]);
+      expect(second.open_alerts.map(a => a.id)).toContain('ai_crawler_blocked');
+    } finally {
+      nextIndex.error = null;
+    }
+  });
+
+  it('fetches nothing with both switches off and leaves alerts.json as it is', async () => {
+    const fetchBot = fake();
+    await go('2026-10-07', { fetchBot });
+    expect(fetchBot).not.toHaveBeenCalled();
+    expect(alertsFile().ai_crawlers).toBeUndefined();
+  });
+
+  it('leaves alerts.json byte-identical for two identical runs', async () => {
+    const run = () => go('2026-10-07', { config: { ...CONFIG, watch: { ai_crawlers: true, structured_data: true } }, fetchBot: fake({ blocked: [OAI], html: BARE }) });
+    await run();
+    const first = alertsText();
+    await run();
+    expect(alertsText()).toBe(first);
+  });
+
+  it('treats fetches past the deadline as unknown: no alert, one warning', async () => {
+    const fetchBot = fake({ blocked: [OAI] });
+    const report = await go('2026-10-07', { config: { ...CONFIG, watch: { ai_crawlers: true, structured_data: true } }, fetchBot, crawlDeadlineMs: 0 });
+    expect(fetchBot).not.toHaveBeenCalled();
+    expect(report.alerts.opened).toEqual([]);
+    expect(report.warnings.join()).toMatch(/could not decide for bots: OAI-SearchBot/);
+    expect(report.warnings.join()).toMatch(/could not decide for pages: page/);
+  });
+
+  it('opens structured_data on the second day of a page without JSON-LD', async () => {
+    const fetchBot = fake({ html: BARE });
+    const first = await go('2026-10-07', { config: DATA, fetchBot });
+    expect(first.alerts.opened).toEqual([]);
+    expect(first.structured_data).toMatchObject({ checked: 1, findings: [{ slug: 'page', codes: ['jsonld_missing'] }] });
+    expect(fetchBot.mock.calls.map(c => c[0])).toEqual([PAGE]);
+    const second = await go('2026-10-08', { config: DATA, fetchBot });
+    expect(second.alerts.opened).toMatchObject([{ id: 'structured_data', detail: [{ slug: 'page', codes: ['jsonld_missing'] }] }]);
+    const fixed = await go('2026-10-09', { config: DATA, fetchBot: fake() });
+    expect(fixed.alerts.resolved.map(a => a.id)).toEqual(['structured_data']);
+  });
+
+  it('runs both checks for a watch-only project without landing_path', async () => {
+    const report = await go('2026-10-07', { config: { ...CONFIG, landing_path: undefined, watch: { ai_crawlers: true, structured_data: true } }, fetchBot: fake() });
+    expect(report.ai_crawlers.search.length + report.ai_crawlers.training.length).toBe(10);
+    expect(report.structured_data).toEqual({ checked: 0, findings: [] });
+    expect(report.warnings).toEqual([]);
+  });
+
+  it('reports FAQ items in the frontmatter without a FAQPage type', async () => {
+    writeFileSync(join(dir, 'content/de/page.md'), '---\nfaq:\n  - q: Q\n    a: A\n---\n');
+    const report = await go('2026-10-07', { config: DATA, fetchBot: fake() });
+    expect(report.structured_data.findings).toEqual([{ slug: 'page', codes: ['faqpage_missing'] }]);
+  });
+});

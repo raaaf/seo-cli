@@ -82,7 +82,7 @@ describe('config-load: loadConfig', () => {
     expect(cfg.overlays).toBeNull();
     expect(cfg.catalog_url).toBeNull();
     expect(cfg.reserved_slugs).toEqual([]);
-    expect(cfg.watch).toEqual({ check_deploy: false });
+    expect(cfg.watch).toEqual({ check_deploy: false, ai_crawlers: true, structured_data: true, ai_crawlers_ignore: [] });
     expect(cfg.config_warnings).toBeUndefined();
   });
 
@@ -101,6 +101,7 @@ describe('config-load: loadConfig', () => {
     expect(cfg.page_contract.body_words).toEqual([300, 600]);
     expect(cfg.overlays.products).toBe('content/seo/products');
     expect(cfg.watch.check_deploy).toBe(true);
+    expect(cfg.watch).toMatchObject({ ai_crawlers: true, structured_data: true });
   });
 
   it('ignores malformed Etappe D keys with warnings', () => {
@@ -110,7 +111,7 @@ describe('config-load: loadConfig', () => {
     expect(cfg.page_contract).toBeNull();
     expect(cfg.overlays).toBeNull();
     expect(cfg.reserved_slugs).toEqual([]);
-    expect(cfg.watch).toEqual({ check_deploy: false });
+    expect(cfg.watch).toEqual({ check_deploy: false, ai_crawlers: true, structured_data: true, ai_crawlers_ignore: [] });
     expect(cfg.config_warnings).toHaveLength(3);
   });
 

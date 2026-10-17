@@ -3,7 +3,7 @@ import { join } from 'path';
 import { defaultLocale, localeLandingPath, localeUrlPath, siteInfo } from '../lib/config.js';
 import { format } from '../lib/date.js';
 import { queryPageTotals } from '../lib/gsc.js';
-import { getExistingSlugs } from '../lib/landings.js';
+import { getExistingSlugs, getExistingPages } from '../lib/landings.js';
 import { urlToSlug, addDays, overlayUrl } from '../lib/measure.js';
 import { safeFetch } from '../lib/safe-fetch.js';
 import { listRecentlyMergedSeoPRs } from '../lib/github.js';
@@ -14,6 +14,8 @@ import { checkIndexStatus } from './index-check.js';
 import { diagnoseAlerts, submitFixes } from './diagnose.js';
 import { siteUrl, knowsSite, getUserSites, getCrawlIssues, getUrlInfo, isCrawled, normalizeUrl } from '../lib/bing.js';
 import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
+import { AI_BOTS, BROWSER_UA, botUserAgent, robotsRules, robotsAccess, liveVerdict, liveSummary } from '../lib/ai-crawlers.js';
+import { structuredDataFindings } from '../lib/structured-data.js';
 
 // A clean alert that stays unindexed must not make Google and IndexNow hear from us every day.
 const RESUBMIT_EVERY_DAYS = 7;
@@ -139,12 +141,132 @@ async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, op
 // after 10 calls per host (ThrottleHost, measured 2026-10-08), so 10 it is.
 const BING_URLS_PER_DAY = 10;
 
-// Today's section of the sorted sitemap, stateless: the start moves by BING_URLS_PER_DAY per day and wraps around.
-function bingSection(urls, today) {
+// Today's section of the sorted sitemap, stateless: the start moves by `n` per day and wraps around.
+function bingSection(urls, today, n = BING_URLS_PER_DAY) {
   const sorted = [...urls].sort();
   const day = Math.floor(Date.parse(`${today}T00:00:00Z`) / DAY_MS);
-  const start = (day * BING_URLS_PER_DAY) % (sorted.length || 1);
-  return Array.from({ length: Math.min(BING_URLS_PER_DAY, sorted.length) }, (_, i) => sorted[(start + i) % sorted.length]);
+  const start = (day * n) % (sorted.length || 1);
+  return Array.from({ length: Math.min(n, sorted.length) }, (_, i) => sorted[(start + i) % sorted.length]);
+}
+
+// AI crawler access and structured data share one pool of fetches: 5 at a time, 60 s in total, so the slow part
+// cannot hold up the alerts. A fetch that fails or misses the deadline has no result and decides nothing.
+const CRAWL_CONCURRENCY = 5;
+const CRAWL_DEADLINE_MS = 60_000;
+const MAX_CRAWL_HTML = 1_000_000;
+const STRUCTURED_PAGES_PER_DAY = 10;
+
+/** `{ status, headers (lowercase keys), html, truncated }` of a GET as the given user agent. Throws on DNS, timeout and the like. */
+async function fetchAsBot(url, { ua, timeoutMs }) {
+  const res = await safeFetch(url, { headers: { 'user-agent': ua }, signal: AbortSignal.timeout(timeoutMs) });
+  const text = await res.text();
+  return { status: res.status, headers: Object.fromEntries(res.headers), html: text.slice(0, MAX_CRAWL_HTML), truncated: text.length > MAX_CRAWL_HTML };
+}
+
+// Runs the jobs `{ key, url, ua }`; returns a Map key to result for those that answered.
+async function fetchPool(jobs, { fetchBot, deadlineMs }) {
+  const results = new Map();
+  const end = Date.now() + deadlineMs;
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      const left = end - Date.now();
+      if (left <= 0) return;
+      try {
+        results.set(job.key, await fetchBot(job.url, { ua: job.ua, timeoutMs: Math.min(LIVE_TIMEOUT_MS, left) }));
+      } catch {
+        // no result: unknown
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CRAWL_CONCURRENCY, jobs.length) }, worker));
+  return results;
+}
+
+// Landing pages of the default and the counterpart locale with their public URL and whether the frontmatter has FAQ items.
+function landingPages(config, cwd, base) {
+  if (!config.landing_path) return [];
+  const def = defaultLocale(config);
+  const locales = [def, ...(config.counterpart_locale && config.counterpart_locale !== def ? [config.counterpart_locale] : [])];
+  return locales.flatMap(locale => getExistingPages(config, cwd, locale).map(p => ({
+    slug: p.slug,
+    url: `${base}${locale === def ? '' : config.counterpart_url_prefix || ''}/${p.slug}`,
+    hasFaq: p.faq.length > 0,
+  })));
+}
+
+// Bots and pages the run could not decide, for one warning.
+const undecided = (label, items) => (items.length ? [`${label}: ${items.join(', ')}`] : []);
+
+// `aiCrawlers` and `structuredData` inputs of evaluateWatch (see there) plus their report parts. The switches are
+// `watch.ai_crawlers` and `watch.structured_data`; a switched-off check is `{ disabled: true }` and fetches nothing.
+// Per run: robots.txt, the home page and one rotating page as each search bot and as a browser, and up to 10
+// landing pages (plus those with an open or pending finding) for their JSON-LD.
+async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchBot, deadlineMs }) {
+  const wantAi = Boolean(config.watch?.ai_crawlers);
+  const wantData = Boolean(config.watch?.structured_data);
+  const base = String(config.base_url || '').replace(/\/+$/, '');
+  const idle = (want) => (want ? null : { disabled: true });
+  if (!base || !(wantAi || wantData)) return { aiCrawlers: idle(wantAi), structuredData: idle(wantData), report: {} };
+
+  const sitemapUrls = (entries ?? []).map(e => e.url);
+  const jobs = [];
+  const liveUrls = [...new Set([`${base}/`, ...bingSection(sitemapUrls, today, 1)])];
+  if (wantAi) {
+    jobs.push({ key: 'robots', url: `${base}/robots.txt`, ua: BROWSER_UA });
+    for (const url of liveUrls) jobs.push({ key: `browser:${url}`, url, ua: BROWSER_UA });
+    for (const bot of AI_BOTS.filter(b => b.live)) {
+      for (const url of liveUrls) jobs.push({ key: `${bot.token}:${url}`, url, ua: botUserAgent(bot.token) });
+    }
+  }
+  const pages = wantData ? landingPages(config, cwd, base) : [];
+  const tracked = new Set([...(state.open.find(a => a.id === 'structured_data')?.detail ?? []).map(d => d.slug), ...Object.keys(state.structured_data?.pending ?? {})]);
+  const today10 = new Set(bingSection(pages.map(p => p.url), today, STRUCTURED_PAGES_PER_DAY));
+  const fetched = pages.filter(p => today10.has(p.url) || tracked.has(p.slug));
+  for (const p of fetched) jobs.push({ key: `data:${p.slug}`, url: p.url, ua: BROWSER_UA });
+  const results = await fetchPool(jobs, { fetchBot, deadlineMs });
+  const report = {};
+  let aiCrawlers = { disabled: true };
+  let structuredData = { disabled: true };
+
+  if (wantAi) {
+    const robots = results.get('robots');
+    const groups = robots ? robotsRules(robots.status, robots.html) : null;
+    const paths = [...new Set(['/', ...sitemapUrls.map(u => { const x = new URL(u); return x.pathname + x.search; })])];
+    const bots = AI_BOTS.map((bot) => {
+      const access = bot.robots ? robotsAccess(groups, bot.token, paths) : null;
+      // Without the sitemap only `/` was judged: `allowed` there says nothing about the sitemap paths of an open alert.
+      if (access && !entries && access.verdict === 'allowed') access.verdict = 'unknown';
+      const live = bot.live ? liveSummary(liveUrls.map(url => liveVerdict({ bot: results.get(`${bot.token}:${url}`) ?? null, browser: results.get(`browser:${url}`) ?? null }))) : null;
+      return { token: bot.token, kind: bot.kind, robots: access?.verdict ?? null, paths: access?.paths ?? [], live: live?.verdict ?? null, status: live?.status ?? null };
+    });
+    const ignore = Array.isArray(config.watch.ai_crawlers_ignore) ? config.watch.ai_crawlers_ignore : [];
+    const search = bots.filter(b => b.kind === 'search');
+    const watched = search.filter(b => !ignore.includes(b.token));
+    aiCrawlers = { bots, ignore };
+    report.ai_crawlers = {
+      robots: robots?.status ?? null,
+      search: search.map(({ token, robots: verdict, paths: blocked, live, status }) => ({ token, robots: verdict, paths: blocked, live, status })),
+      training: bots.filter(b => b.kind === 'training').map(({ token, robots: verdict, paths: blocked }) => ({ token, robots: verdict, paths: blocked })),
+    };
+    warnings.push(
+      ...undecided('AI bots blocked live but never seen ok from this runner, report only', watched.filter(b => b.live === 'blocked' && !state.ai_crawlers?.ok_seen?.[b.token]).map(b => b.token)),
+      ...undecided('AI crawler check could not decide for bots', watched.filter(b => b.live === 'unknown' || b.robots === 'unknown').map(b => b.token)),
+    );
+  }
+
+  if (wantData) {
+    const checked = fetched.map((p) => {
+      const res = results.get(`data:${p.slug}`);
+      const ok = res && res.status >= 200 && res.status < 300;
+      return { slug: p.slug, codes: ok ? structuredDataFindings({ html: res.html, hasFaq: p.hasFaq, truncated: res.truncated }) : null };
+    });
+    structuredData = { slugs: pages.map(p => p.slug), results: checked };
+    report.structured_data = { checked: checked.filter(r => r.codes !== null).length, findings: checked.filter(r => r.codes?.length) };
+    warnings.push(...undecided('Structured data check could not decide for pages', checked.filter(r => r.codes === null).map(r => r.slug)));
+  }
+  return { aiCrawlers, structuredData, report };
 }
 
 // `bing` input of evaluateWatch, see there. Live calls, no cache. A site Bing does not know warns once
@@ -214,7 +336,7 @@ function resetResubmitOnTechnical(alerts, causeBefore) {
  * report: `status` is `failed`, `alert` (something opened), `resolved` (only
  * resolutions) or `watch_ok`.
  */
-export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()), diagnose = diagnoseAlerts, submit = submitFixes, fetchPage = fetchLive, listPRs = listRecentlyMergedSeoPRs, now = Date.now(), bingApi = { getUserSites, getCrawlIssues, getUrlInfo, isCrawled } }) {
+export async function watch({ config, cwd = process.cwd(), dryRun = false, today = format(new Date()), diagnose = diagnoseAlerts, submit = submitFixes, fetchPage = fetchLive, listPRs = listRecentlyMergedSeoPRs, now = Date.now(), bingApi = { getUserSites, getCrawlIssues, getUrlInfo, isCrawled }, fetchBot = fetchAsBot, crawlDeadlineMs = CRAWL_DEADLINE_MS }) {
   const warnings = [];
   const state = loadAlerts(cwd, warnings);
 
@@ -246,7 +368,15 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   // Bing is a second signal: its trouble is a warning or a `bing_blind` alert, never an error.
   const bing = await checkBing({ config, today, entries, state, warnings, api: bingApi });
 
-  const { state: next, opened, resolved } = evaluateWatch(state, { today, entries, traffic, liveChecks, bing });
+  // AI crawler access and structured data, like Bing: warnings, never errors, never `watch_blind`.
+  let crawl = { aiCrawlers: null, structuredData: null, report: {} };
+  try {
+    crawl = await checkCrawl({ config, cwd, today, entries, state, warnings, fetchBot, deadlineMs: crawlDeadlineMs });
+  } catch (e) {
+    warnings.push(`AI crawler and structured data checks failed: ${e.message}`);
+  }
+
+  const { state: next, opened, resolved, updated: changed } = evaluateWatch(state, { today, entries, traffic, liveChecks, bing, aiCrawlers: crawl.aiCrawlers, structuredData: crawl.structuredData });
   // Saved before the slow part, so a hanging fetch cannot lose the alerts.
   if (!dryRun) saveAlerts(next, cwd);
 
@@ -259,13 +389,13 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
       return null;
     }
   };
-  let updated = [];
+  let updated = changed;
   let resubmitted = [];
   if (entries) {
     const causeBefore = new Map(next.open.map(a => [a.id, a.diagnosis?.cause]));
     const diagnosed = await guarded('Diagnosis', () => diagnose({ alerts: next.open, entries, config, today, bing: bing?.urls ? { site: siteUrl(config), ...bingApi, crawled: bing.crawled } : null }));
     resetResubmitOnTechnical(next.open, causeBefore);
-    updated = (diagnosed?.updated ?? []).filter(a => !opened.includes(a));
+    updated = [...changed, ...(diagnosed?.updated ?? []).filter(a => !opened.includes(a))];
     if (!dryRun) resubmitted = (await guarded('Resubmit', () => resubmitClean(next, { config, today, submit }))) ?? [];
     if (!dryRun) saveAlerts(next, cwd);
   }
@@ -274,6 +404,6 @@ export async function watch({ config, cwd = process.cwd(), dryRun = false, today
   const status = errors.length ? 'failed' : opened.length || updated.length ? 'alert' : resolved.length ? 'resolved' : 'watch_ok';
   return {
     status, mode: 'watch', prs: [], site: siteInfo(config), alerts: { opened, updated, resolved, resubmitted }, open_alerts: next.open,
-    traffic: traffic && { status: traffic.status, drop: traffic.drop }, warnings, errors,
+    traffic: traffic && { status: traffic.status, drop: traffic.drop }, ...crawl.report, warnings, errors,
   };
 }

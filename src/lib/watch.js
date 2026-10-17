@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { addDays } from './measure.js';
 import { isIndexed } from './index-status.js';
+import { AI_BOTS } from './ai-crawlers.js';
 
 // Rules of the watcher: traffic windows, thresholds, alert state. Pure except
 // loadAlerts/saveAlerts; GSC access lives in steps/watch.js.
@@ -32,6 +33,12 @@ const BING_RESOLVE_FROM = 0.5;
 const BING_BLIND_AFTER_DAYS = 3;
 const BING_ISSUE_URLS_SHOWN = 3;
 const BING_ALERT_IDS = ['bing_blind', 'bing_crawl_issues', 'bing_site_not_crawled'];
+// AI crawlers and structured data: a live block or a page finding opens on the second run in a row; a robots.txt block at once.
+const CRAWL_OPEN_AFTER_RUNS = 2;
+const SEARCH_BOTS = AI_BOTS.filter(b => b.kind === 'search').map(b => b.token);
+const BLOCKED_PATHS_SHOWN = 5;
+const byKey = (key) => (a, b) => (a[key] < b[key] ? -1 : 1);
+const sortedEntries = (obj) => Object.fromEntries(Object.entries(obj).sort(([a], [b]) => (a < b ? -1 : 1)));
 
 export function emptyAlerts() {
   return { version: 1, open: [], known_indexed: [], traffic_pending: null, failures: 0 };
@@ -144,6 +151,82 @@ function evaluateBing(next, bing, { today, open, close, isOpen }) {
   }
 }
 
+// Writes `value` under `key` of the state, or removes the key when it is empty, so an idle check leaves no trace in the file.
+function putState(next, key, value) {
+  for (const k of Object.keys(value)) if (!Object.keys(value[k]).length) delete value[k];
+  if (Object.keys(value).length) next[key] = value;
+  else delete next[key];
+}
+
+// AI crawler part of one run, on `next.ai_crawlers` (`pending[token]` live blocks counting up, `ok_seen[token]` once a
+// bot got through live). `aiCrawlers.bots` has the bots' `robots`/`live` verdicts, `ignore` the tokens left out.
+// A live block counts only for bots that were `ok` from this runner before (a firewall rule that only hits spoofed
+// user agents is no alert). Whatever a run cannot decide keeps its entry from the open alert.
+function evaluateAiCrawlers(next, { bots, ignore }, { today, settle, alertDetail }) {
+  const pending = { ...next.ai_crawlers?.pending };
+  const okSeen = { ...next.ai_crawlers?.ok_seen };
+  const previous = new Map((alertDetail('ai_crawler_blocked') ?? []).map(d => [d.token, d]));
+  const blocked = [];
+  for (const token of SEARCH_BOTS.filter(t => !ignore.includes(t))) {
+    const bot = bots.find(b => b.token === token) ?? {};
+    const prev = previous.get(token);
+    if (bot.live === 'ok') {
+      okSeen[token] = true;
+      delete pending[token];
+    }
+    if (bot.live === 'blocked' && !okSeen[token]) delete pending[token];
+    // A robots.txt verdict is deterministic: a robots entry drops once robots.txt allows the bot, whatever the live fetch says.
+    let entry = prev?.via === 'robots' && bot.robots === 'allowed' ? null : prev;
+    if (bot.robots === 'blocked') {
+      entry = { token, via: 'robots', paths: bot.paths.slice(0, BLOCKED_PATHS_SHOWN) };
+    } else if (bot.live === 'blocked' && okSeen[token]) {
+      if (prev?.via === 'live') {
+        entry = { token, via: 'live', status: bot.status };
+      } else {
+        pending[token] = bumpPending(pending[token], today);
+        if (pending[token].count >= CRAWL_OPEN_AFTER_RUNS) {
+          entry = { token, via: 'live', status: bot.status };
+          delete pending[token];
+        }
+      }
+    } else if (bot.live === 'ok' && bot.robots !== 'unknown') {
+      entry = null;
+    }
+    if (entry) blocked.push(entry);
+  }
+  // `ok_seen` survives an ignore, so un-ignoring a bot keeps its history; only the pending count is dropped.
+  const keep = (map, skip = []) => sortedEntries(Object.fromEntries(Object.entries(map).filter(([t]) => SEARCH_BOTS.includes(t) && !skip.includes(t))));
+  putState(next, 'ai_crawlers', { pending: keep(pending, ignore), ok_seen: keep(okSeen) });
+  settle('ai_crawler_blocked', blocked.sort(byKey('token')));
+}
+
+// Structured data part, on `next.structured_data.pending[slug]`. `results` is `[{ slug, codes }]` for the pages fetched
+// today (`codes` null: could not be judged), `slugs` every landing page still on disk; others fall out of detail and state.
+// A page joins the alert on its second run in a row with a finding; undecided pages keep their entry.
+function evaluateStructuredData(next, { slugs, results }, { today, settle, alertDetail }) {
+  const onDisk = new Set(slugs);
+  const pending = Object.fromEntries(Object.entries(next.structured_data?.pending ?? {}).filter(([slug]) => onDisk.has(slug)));
+  const previous = new Map((alertDetail('structured_data') ?? []).filter(d => onDisk.has(d.slug)).map(d => [d.slug, d]));
+  const findings = new Map(previous);
+  for (const { slug, codes } of results.filter(r => onDisk.has(r.slug))) {
+    if (codes === null) continue;
+    if (!codes.length) {
+      delete pending[slug];
+      findings.delete(slug);
+    } else if (previous.has(slug)) {
+      findings.set(slug, { slug, codes });
+    } else {
+      pending[slug] = bumpPending(pending[slug], today);
+      if (pending[slug].count >= CRAWL_OPEN_AFTER_RUNS) {
+        findings.set(slug, { slug, codes });
+        delete pending[slug];
+      }
+    }
+  }
+  putState(next, 'structured_data', { pending: sortedEntries(pending) });
+  settle('structured_data', [...findings.values()].sort(byKey('slug')));
+}
+
 /**
  * Applies one watch run to the alert state. `entries` is the current index
  * snapshot, `traffic` the result of `trafficChange`; null for either means that
@@ -160,11 +243,16 @@ function evaluateBing(next, bing, { today, open, close, isOpen }) {
  * no key (its open alerts close with reason `bing_disabled`),
  * `{ error }` for a failed Bing call, else `{ urls, issues, crawled }`: the sitemap URLs, those with
  * crawl issues and today's crawled booleans. Bing never counts towards `failures`.
+ *
+ * `aiCrawlers` and `structuredData` follow the same convention (`null`: untouched, `{ disabled: true }`: their alerts
+ * close with reason `<check>_disabled`, else `{ bots, ignore }` resp. `{ slugs, results }`, see the evaluators). Neither
+ * counts towards `failures`. An open alert whose detail changed is listed in `updated`.
  */
-export function evaluateWatch(state, { today, entries, traffic, liveChecks = null, bing = null }) {
+export function evaluateWatch(state, { today, entries, traffic, liveChecks = null, bing = null, aiCrawlers = null, structuredData = null }) {
   const next = { ...emptyAlerts(), ...state, open: [...(state.open ?? [])] };
   const opened = [];
   const resolved = [];
+  const updated = [];
   const isOpen = (id) => next.open.some(a => a.id === id);
   const open = (id, kind, detail, extra = {}) => {
     if (isOpen(id)) return;
@@ -177,6 +265,17 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
     if (!alert) return;
     next.open = next.open.filter(a => a !== alert);
     resolved.push(reason ? { ...alert, reason } : alert);
+  };
+  const alertDetail = (id) => next.open.find(a => a.id === id)?.detail;
+  // One aggregated alert per check: opens with its detail, follows a changed detail, closes when it is empty.
+  const settle = (id, detail) => {
+    const alert = next.open.find(a => a.id === id);
+    if (!detail.length) return close(id);
+    if (!alert) return open(id, id, detail);
+    if (JSON.stringify(alert.detail) === JSON.stringify(detail)) return;
+    const changed = { ...alert, detail };
+    next.open = next.open.map(a => (a === alert ? changed : a));
+    updated.push(changed);
   };
 
   if (entries) {
@@ -246,6 +345,19 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
   if (bing?.disabled) for (const id of BING_ALERT_IDS) close(id, 'bing_disabled');
   else if (bing) evaluateBing(next, bing, { today, open, close, isOpen });
 
+  const crawlCtx = { today, settle, alertDetail };
+  for (const [input, id, reason, evaluate, key] of [
+    [aiCrawlers, 'ai_crawler_blocked', 'ai_crawlers_disabled', evaluateAiCrawlers, 'ai_crawlers'],
+    [structuredData, 'structured_data', 'structured_data_disabled', evaluateStructuredData, 'structured_data'],
+  ]) {
+    if (input?.disabled) {
+      for (const alert of next.open.filter(a => a.kind === id)) close(alert.id, reason);
+      delete next[key];
+    } else if (input) {
+      evaluate(next, input, crawlCtx);
+    }
+  }
+
   if (!entries || !traffic) {
     next.failures += 1;
     if (next.failures >= BLIND_AFTER_FAILURES) open('watch_blind', 'watch_blind', `${next.failures} failed checks in a row, the watcher cannot see`);
@@ -254,5 +366,5 @@ export function evaluateWatch(state, { today, entries, traffic, liveChecks = nul
     close('watch_blind');
   }
 
-  return { state: next, opened, resolved };
+  return { state: next, opened, resolved, updated };
 }
