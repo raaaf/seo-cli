@@ -91,6 +91,14 @@ describe('claude-complete', () => {
     expect(stream).toHaveBeenCalledTimes(1);
   });
 
+  it('puts the cache marker at the top level, not on the short system prompt', async () => {
+    stream.mockReturnValue(streamsTo(reply('ok')));
+    await complete({ system: 's', prompt: 'p' });
+    const params = stream.mock.calls[0][0];
+    expect(params.cache_control).toEqual({ type: 'ephemeral' });
+    expect(params.system).toBe('s');
+  });
+
   it('extracts JSON from a ```json fence', async () => {
     stream.mockReturnValue(streamsTo(reply('```json\n{"a":1}\n```')));
     expect(await complete({ system: 's', prompt: 'p', json: true })).toEqual({ a: 1 });

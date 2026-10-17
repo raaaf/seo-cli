@@ -6,10 +6,11 @@ import { format } from './date.js';
 
 export const INDEX_STATUS_FILE = 'seo/index-status.json';
 
-// Google's URL Inspection API is quota-limited (~2000 inspections/day per
-// property) and bursts get 429s. A fixed gap between calls keeps a normal-sized
-// sitemap (well under the daily quota) from tripping the burst limiter.
-const INSPECTION_DELAY_MS = 1000;
+// Google's URL Inspection API allows 2000 inspections/day and 600/minute per
+// property (developers.google.com/webmaster-tools/limits). A 150 ms gap keeps a
+// run under 400/minute even with instant answers; it was 1 s, which made a
+// 500-URL sitemap take over 8 minutes every day.
+const INSPECTION_DELAY_MS = 150;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

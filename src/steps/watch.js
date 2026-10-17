@@ -141,12 +141,33 @@ async function checkDeploys({ config, cwd, now, warnings, fetchPage, listPRs, op
 // after 10 calls per host (ThrottleHost, measured 2026-10-08), so 10 it is.
 const BING_URLS_PER_DAY = 10;
 
-// Today's section of the sorted sitemap, stateless: the start moves by `n` per day and wraps around.
-function bingSection(urls, today, n = BING_URLS_PER_DAY) {
+// The sorted list rotated so it starts where today's section starts: the start moves by `step` per day.
+function rotated(urls, today, step) {
   const sorted = [...urls].sort();
   const day = Math.floor(Date.parse(`${today}T00:00:00Z`) / DAY_MS);
-  const start = (day * n) % (sorted.length || 1);
-  return Array.from({ length: Math.min(n, sorted.length) }, (_, i) => sorted[(start + i) % sorted.length]);
+  const start = (day * step) % (sorted.length || 1);
+  return [...sorted.slice(start), ...sorted.slice(0, start)];
+}
+
+// Today's section of the sorted sitemap, stateless: the start moves by `n` per day and wraps around.
+function bingSection(urls, today, n = BING_URLS_PER_DAY) {
+  return rotated(urls, today, n).slice(0, n);
+}
+
+// Two of the daily Bing checks always go to URLs already seen crawled, so a stale `true` is
+// refreshed eventually; the rest go to URLs not yet checked, then to those seen uncrawled. A
+// crawled URL rarely turns back, so rechecking them in plain sitemap order took a 500-URL
+// sitemap 50 days to reach a page Bing had never been asked about.
+const BING_RECHECK_SLOTS = 2;
+
+// Today's Bing URLs: `crawled` is the stored map (url -> boolean), each group in its rotating section.
+function bingPicks(urls, crawled = {}, today, n = BING_URLS_PER_DAY) {
+  const unknown = urls.filter(u => typeof crawled[u] !== 'boolean');
+  const uncrawled = urls.filter(u => crawled[u] === false);
+  const seen = urls.filter(u => crawled[u] === true);
+  const open = [...rotated(unknown, today, n), ...rotated(uncrawled, today, n)];
+  const recheck = rotated(seen, today, n).slice(0, Math.max(BING_RECHECK_SLOTS, n - open.length));
+  return [...open.slice(0, n - Math.min(BING_RECHECK_SLOTS, recheck.length)), ...recheck].slice(0, n);
 }
 
 // AI crawler access and structured data share one pool of fetches: 5 at a time, 60 s in total, so the slow part
@@ -293,7 +314,7 @@ async function checkBing({ config, today, entries, state, warnings, api }) {
     const crawled = {};
     let lastError = null;
     // One failing URL keeps its previous value; a rejected key ends the check at once.
-    for (const url of bingSection(urls, today)) {
+    for (const url of bingPicks(urls, state.bing?.crawled, today)) {
       try {
         crawled[url] = api.isCrawled(await api.getUrlInfo(site, url));
       } catch (e) {
