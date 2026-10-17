@@ -174,7 +174,8 @@ function evaluateAiCrawlers(next, { bots, ignore }, { today, settle, alertDetail
       delete pending[token];
     }
     if (bot.live === 'blocked' && !okSeen[token]) delete pending[token];
-    let entry = prev;
+    // A robots.txt verdict is deterministic: a robots entry drops once robots.txt allows the bot, whatever the live fetch says.
+    let entry = prev?.via === 'robots' && bot.robots === 'allowed' ? null : prev;
     if (bot.robots === 'blocked') {
       entry = { token, via: 'robots', paths: bot.paths.slice(0, BLOCKED_PATHS_SHOWN) };
     } else if (bot.live === 'blocked' && okSeen[token]) {
