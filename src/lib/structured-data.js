@@ -30,16 +30,15 @@ function typesOf(node, found = new Set()) {
 }
 
 /**
- * Finding codes of a fetched page (`jsonld_missing`, `jsonld_invalid`, `faqpage_missing`; [] is clean), or null when the
- * page cannot be judged: body cut off, or no `<html` and `<title` (an error or maintenance page).
+ * Finding codes of a fetched page (`jsonld_missing`, `jsonld_invalid`, `required:<Type>.<field>`; [] is clean), or null
+ * when the page cannot be judged: body cut off, or no `<html` and `<title` (an error or maintenance page).
  */
-export function structuredDataFindings({ html, hasFaq, truncated }) {
+export function structuredDataFindings({ html, truncated }) {
   if (truncated || !/<html/i.test(html) || !/<title/i.test(html)) return null;
   const { blocks, invalid } = extractJsonLd(html);
   if (invalid) return ['jsonld_invalid'];
   if (!blocks.length) return ['jsonld_missing'];
-  const codes = hasFaq && !blocks.some(b => typesOf(b).has('FAQPage')) ? ['faqpage_missing'] : [];
-  return [...codes, ...fieldGaps(blocks).required.map(f => `required:${f}`)];
+  return fieldGaps(blocks).required.map(f => `required:${f}`);
 }
 
 // Field rules per rich result type, from Google's structured data docs (developers.google.com/search/docs/appearance/
@@ -192,9 +191,13 @@ export function recommendedGaps(html) {
  * onPageFindings, `{ codes, recommended }`, or null when the page cannot be judged.
  */
 export function pageCheck({ html, headers, url, hasFaq, truncated }) {
-  const codes = structuredDataFindings({ html, hasFaq, truncated });
+  const codes = structuredDataFindings({ html, truncated });
   if (codes === null) return null;
   const { blocks } = extractJsonLd(html);
-  const onPage = onPageFindings({ html, headers, url, types: typesOf(blocks) });
-  return { codes: [...codes, ...onPage.codes], recommended: [...fieldGaps(blocks).recommended, ...onPage.recommended] };
+  const types = typesOf(blocks);
+  const onPage = onPageFindings({ html, headers, url, types });
+  // FAQ items without a FAQPage type: report only, Google stopped showing FAQ rich results in June 2026, while other
+  // engines and AI answers may still read the markup.
+  const faq = hasFaq && blocks.length && !types.has('FAQPage') ? ['FAQPage'] : [];
+  return { codes: [...codes, ...onPage.codes], recommended: [...faq, ...fieldGaps(blocks).recommended, ...onPage.recommended] };
 }
