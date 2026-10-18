@@ -140,6 +140,18 @@ describe('discover-run', () => {
     expect(kw).toMatchObject({ status: 'proposed', score: 8, source: 'greenfield' });
   });
 
+  it('spends no SerpAPI search on greenfield suggestions it drops as duplicates', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    complete.mockResolvedValue([
+      { keyword: 'standesamt deko', target_slug: 'standesamt-deko', score: 8, type: 'guide', intent: 'informational' },
+      { keyword: 'deko standesamt', target_slug: 'deko-standesamt', score: 8, type: 'guide', intent: 'informational' },
+      { keyword: 'trauung blumen', target_slug: 'standesamt-deko', score: 8, type: 'guide', intent: 'informational' },
+    ]);
+    const data = await discover({ ...config, greenfield: true }, dir);
+    expect(getSerp.mock.calls.map(c => c[0])).toEqual(['standesamt deko']);
+    expect(data.keywords.map(k => k.keyword)).toEqual(['standesamt deko']);
+  });
+
   it('restricts the greenfield intent to the same enum as scoring', async () => {
     querySearchAnalytics.mockResolvedValue([]);
     complete.mockResolvedValue([]);
