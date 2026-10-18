@@ -661,8 +661,27 @@ describe('watch-step: AI crawlers and structured data', () => {
   it('runs both checks for a watch-only project without landing_path', async () => {
     const report = await go('2026-10-07', { config: { ...CONFIG, landing_path: undefined, watch: { ai_crawlers: true, structured_data: true } }, fetchBot: fake() });
     expect(report.ai_crawlers.search.length + report.ai_crawlers.training.length).toBe(10);
-    expect(report.structured_data).toEqual({ checked: 0, findings: [] });
+    expect(report.structured_data).toMatchObject({ checked: 1, findings: [] });
     expect(report.warnings).toEqual([]);
+  });
+
+  it('checks the sitemap URLs without landing_path, slug is the path, and leaves the alert alone on a failed index check', async () => {
+    const config = { ...DATA, landing_path: undefined };
+    const recipe = '<html><head><title>T</title><script type="application/ld+json">{"@type":"Recipe","name":"R","recipeInstructions":[{"@type":"HowToStep","text":"t"}]}</script></head></html>';
+    const fetchBot = fake({ html: recipe });
+    const first = await go('2026-10-07', { config, fetchBot });
+    expect(fetchBot.mock.calls.map(c => c[0])).toEqual([PAGE]);
+    expect(first.structured_data.findings).toEqual([{ slug: '/page', codes: ['required:Recipe.image'] }]);
+    expect(first.structured_data.recommended[0].fields).toContain('Recipe.recipeInstructions.url');
+    expect((await go('2026-10-08', { config, fetchBot })).alerts.opened).toMatchObject([{ id: 'structured_data', detail: [{ slug: '/page' }] }]);
+    nextIndex.error = new Error('quota');
+    try {
+      const blind = await go('2026-10-09', { config, fetchBot });
+      expect(blind.alerts.resolved).toEqual([]);
+      expect(blind.open_alerts.map(a => a.id)).toContain('structured_data');
+    } finally {
+      nextIndex.error = null;
+    }
   });
 
   it('reports FAQ items in the frontmatter without a FAQPage type', async () => {

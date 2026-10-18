@@ -15,7 +15,7 @@ import { diagnoseAlerts, submitFixes } from './diagnose.js';
 import { siteUrl, knowsSite, getUserSites, getCrawlIssues, getUrlInfo, isCrawled, normalizeUrl } from '../lib/bing.js';
 import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
 import { AI_BOTS, BROWSER_UA, botUserAgent, robotsRules, robotsAccess, liveVerdict, liveSummary } from '../lib/ai-crawlers.js';
-import { structuredDataFindings } from '../lib/structured-data.js';
+import { pageCheck } from '../lib/structured-data.js';
 
 // A clean alert that stays unindexed must not make Google and IndexNow hear from us every day.
 const RESUBMIT_EVERY_DAYS = 7;
@@ -217,13 +217,21 @@ function landingPages(config, cwd, base) {
   })));
 }
 
+// Pages for the JSON-LD check: the landing pages, or for a project without landing_path every sitemap URL (slug is its
+// path). Null when that sitemap is unknown because the index check failed, so the alert stays as it is.
+function structuredPages(config, cwd, base, entries) {
+  if (config.landing_path) return landingPages(config, cwd, base);
+  if (!entries) return null;
+  return entries.map(e => ({ slug: new URL(e.url).pathname, url: e.url, hasFaq: false }));
+}
+
 // Bots and pages the run could not decide, for one warning.
 const undecided = (label, items) => (items.length ? [`${label}: ${items.join(', ')}`] : []);
 
 // `aiCrawlers` and `structuredData` inputs of evaluateWatch (see there) plus their report parts. The switches are
 // `watch.ai_crawlers` and `watch.structured_data`; a switched-off check is `{ disabled: true }` and fetches nothing.
 // Per run: robots.txt, the home page and one rotating page as each search bot and as a browser, and up to 10
-// landing pages (plus those with an open or pending finding) for their JSON-LD.
+// landing pages, or sitemap URLs without landing_path (plus those with an open or pending finding), for their JSON-LD.
 async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchBot, deadlineMs }) {
   const wantAi = Boolean(config.watch?.ai_crawlers);
   const wantData = Boolean(config.watch?.structured_data);
@@ -241,10 +249,10 @@ async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchB
       for (const url of liveUrls) jobs.push({ key: `${bot.token}:${url}`, url, ua: botUserAgent(bot.token) });
     }
   }
-  const pages = wantData ? landingPages(config, cwd, base) : [];
+  const pages = wantData ? structuredPages(config, cwd, base, entries) : [];
   const tracked = new Set([...(state.open.find(a => a.id === 'structured_data')?.detail ?? []).map(d => d.slug), ...Object.keys(state.structured_data?.pending ?? {})]);
-  const today10 = new Set(bingSection(pages.map(p => p.url), today, STRUCTURED_PAGES_PER_DAY));
-  const fetched = pages.filter(p => today10.has(p.url) || tracked.has(p.slug));
+  const today10 = new Set(bingSection((pages ?? []).map(p => p.url), today, STRUCTURED_PAGES_PER_DAY));
+  const fetched = (pages ?? []).filter(p => today10.has(p.url) || tracked.has(p.slug));
   for (const p of fetched) jobs.push({ key: `data:${p.slug}`, url: p.url, ua: BROWSER_UA });
   const results = await fetchPool(jobs, { fetchBot, deadlineMs });
   const report = {};
@@ -277,14 +285,21 @@ async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchB
     );
   }
 
-  if (wantData) {
+  if (wantData && !pages) structuredData = null;
+  if (wantData && pages) {
     const checked = fetched.map((p) => {
       const res = results.get(`data:${p.slug}`);
       const ok = res && res.status >= 200 && res.status < 300;
-      return { slug: p.slug, codes: ok ? structuredDataFindings({ html: res.html, hasFaq: p.hasFaq, truncated: res.truncated }) : null };
+      const page = ok ? pageCheck({ html: res.html, headers: res.headers, url: p.url, hasFaq: p.hasFaq, truncated: res.truncated }) : null;
+      return { slug: p.slug, codes: page?.codes ?? null, recommended: page?.recommended ?? [] };
     });
-    structuredData = { slugs: pages.map(p => p.slug), results: checked };
-    report.structured_data = { checked: checked.filter(r => r.codes !== null).length, findings: checked.filter(r => r.codes?.length) };
+    structuredData = { slugs: pages.map(p => p.slug), results: checked.map(({ slug, codes }) => ({ slug, codes })) };
+    report.structured_data = {
+      checked: checked.filter(r => r.codes !== null).length,
+      findings: checked.filter(r => r.codes?.length).map(({ slug, codes }) => ({ slug, codes })),
+      // Search Console's non-critical issues and missing on-page signals: report only, never an alert.
+      recommended: checked.filter(r => r.recommended.length).map(({ slug, recommended }) => ({ slug, fields: recommended })),
+    };
     warnings.push(...undecided('Structured data check could not decide for pages', checked.filter(r => r.codes === null).map(r => r.slug)));
   }
   return { aiCrawlers, structuredData, report };

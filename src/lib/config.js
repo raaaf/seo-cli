@@ -125,7 +125,7 @@ export const DEFAULTS = {
   // { products: 'content/seo/products', categories: 'content/seo/categories' }. Null: no overlays.
   overlays: null,
   // check_deploy: verify that merged pages and overlays are live (opt-in). ai_crawlers: robots.txt and live access of
-  // AI search bots; structured_data: JSON-LD of landing pages; ai_crawlers_ignore: bot tokens blocked on purpose.
+  // AI search bots; structured_data: JSON-LD and on-page signals of landing pages (sitemap URLs without landing_path); ai_crawlers_ignore: bot tokens blocked on purpose.
   watch: { check_deploy: false, ai_crawlers: true, structured_data: true, ai_crawlers_ignore: [] },
   // Bing Webmaster as a second signal source (needs BING_WEBMASTER_KEY): crawl checks in the watcher,
   // query questions for discover and generate. site_url overrides base_url as Bing knows the site.
