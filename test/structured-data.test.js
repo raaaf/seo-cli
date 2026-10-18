@@ -22,10 +22,12 @@ describe('structured data findings', () => {
     expect(find('<html><head><title>T</title></head></html>')).toEqual(['jsonld_missing']);
   });
 
-  it('reports FAQ items without a FAQPage type, and nothing for a page without FAQ', () => {
+  it('reports FAQ items without a FAQPage type as recommended only, and nothing for a page without FAQ', () => {
     const other = page(JSON.stringify({ '@type': 'Organization' }));
-    expect(find(other, true)).toEqual(['faqpage_missing']);
-    expect(find(other, false)).toEqual([]);
+    expect(find(other, true)).toEqual([]);
+    const check = hasFaq => pageCheck({ html: other, url: 'https://a.de/p', hasFaq, truncated: false });
+    expect(check(true)).toMatchObject({ codes: [], recommended: expect.arrayContaining(['FAQPage']) });
+    expect(check(false).recommended).not.toContain('FAQPage');
   });
 
   it('cannot judge a cut-off body or a page that is no document', () => {
