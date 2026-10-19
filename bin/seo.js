@@ -8,8 +8,8 @@ import { dirname, join } from 'path';
 // Accepted trade-off: a malicious project .env could redirect API tokens.
 // Acceptable for a personal CLI run in trusted project directories.
 const cliDir = dirname(dirname(fileURLToPath(import.meta.url)));
-dotenv({ path: join(cliDir, '.env') });
-dotenv({ path: join(process.cwd(), '.env'), override: true });
+dotenv({ quiet: true, path: join(cliDir, '.env') });
+dotenv({ quiet: true, path: join(process.cwd(), '.env'), override: true });
 
 import { program } from 'commander';
 import { initCommand } from '../src/commands/init.js';
