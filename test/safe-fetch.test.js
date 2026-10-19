@@ -78,3 +78,64 @@ describe('safe-fetch-redirect: safeFetch redirect handling', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('safe-fetch-pinning: DNS rebinding', () => {
+  it('pins the validated address: later DNS answers are never used for the connection', async () => {
+    vi.resetModules();
+    const answers = [[{ address: '93.184.216.34', family: 4 }], [{ address: '10.0.0.5', family: 4 }]];
+    const dnsLookup = vi.fn().mockImplementation(async () => answers.shift() ?? answers[0]);
+    vi.doMock('dns/promises', () => ({ lookup: dnsLookup }));
+    const mod = await import('../src/lib/safe-fetch.js');
+
+    const resolved = await mod.assertPublicUrl('https://rebind.example/');
+    const lookup = mod.pinnedLookup(resolved);
+    const out = await new Promise(res => lookup('rebind.example', { all: true }, (e, list) => res(list)));
+    const single = await new Promise(res => lookup('rebind.example', {}, (e, addr) => res(addr)));
+
+    expect(out).toEqual([{ address: '93.184.216.34', family: 4 }]);
+    expect(single).toBe('93.184.216.34');
+    expect(dnsLookup).toHaveBeenCalledTimes(1);
+    vi.doUnmock('dns/promises');
+    vi.resetModules();
+  });
+
+  it('safeFetch hands fetch a pinned dispatcher on every hop', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockResponse(302, { location: 'http://93.184.216.35/next' }))
+      .mockResolvedValueOnce(mockResponse(200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await safeFetch('http://93.184.216.34/');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [d1, d2] = fetchMock.mock.calls.map(c => c[1].dispatcher);
+    expect(d1).toBeDefined();
+    expect(d2).toBeDefined();
+    expect(d1).not.toBe(d2);
+  });
+});
+
+describe('safe-fetch-private: blocked address forms', () => {
+  it.each([
+    'http://0.0.0.0/',
+    'http://[::1]/',
+    'http://[fc00::1]/',
+    'http://[fd12::1]/',
+    'http://[::ffff:127.0.0.1]/',
+    'http://[::ffff:10.0.0.1]/',
+    'http://[::ffff:a9fe:a9fe]/',
+    'http://[::]/',
+    'http://169.254.10.10/',
+  ])('rejects %s', async (u) => {
+    await expect(assertPublicUrl(u)).rejects.toThrow(/private|internal|Disallowed/i);
+  });
+
+  it('rejects a hostname whose DNS answer is IPv4-mapped private', async () => {
+    vi.resetModules();
+    vi.doMock('dns/promises', () => ({ lookup: async () => [{ address: '::ffff:192.168.0.1', family: 6 }] }));
+    const mod = await import('../src/lib/safe-fetch.js');
+    await expect(mod.assertPublicUrl('https://evil.example/')).rejects.toThrow(/private|internal/i);
+    vi.doUnmock('dns/promises');
+    vi.resetModules();
+  });
+});
