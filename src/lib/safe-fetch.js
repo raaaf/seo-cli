@@ -1,5 +1,7 @@
 import { lookup } from 'dns/promises';
-import { Agent } from 'undici';
+// fetch must come from the same undici as the Agent: Node 22's built-in fetch bundles an older
+// undici and rejects this Agent ("invalid onRequestStart method").
+import { Agent, fetch } from 'undici';
 
 const PRIVATE_RANGES = [
   /^10\./,
@@ -76,6 +78,13 @@ export async function assertPublicUrl(rawUrl) {
 // The validated addresses are pinned for the actual connection (also per redirect hop), so
 // DNS rebinding between validation and connect cannot reach an internal address.
 
+// One request whose socket goes to the given addresses, without following redirects.
+export function fetchPinned(url, addresses, opts = {}) {
+  // Not closed here: the caller still reads the body. Idle sockets expire after 1 s.
+  const dispatcher = new Agent({ keepAliveTimeout: 1000, connect: { lookup: pinnedLookup(addresses) } });
+  return fetch(url, { ...opts, redirect: 'manual', dispatcher });
+}
+
 export async function safeFetch(rawUrl, opts = {}) {
   const MAX_REDIRECTS = 5;
   let currentUrl = rawUrl;
@@ -83,9 +92,7 @@ export async function safeFetch(rawUrl, opts = {}) {
 
   while (true) {
     const resolved = await assertPublicUrl(currentUrl);
-    // Not closed here: the caller still reads the body. Idle sockets expire after 1 s.
-    const dispatcher = new Agent({ keepAliveTimeout: 1000, connect: { lookup: pinnedLookup(resolved) } });
-    const res = await fetch(currentUrl, { ...opts, redirect: 'manual', dispatcher });
+    const res = await fetchPinned(currentUrl, resolved, opts);
 
     const isRedirect = [301, 302, 303, 307, 308].includes(res.status);
     if (!isRedirect || !res.headers.get('location')) {

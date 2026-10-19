@@ -1,8 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { fetch as undiciFetch } from 'undici';
 import { assertPublicUrl, safeFetch } from '../src/lib/safe-fetch.js';
 
-afterEach(() => {
-  vi.unstubAllGlobals();
+// safe-fetch takes fetch from undici; tests that only check the redirect loop replace it here,
+// the connect test below runs the real one.
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, fetch: vi.fn(actual.fetch), realFetch: actual.fetch };
+});
+
+afterEach(async () => {
+  const { realFetch } = await import('undici');
+  vi.mocked(undiciFetch).mockReset().mockImplementation(realFetch);
 });
 
 function mockResponse(status, headersMap = {}) {
@@ -51,7 +60,7 @@ describe('safe-fetch-redirect: safeFetch redirect handling', () => {
     const fetchMock = vi.fn().mockResolvedValue(
       mockResponse(302, { location: 'http://127.0.0.1/secret' })
     );
-    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(undiciFetch).mockImplementation(fetchMock);
 
     await expect(safeFetch('http://93.184.216.34/')).rejects.toThrow(/private|internal/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -64,7 +73,7 @@ describe('safe-fetch-redirect: safeFetch redirect handling', () => {
       call++;
       return Promise.resolve(mockResponse(302, { location: `http://93.184.216.34/r${call}` }));
     });
-    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(undiciFetch).mockImplementation(fetchMock);
 
     await expect(safeFetch('http://93.184.216.34/r0')).rejects.toThrow(/Too many redirects/);
     expect(fetchMock).toHaveBeenCalledTimes(6);
@@ -72,7 +81,7 @@ describe('safe-fetch-redirect: safeFetch redirect handling', () => {
 
   it('returns response unchanged on 200', async () => {
     const ok = mockResponse(200);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok));
+    vi.mocked(undiciFetch).mockResolvedValue(ok);
 
     const res = await safeFetch('http://93.184.216.34/');
     expect(res.status).toBe(200);
@@ -103,7 +112,7 @@ describe('safe-fetch-pinning: DNS rebinding', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(mockResponse(302, { location: 'http://93.184.216.35/next' }))
       .mockResolvedValueOnce(mockResponse(200));
-    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(undiciFetch).mockImplementation(fetchMock);
 
     await safeFetch('http://93.184.216.34/');
 
@@ -137,5 +146,24 @@ describe('safe-fetch-private: blocked address forms', () => {
     await expect(mod.assertPublicUrl('https://evil.example/')).rejects.toThrow(/private|internal/i);
     vi.doUnmock('dns/promises');
     vi.resetModules();
+  });
+});
+
+describe('safe-fetch-connect: real request through the pinned dispatcher', () => {
+  // The Agent comes from the npm undici package; Node 22's built-in fetch rejects it
+  // ("invalid onRequestStart method"), which made every watch run fail on 2026-10-19.
+  it('reaches the pinned address for an unresolvable hostname', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((req, res) => res.end(req.headers.host));
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address();
+    try {
+      const { fetchPinned } = await import('../src/lib/safe-fetch.js');
+      const res = await fetchPinned(`http://pinned.invalid:${port}/`, [{ address: '127.0.0.1', family: 4 }]);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(`pinned.invalid:${port}`);
+    } finally {
+      server.close();
+    }
   });
 });
