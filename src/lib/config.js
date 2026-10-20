@@ -56,6 +56,7 @@ const CONTRACT_SHAPES = {
   products: [v => isPlainObject(v) && ['min', 'max', 'max_overlap'].every(k => v[k] == null || isNumber(v[k])), 'a mapping with numeric min, max, max_overlap'],
   lowercase: [v => typeof v === 'boolean', 'true or false'],
   facts_denylist: [isStringList, 'a list of regex strings'],
+  forbidden_claims: [isStringList, 'a list of regex strings'],
   meta_title_suffix: [v => typeof v === 'string', 'a string'],
 };
 

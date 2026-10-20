@@ -348,25 +348,43 @@ function catalogFactText(catalog) {
   return normalizeFact(facts.filter(Boolean).join('\n'));
 }
 
-/**
- * Matches of the fact denylist in `text` that the catalog does not state (see
- * `catalogFactText`). One error per pattern; an invalid pattern is an error, not a crash.
- */
-export function unbackedClaimErrors(text, patterns, catalog) {
+// One error per pattern, listing the distinct matches `isBad` rejects. An invalid pattern is an error, not a crash.
+function patternErrors(text, patterns, { name, isBad, message }) {
   const errors = [];
-  const catalogText = catalogFactText(catalog);
   for (const pattern of patterns) {
     let re;
     try {
       re = new RegExp(pattern, 'gi');
     } catch {
-      errors.push(`Invalid facts_denylist pattern: ${pattern}`);
+      errors.push(`Invalid ${name} pattern: ${pattern}`);
       continue;
     }
-    const bad = [...new Set([...text.matchAll(re)].map(m => m[0].trim()).filter(m => !catalogText.includes(normalizeFact(m))))];
-    if (bad.length) errors.push(`Claim not backed by the catalog: ${bad.map(m => `"${m}"`).join(', ')}`);
+    const bad = [...new Set([...text.matchAll(re)].map(m => m[0].trim()).filter(isBad))];
+    if (bad.length) errors.push(`${message}: ${bad.map(m => `"${m}"`).join(', ')}`);
   }
   return errors;
+}
+
+/**
+ * Matches of the fact denylist in `text` that the catalog does not state (see
+ * `catalogFactText`). One error per pattern.
+ */
+export function unbackedClaimErrors(text, patterns, catalog) {
+  const catalogText = catalogFactText(catalog);
+  return patternErrors(text, patterns, {
+    name: 'facts_denylist',
+    isBad: m => !catalogText.includes(normalizeFact(m)),
+    message: 'Claim not backed by the catalog',
+  });
+}
+
+/**
+ * Matches of the forbidden claims in `text`: phrases the project never allows,
+ * with no catalog to back them (positioning rules, product claims the product
+ * cannot keep). One error per pattern.
+ */
+export function forbiddenClaimErrors(text, patterns) {
+  return patternErrors(text, patterns, { name: 'forbidden_claims', isBad: () => true, message: 'Forbidden claim (page contract)' });
 }
 
 /**
@@ -416,6 +434,10 @@ function checkContract({ contract, parsed, body, catalog, existingPages }) {
 
   if (contract.facts_denylist?.length) {
     errors.push(...unbackedClaimErrors(JSON.stringify(parsed) + '\n' + body, contract.facts_denylist, catalog));
+  }
+
+  if (contract.forbidden_claims?.length) {
+    errors.push(...forbiddenClaimErrors(JSON.stringify(parsed) + '\n' + body, contract.forbidden_claims));
   }
 
   return errors;

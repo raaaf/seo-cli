@@ -50,50 +50,78 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
   };
 
   const prompt = fillTemplate(REVIEW_PROMPT, vars);
-  const request = (text) => complete({
-    system: 'You are a fact-checker. You verify claims against sources and correct them. You do not rewrite prose you cannot fault.',
-    prompt: text,
-    model: MODELS.generate,
-    maxTokens: GENERATE_MAX_TOKENS,
-    json: true,
-    webSearch: true,
-  });
 
   let parsed;
   try {
-    try {
-      parsed = await request(prompt);
-    } catch (e) {
-      if (!isNoJsonError(e)) throw e;
-      // The model answered in prose once (2026-09-30) and the page went out as
-      // if checked. One more try, told what went wrong; transport errors are
-      // already retried in claude.js.
-      parsed = await request(`${prompt}\n\n${NO_JSON_RETRY}`);
-    }
+    parsed = await runJsonCheck({
+      system: 'You are a fact-checker. You verify claims against sources and correct them. You do not rewrite prose you cannot fault.',
+      prompt,
+    });
   } catch (e) {
     rethrowIfBudget(e);
     console.log(chalk.yellow(`  Fact check did not run: ${keyword.keyword} (${e.message.split('\n')[0]}). The page is NOT fact-checked.`));
     return { markdown, findings: [], unchecked: true, error: e.message.split('\n')[0] };
   }
 
-  const findings = (parsed?.findings || []).filter(f => f && SEVERITIES.has(f.severity) && f.quote);
-
-  let patched = markdown;
-  for (const finding of findings) {
-    const occurrences = countOccurrences(patched, finding.quote);
-    const replacement = typeof finding.replacement === 'string' ? finding.replacement : null;
-    finding.applied = occurrences === 1 && replacement !== null && replacement !== finding.quote;
-    if (finding.applied) patched = patched.replace(finding.quote, replacement);
-  }
+  const findings = parseFindings(parsed);
+  const patched = applyFindings(markdown, findings);
 
   logFindings(findings);
 
   return { markdown: patched, findings };
 }
 
+/**
+ * One JSON-returning web-search call on the generate model. A reply without
+ * JSON is retried once, told what went wrong; transport errors are already
+ * retried in claude.js. Throws when the second answer is no JSON either.
+ */
+export async function runJsonCheck({ system, prompt }) {
+  const request = (text) => complete({
+    system,
+    prompt: text,
+    model: MODELS.generate,
+    maxTokens: GENERATE_MAX_TOKENS,
+    json: true,
+    webSearch: true,
+  });
+  try {
+    return await request(prompt);
+  } catch (e) {
+    if (!isNoJsonError(e)) throw e;
+    // The model answered in prose once (2026-09-30) and the page went out as
+    // if checked.
+    return request(`${prompt}\n\n${NO_JSON_RETRY}`);
+  }
+}
+
+/** The usable findings of a model answer: a known severity and a quote. */
+export function parseFindings(parsed) {
+  return (parsed?.findings || []).filter(f => f && SEVERITIES.has(f.severity) && f.quote);
+}
+
+/**
+ * Substitutes each finding's `replacement` for its `quote` and sets
+ * `finding.applied`. A quote must match exactly once; with `allowMulti`, a
+ * finding that sets `replace_all` is replaced at every occurrence (a derived
+ * error recurs in tldr, FAQ and body, and names one corrected value for all).
+ * Returns the patched markdown.
+ */
+export function applyFindings(markdown, findings, { allowMulti = false } = {}) {
+  let patched = markdown;
+  for (const finding of findings) {
+    const occurrences = countOccurrences(patched, finding.quote);
+    const replacement = typeof finding.replacement === 'string' ? finding.replacement : null;
+    const matches = occurrences === 1 || (allowMulti && finding.replace_all === true && occurrences > 1);
+    finding.applied = matches && replacement !== null && replacement !== finding.quote;
+    if (finding.applied) patched = patched.split(finding.quote).join(replacement);
+  }
+  return patched;
+}
+
 // Under `quality: strict`, what the product does and does not do, from the target
 // repo. Empty (and the prompt unchanged) for a standard project or without the file.
-function productFactsBlock(config, cwd) {
+export function productFactsBlock(config, cwd) {
   const path = join(cwd, PRODUCT_FACTS_FILE);
   if (!isStrict(config) || !existsSync(path)) return '';
   return [
