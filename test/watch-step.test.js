@@ -684,6 +684,16 @@ describe('watch-step: AI crawlers and structured data', () => {
     }
   });
 
+  it('reports a sitemap-discovered page without JSON-LD as recommended and opens no alert', async () => {
+    const config = { ...DATA, landing_path: undefined };
+    const fetchBot = fake({ html: BARE });
+    const first = await go('2026-10-07', { config, fetchBot });
+    expect(first.structured_data.findings).toEqual([]);
+    expect(first.structured_data.recommended).toMatchObject([{ slug: '/page', fields: expect.arrayContaining(['jsonld_missing']) }]);
+    const second = await go('2026-10-08', { config, fetchBot });
+    expect(second.alerts.opened).toEqual([]);
+  });
+
   it('reports FAQ items in the frontmatter without a FAQPage type', async () => {
     writeFileSync(join(dir, 'content/de/page.md'), '---\nfaq:\n  - q: Q\n    a: A\n---\n');
     const report = await go('2026-10-07', { config: DATA, fetchBot: fake() });
