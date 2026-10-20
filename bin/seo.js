@@ -21,6 +21,7 @@ import { indexStatusCommand } from '../src/commands/index-status.js';
 import { watchCommand } from '../src/commands/watch.js';
 import { dashboardCommand } from '../src/commands/dashboard.js';
 import { improveCommand } from '../src/commands/improve.js';
+import { linksCommand } from '../src/commands/links.js';
 import { conversationalCommand } from '../src/commands/conversational.js';
 
 program
@@ -49,6 +50,12 @@ program
   .option('--brief <file>', 'with --slug: file with what the rewrite has to fix')
   .option('--report <path>', 'write the run report (status, PRs, warnings, errors) as JSON')
   .action((opts) => improveCommand(opts));
+
+program
+  .command('links')
+  .description('Give landing pages with fewer than 3 inbound links some, as related_pages entries on on-topic pages (one PR, no LLM)')
+  .option('--dry-run', 'print the plan, do not commit or open PR')
+  .action((opts) => linksCommand(opts));
 
 program
   .command('check')

@@ -120,6 +120,33 @@ describe('improveCommand', () => {
     expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ branch }));
   });
 
+  describe('inbound links', () => {
+    const landing = (slug, related = []) => {
+      mkdirSync(join(dir, 'content/landing/de'), { recursive: true });
+      const list = related.length ? `related_pages:\n${related.map(s => `  - ${s}`).join('\n')}\n` : '';
+      writeFileSync(join(dir, 'content/landing/de', `${slug}.md`), `---\nmeta_title: ${slug}\n${list}---\nbody`);
+    };
+
+    it('adds on-topic pages that link to a rewritten page with fewer than 3 inbound links', async () => {
+      landing('preise-vergleich');
+      await improveCommand({ config: CONFIG });
+
+      const { files } = createBranchAndCommit.mock.calls[0][0];
+      expect(files.map(f => f.path)).toEqual(['content/landing/de/preise.md', 'content/landing/de/preise-vergleich.md']);
+      expect(files[1].content).toContain('related_pages:\n  - preise');
+      expect(openPR.mock.calls[0][0].body).toContain('`preise-vergleich` -> `preise`');
+    });
+
+    it('adds nothing once the page has 3 inbound links', async () => {
+      landing('preise');
+      for (const slug of ['preise-a', 'preise-b', 'preise-c']) landing(slug, ['preise']);
+      landing('preise-d');
+      await improveCommand({ config: CONFIG });
+
+      expect(createBranchAndCommit.mock.calls[0][0].files.map(f => f.path)).toEqual(['content/landing/de/preise.md']);
+    });
+  });
+
   it('puts no state file into the PR and syncs state to main before and after it', async () => {
     const order = [];
     commitState.mockImplementation(async () => { order.push('state'); return []; });

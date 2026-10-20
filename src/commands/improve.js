@@ -1,8 +1,9 @@
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, basename } from 'path';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
-import { strictValidateOpts, buildMergeFiles } from '../lib/landings.js';
+import { strictValidateOpts, buildMergeFiles, readLandingPages, tryInboundLinkFiles, inboundLinksSection } from '../lib/landings.js';
+import { inboundLinks } from '../lib/inbound-links.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
@@ -128,13 +129,15 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   const week = isoWeek();
   const mergeFrom = page.mergeFrom ?? [];
   const merge = mergeFrom.length ? buildMergeFiles({ survivor: page.slug, mergeFrom, config, cwd }) : null;
+  const files = [
+    { path: filePath, content: finalMarkdown },
+    ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
+    ...(merge ? merge.files : []),
+  ];
+  const inbound = inboundLinkEdits({ slug: page.slug, keyword: keywordLike.keyword, markdown: finalMarkdown, files, config, cwd });
   return {
     slug: page.slug,
-    files: [
-      { path: filePath, content: finalMarkdown },
-      ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
-      ...(merge ? merge.files : []),
-    ],
+    files: [...files, ...inbound.files],
     record: { slug: page.slug, queries: page.queries.map(q => q.query) },
     commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
     prTitle: `SEO: improve ${page.slug} (${week})`,
@@ -144,8 +147,32 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       warnings: validate(finalMarkdown, keywordLike, validateOpts).warnings,
       counterpart,
       merged: merge,
+      newLinks: inbound.links,
     }),
   };
+}
+
+const MIN_INBOUND_LINKS = 3;
+
+// A page with fewer than three inbound links from the other default-locale pages gets some, as
+// `related_pages` entries of on-topic pages. Pages already in the PR (rewrite, counterpart, merge
+// files) are never edited, and pages the merge deletes do not count as links. Never throws.
+function inboundLinkEdits({ slug, keyword, markdown, files, config, cwd }) {
+  const none = { files: [], links: [] };
+  if (config.inbound_links === false) return none;
+  const inPR = new Set(files.map(f => basename(f.path, '.md')));
+  try {
+    const deleted = new Set(files.filter(f => f.delete).map(f => basename(f.path, '.md')));
+    const pages = readLandingPages(config, cwd).filter(p => !deleted.has(p.slug));
+    const have = inboundLinks(pages).get(slug)?.size ?? 0;
+    if (have >= MIN_INBOUND_LINKS) return none;
+    const title = parseFrontmatter(markdown).parsed.meta_title ?? '';
+    const targets = [{ slug, text: `${keyword} ${title} ${slug}`, max: MIN_INBOUND_LINKS - have }];
+    return tryInboundLinkFiles({ targets, config, cwd, exclude: [...inPR] }, warning => console.log(chalk.yellow(`  ${warning}`)));
+  } catch (e) {
+    console.log(chalk.yellow(`  Inbound links skipped: ${e.message}`));
+    return none;
+  }
 }
 
 // Rybbit stats of the default-locale pages by slug, null without Rybbit or without data (GSC alone decides then).
@@ -300,7 +327,7 @@ function readMetaFrom(markdown) {
   }
 }
 
-function buildBody(page, before, after, { factCheckError = null, factChecked = true, warnings = [], counterpart = null, merged = null } = {}) {
+function buildBody(page, before, after, { factCheckError = null, factChecked = true, warnings = [], counterpart = null, merged = null, newLinks = [] } = {}) {
   const queries = page.queries
     .slice(0, 8)
     .map(q => `| ${q.query} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`)
@@ -360,6 +387,7 @@ function buildBody(page, before, after, { factCheckError = null, factChecked = t
       : 'Die Seite wurde nach der Überarbeitung erneut validiert und faktengeprüft.',
     '',
     ...(warnings.length ? [`**Validator-Warnungen, die nach der Überarbeitung bleiben:** ${warnings.join(' | ')}`, ''] : []),
+    ...(newLinks.length ? [inboundLinksSection(newLinks, 'Neue interne Links auf diese Seite (related_pages)')] : []),
     '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
   ].join('\n');
 }
