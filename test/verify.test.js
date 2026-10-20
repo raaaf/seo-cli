@@ -102,6 +102,18 @@ describe('runVerify', () => {
     expect(report.pages[0].error).toMatch(/no JSON/);
   });
 
+  it('takes the verdict from the final round: a claim the second round confirms does not block', async () => {
+    complete
+      .mockResolvedValueOnce({
+        findings: [finding({ quote: 'Toggl ist für fünf Nutzer kostenlos.', replacement: 'Toggl ist für drei Nutzer kostenlos.' })],
+        statute_checks: [{ claim: 'Die Frist endet im Februar.', statute_quote: '', source: 's' }],
+      })
+      .mockResolvedValueOnce({ findings: [], statute_checks: [{ claim: 'Die Frist endet im Februar.', statute_quote: 'Der Verzicht ist bis zum 28. Februar zu erklären.', source: 's' }] });
+    const { code, report } = await runVerify([FILE], {}, cwd, deps);
+    expect(code).toBe(0);
+    expect(report.pages[0].findings).toHaveLength(2);
+  });
+
   it('skips a project that is not quality: strict', async () => {
     write('seo.config.yaml', CONFIG.replace('quality: strict\n', ''));
     const { code, report } = await runVerify([FILE], {}, cwd, deps);

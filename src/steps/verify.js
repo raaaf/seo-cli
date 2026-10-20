@@ -50,24 +50,27 @@ async function verifyRound(markdown, config, cwd, locale) {
 /**
  * Independent second fact pass on a page, up to MAX_ROUNDS. Returns the patched
  * markdown and every finding with `applied` and the `round` it came from;
- * `blocked` is true while any finding is unpatched. Throws when the model
+ * `blocked` is true while the final round has an unpatched finding (an earlier
+ * round's claim that a later round confirmed does not count). Throws when the model
  * cannot be reached or answers twice without JSON (the caller blocks on that).
  */
 export async function verifyPage(markdown, config, cwd = process.cwd(), opts = {}) {
   const locale = opts.locale || defaultLocale(config);
   let current = markdown;
   const all = [];
+  let last = [];
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     const { patched, findings } = await verifyRound(current, config, cwd, locale);
     all.push(...findings.map(f => ({ ...f, round })));
     current = patched;
+    last = findings;
     if (!findings.some(f => f.applied)) break;
   }
   for (const f of all) {
     const color = f.applied ? chalk.yellow : chalk.red;
     console.log(color(`    [${f.applied ? 'patched' : 'BLOCKING'}/${f.category ?? 'other'}] ${f.problem}`));
   }
-  return { markdown: current, findings: all, blocked: all.some(f => !f.applied) };
+  return { markdown: current, findings: all, blocked: last.some(f => !f.applied) };
 }
 
 /** The PR-body section for the verified pages, between the markers. */

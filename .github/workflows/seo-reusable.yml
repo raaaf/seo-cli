@@ -348,11 +348,16 @@ jobs:
               FACT_BLOCKED=1
             elif grep -q '^VERIFY_HEAD_SHA=' /tmp/seo-verify.out; then
               # The patches moved the PR head: take it over and check the patched pages again.
-              if gh pr checkout "$PR_NUM"; then
+              # verify also wrote the patches into the working tree: discard them so the
+              # fast-forward onto the pushed head cannot abort on local changes.
+              git checkout -- "${MD[@]}" 2>/dev/null || true
+              NEW_SHA=$(sed -n 's/^VERIFY_HEAD_SHA=//p' /tmp/seo-verify.out | tail -n 1)
+              if gh pr checkout "$PR_NUM" && [ "$(git rev-parse HEAD)" = "$NEW_SHA" ]; then
                 node .seo-cli/bin/seo.js check "${MD[@]}" | tee /tmp/seo-check.out
                 CHECK_EXIT=${PIPESTATUS[0]}
                 [ "$CHECK_EXIT" -ne 0 ] && FACT_BLOCKED=1
               else
+                echo "PR head is not the pushed verify commit ($NEW_SHA)."
                 FACT_BLOCKED=1
               fi
             fi
