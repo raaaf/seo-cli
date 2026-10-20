@@ -541,7 +541,7 @@ export async function runCommand(opts) {
 
       // 5. One PR per keyword, one per rewrite
       if (generatedPages.length > 0) {
-        const created = await createPRs({ generatedPages, keywordsData, config });
+        const created = await createPRs({ generatedPages, keywordsData, config, cwd });
         report.prs.push(...created.prs.map(p => ({ url: p.url, kind: 'new', slug: p.slug })));
         report.warnings.push(...created.warnings);
         report.errors.push(...created.errors);

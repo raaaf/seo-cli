@@ -53,7 +53,7 @@ program
 
 program
   .command('links')
-  .description('Give landing pages with fewer than 3 inbound links some, as related_pages entries on on-topic pages (one PR, no LLM)')
+  .description('Give landing pages with fewer than 3 inbound links some, as related_pages entries on on-topic pages (one PR; Haiku judges the topic, booked in the budget also on --dry-run)')
   .option('--dry-run', 'print the plan, do not commit or open PR')
   .action((opts) => linksCommand(opts));
 

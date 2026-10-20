@@ -42,13 +42,16 @@ export async function createPRs({ generatedPages, keywordsData, config, cwd = pr
   }
 
   const result = { prs: [], warnings: [], errors: [] };
+  // Sources an earlier PR of this run already edits, per locale: sibling PRs branch from the same
+  // checkout, so a second edit of the same file would conflict and overfill its related_pages.
+  const editedSources = new Map();
   for (const [keyword, pages] of byKeyword) {
     const slug = (pages.find(p => p.locale === defaultLocale(config)) ?? pages[0]).slug;
     const branch = `seo/new/${slug}`;
     const kw = keywordsData.keywords.find(k => k.keyword === keyword);
     const sitemapSlugs = [...new Set(pages.map(p => sitemapSlug(p, config)))];
 
-    const inbound = await inboundLinkEdits(pages, config, cwd, result.warnings);
+    const inbound = await inboundLinkEdits(pages, config, cwd, result.warnings, editedSources);
 
     let branchCreated = false;
     try {
@@ -91,7 +94,7 @@ export async function createPRs({ generatedPages, keywordsData, config, cwd = pr
 
 // Existing pages of each locale that should link to the new page of that locale. Never throws:
 // a failure is a warning and the PR ships without the extra files.
-async function inboundLinkEdits(pages, config, cwd, warnings) {
+async function inboundLinkEdits(pages, config, cwd, warnings, editedSources) {
   const edits = { files: [], links: [] };
   const locales = [...new Set(pages.map(p => p.locale ?? defaultLocale(config)))];
   for (const locale of locales) {
@@ -100,10 +103,11 @@ async function inboundLinkEdits(pages, config, cwd, warnings) {
       const { parsed } = parseFrontmatter(p.markdown);
       return { slug: p.slug, title: parsed.meta_title ?? parsed.title ?? p.keyword, description: parsed.meta_description ?? '' };
     });
-    const { files, links } = await tryInboundLinkFiles({ targets, config, cwd, locale, exclude: own.map(p => p.slug) }, warning => {
+    const { files, links } = await tryInboundLinkFiles({ targets, config, cwd, locale, exclude: [...own.map(p => p.slug), ...(editedSources.get(locale) ?? [])] }, warning => {
       console.log(chalk.yellow(`  ${warning}`));
       warnings.push(warning);
     });
+    editedSources.set(locale, new Set([...(editedSources.get(locale) ?? []), ...links.map(l => l.source)]));
     edits.files.push(...files);
     edits.links.push(...links);
   }

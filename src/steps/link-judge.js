@@ -27,8 +27,8 @@ function parseJudgments(parsed, known) {
 
 /**
  * Which of `candidates` (`[{ slug, title, description }]`, already eligible) are on the same topic
- * as `target` (`{ slug, title, description }`)? One Haiku call per target, topic only: the model
- * scores 0 unrelated, 1 adjacent, 2 same need; code keeps the 2s in input order and takes `max`.
+ * as `target` (`{ slug, title, description }`)? Candidates may carry `related`, their `related_pages` count. One Haiku call per target, topic only: the model
+ * scores 0 unrelated, 1 adjacent, 2 same need; code keeps the 2s, fewer `related` first, then input order, and takes `max`.
  * Slugs the model invents are dropped. Invalid JSON gets one retry, then no links and a warning
  * (`onWarning`). Returns `[{ slug, reason }]`; other failures (budget, transport) throw.
  */
@@ -39,7 +39,7 @@ export async function judgeLinkSources({ target, candidates, max = 3 }, onWarnin
   const known = new Set(candidates.map(c => c.slug));
   const request = async (text) => parseJudgments(await complete({
     system: 'You judge whether two web pages cover the same topic for the same reader. You answer in JSON only.',
-    prompt: text, model: MODELS.judge, maxTokens: 2048, json: true,
+    prompt: text, model: MODELS.judge, maxTokens: Math.min(8000, 256 + 48 * candidates.length), json: true,
   }), known);
 
   let judgments;
@@ -56,9 +56,12 @@ export async function judgeLinkSources({ target, candidates, max = 3 }, onWarnin
     return [];
   }
 
+  // An omitted candidate counts as 0. Among the 2s, pages with fewer related_pages first (stable),
+  // so a few pages do not turn into hubs.
   const score = new Map(judgments.map(j => [j.slug, j]));
   return candidates
     .filter(c => score.get(c.slug)?.score === 2)
+    .sort((a, b) => (a.related ?? 0) - (b.related ?? 0))
     .slice(0, max)
     .map(c => ({ slug: c.slug, reason: score.get(c.slug).reason }));
 }

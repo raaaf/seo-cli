@@ -25,7 +25,7 @@ Candidate pages, one per line as `slug | title | description`:
 {{candidates}}
 <<<UNTRUSTED_CANDIDATES_END>>>
 
-Answer with JSON only, no prose and no code fence, one entry per candidate, using exactly
-the slugs above:
+Answer with JSON only, no prose and no code fence. List only candidates scoring 1 or 2 and
+omit every candidate scoring 0, using exactly the slugs above:
 
 {"judgments": [{"slug": "...", "score": 0, "reason": "at most 8 words"}]}

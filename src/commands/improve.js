@@ -3,7 +3,7 @@ import { join, basename } from 'path';
 import chalk from 'chalk';
 import { loadConfig, defaultLocale, localeLandingPath } from '../lib/config.js';
 import { strictValidateOpts, buildMergeFiles, readLandingPages, tryInboundLinkFiles, inboundLinksSection } from '../lib/landings.js';
-import { inboundLinks } from '../lib/inbound-links.js';
+import { inboundLinks, MIN_INBOUND_LINKS } from '../lib/inbound-links.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
@@ -151,8 +151,6 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     }),
   };
 }
-
-const MIN_INBOUND_LINKS = 3;
 
 // A page with fewer than three inbound links from the other default-locale pages gets some, as
 // `related_pages` entries of on-topic pages. Pages already in the PR (rewrite, counterpart, merge

@@ -49,6 +49,30 @@ describe('judgeLinkSources', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  it('treats an omitted candidate as score 0 without a warning, and tells the model to omit them', async () => {
+    complete.mockResolvedValue(verdict(['a', 2]));
+    const warnings = [];
+    const picks = await judgeLinkSources({ target, candidates: [cand('a'), cand('b')] }, w => warnings.push(w));
+    expect(picks.map(p => p.slug)).toEqual(['a']);
+    expect(warnings).toEqual([]);
+    expect(complete.mock.calls[0][0].prompt).toMatch(/omit every candidate scoring 0/);
+  });
+
+  it('sizes max tokens by the number of candidates, capped at 8000', async () => {
+    complete.mockResolvedValue(verdict());
+    await judgeLinkSources({ target, candidates: [cand('a'), cand('b')] });
+    expect(complete.mock.calls[0][0].maxTokens).toBe(256 + 48 * 2);
+    complete.mockClear();
+    await judgeLinkSources({ target, candidates: Array.from({ length: 400 }, (_, i) => cand(`p${i}`)) });
+    expect(complete.mock.calls[0][0].maxTokens).toBe(8000);
+  });
+
+  it('prefers the candidate with fewer related_pages among the 2s', async () => {
+    complete.mockResolvedValue(verdict(['a', 2], ['b', 2], ['c', 2]));
+    const picks = await judgeLinkSources({ target, candidates: [{ ...cand('a'), related: 3 }, { ...cand('b'), related: 0 }, { ...cand('c'), related: 3 }], max: 2 });
+    expect(picks.map(p => p.slug)).toEqual(['b', 'a']);
+  });
+
   it('retries once on invalid JSON and uses the second answer', async () => {
     complete.mockRejectedValueOnce(new Error('Claude returned no JSON:\nsorry')).mockResolvedValueOnce(verdict(['a', 2]));
     const picks = await judgeLinkSources({ target, candidates: [cand('a')] });
@@ -93,6 +117,20 @@ describe('buildInboundLinkFiles', () => {
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toContain('eligible | T | D');
     for (const slug of ['links-already', 'related-full', 'excluded']) expect(prompt).not.toContain(`${slug} |`);
+  });
+
+  it('never sends a page addRelatedPage cannot edit to the judge', async () => {
+    write('inline-list', '---\nmeta_title: T\nrelated_pages: [a, b]\n---\nbody');
+    write('crlf', '---\r\nmeta_title: T\r\n---\r\nbody');
+    write('plain');
+    complete.mockResolvedValue(verdict(['plain', 2]));
+
+    await buildInboundLinkFiles({ targets: [target], config, cwd: dir });
+
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('plain | T | D');
+    expect(prompt).not.toContain('inline-list |');
+    expect(prompt).not.toContain('crlf |');
   });
 
   it('returns one file entry per source even when it is picked for several targets', async () => {

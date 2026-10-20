@@ -1,13 +1,11 @@
 import chalk from 'chalk';
 import { loadConfig, defaultLocale } from '../lib/config.js';
 import { readLandingPages, buildInboundLinkFiles } from '../lib/landings.js';
-import { inboundLinks } from '../lib/inbound-links.js';
+import { inboundLinks, MIN_INBOUND_LINKS } from '../lib/inbound-links.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { isoWeek } from '../lib/date.js';
 import { loadBudget } from '../lib/budget.js';
 import { getLlmStats } from '../lib/claude.js';
-
-const MIN_INBOUND_LINKS = 3;
 
 // Every page of the locale with fewer than three inbound links gets `related_pages` entries on
 // on-topic pages. Returns `{ files, rows }`, rows being `{ locale, source, target, before, after }`.
@@ -42,8 +40,8 @@ const rowLine = (r) => `- \`${r.source}\` -> \`${r.target}\` (${r.locale}, inbou
 
 /**
  * `seo links`: one PR (`seo/links/<week>`) that gives every landing page with fewer than three
- * inbound links up to three, as `related_pages` entries on on-topic pages. No LLM. `--dry-run`
- * prints the plan and writes nothing. Returns the PR url, or null when there was nothing to do,
+ * inbound links up to three, as `related_pages` entries on on-topic pages; a Haiku call per page judges the topic (booked in `seo/budget.json`, also on
+ * `--dry-run`). `--dry-run` prints the plan and opens no PR. Returns the PR url, or null when there was nothing to do,
  * on a dry run or when the branch already exists.
  */
 export async function linksCommand(opts = {}, cwd = process.cwd()) {

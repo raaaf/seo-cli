@@ -35,15 +35,22 @@ export function inboundLinks(pages) {
   return inbound;
 }
 
+/** Inbound links a landing page should have at least. */
+export const MIN_INBOUND_LINKS = 3;
+
 /**
  * The pages (`[{ slug, markdown, ... }]`, same locale) that may link to `targetSlug`: not the target,
- * not linking to it yet, with room left in `related_pages`. Whether they are on topic is not decided
- * here, see `judgeLinkSources` in `steps/link-judge.js`.
+ * not linking to it yet, with room left in `related_pages` and in a form `addRelatedPage` can edit
+ * (no inline list, no CRLF, with frontmatter). Each comes back with its `related` count. Whether
+ * they are on topic is not decided here, see `judgeLinkSources` in `steps/link-judge.js`.
  */
 export function eligibleSources({ targetSlug, pages, maxRelated = 4 }) {
-  return pages.filter(p => p.slug !== targetSlug
-    && !linkTargets(p.markdown).has(targetSlug)
-    && relatedList(p.markdown).length < maxRelated);
+  return pages
+    .map(p => ({ ...p, related: relatedList(p.markdown).length }))
+    .filter(p => p.slug !== targetSlug
+      && !linkTargets(p.markdown).has(targetSlug)
+      && p.related < maxRelated
+      && addRelatedPage(p.markdown, '__probe__') !== p.markdown);
 }
 
 /**

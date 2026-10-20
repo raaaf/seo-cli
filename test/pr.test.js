@@ -174,6 +174,17 @@ describe('pr-create inbound links', () => {
     expect(sources[0].content).toContain('  - hochzeit-planen\n  - hochzeit-kosten');
   });
 
+  it('lets only the first PR of a run edit a shared source', async () => {
+    write('hochzeit-ablauf', existing);
+    judge('hochzeit-ablauf');
+    const second = page({ keyword: 'brautkleid', slug: 'brautkleid', filePath: 'resources/landing/de/brautkleid.md' });
+    await createPRs({ generatedPages: [page(), second], keywordsData: kwData('hochzeit planen', 'brautkleid'), config, cwd: dir });
+
+    const shared = 'content/landing/de/hochzeit-ablauf.md';
+    expect(createBranchAndCommit.mock.calls[0][0].files.map(f => f.path)).toContain(shared);
+    expect(createBranchAndCommit.mock.calls[1][0].files.map(f => f.path)).not.toContain(shared);
+  });
+
   it('adds nothing and asks no model with inbound_links: false', async () => {
     write('hochzeit-ablauf', existing);
     judge('hochzeit-ablauf');
