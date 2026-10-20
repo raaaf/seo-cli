@@ -50,19 +50,23 @@ describe('pickLinkSources', () => {
   const target = { slug: 'hochzeit-planen', text: 'hochzeit planen checkliste' };
   const page = (slug, over = {}) => ({ slug, title: slug.replace(/-/g, ' '), markdown: md(), ...over });
 
+  // Unrelated pages keep the site-generic filter from calling "hochzeit" generic.
+  const fillers = (n = 30) => Array.from({ length: n }, (_, i) => page(`thema${i}-seite`));
+  const pick = ({ pages, ...rest }) => pickLinkSources({ target, pages: [...pages, ...fillers()], ...rest }).map(p => p.slug);
+
   it('excludes pages that already link to the target', () => {
     const pages = [page('hochzeit-kosten', { markdown: md({ related: ['hochzeit-planen'] }) }), page('hochzeit-ablauf')];
-    expect(pickLinkSources({ target, pages })).toEqual(['hochzeit-ablauf']);
+    expect(pick({ pages })).toEqual(['hochzeit-ablauf']);
   });
 
   it('excludes pages whose related_pages list is full', () => {
     const full = md({ related: ['a', 'b', 'c', 'd'] });
     const pages = [page('hochzeit-kosten', { markdown: full }), page('hochzeit-ablauf')];
-    expect(pickLinkSources({ target, pages })).toEqual(['hochzeit-ablauf']);
+    expect(pick({ pages })).toEqual(['hochzeit-ablauf']);
   });
 
   it('never picks a page without topic overlap', () => {
-    expect(pickLinkSources({ target, pages: [page('steuer-tipps')] })).toEqual([]);
+    expect(pick({ pages: [page('steuer-tipps')] })).toEqual([]);
   });
 
   it('sorts by overlap, then fewer related entries, then slug', () => {
@@ -72,12 +76,45 @@ describe('pickLinkSources', () => {
       page('hochzeit-c', { markdown: md({ related: ['x'] }) }),
       page('hochzeit-planen-checkliste'),
     ];
-    expect(pickLinkSources({ target, pages, max: 10 })).toEqual(['hochzeit-planen-checkliste', 'hochzeit-a', 'hochzeit-b', 'hochzeit-c']);
+    expect(pick({ pages, max: 10 })).toEqual(['hochzeit-planen-checkliste', 'hochzeit-a', 'hochzeit-b', 'hochzeit-c']);
   });
 
   it('returns at most max slugs and never the target itself', () => {
     const pages = [page('hochzeit-planen'), page('hochzeit-a'), page('hochzeit-b')];
-    expect(pickLinkSources({ target, pages, max: 1 })).toEqual(['hochzeit-a']);
+    expect(pick({ pages, max: 1 })).toEqual(['hochzeit-a']);
+  });
+
+  it('reports the shared tokens as via', () => {
+    const [first] = pickLinkSources({ target, pages: [page('hochzeit-ablauf'), ...fillers()] });
+    expect(first).toEqual({ slug: 'hochzeit-ablauf', via: ['hochzeit'] });
+  });
+
+  describe('site-generic tokens', () => {
+    const generic = { slug: 'taufe-organisieren', text: 'taufe organisieren' };
+    const orgPages = ['festival', 'messe', 'umzug'].map(s => page(`${s}-organisieren`));
+
+    it('a generic token alone gives no pick', () => {
+      expect(pickLinkSources({ target: generic, pages: [...orgPages, ...fillers(10)] })).toEqual([]);
+    });
+
+    it('a specific shared token still picks, the generic one is not in via', () => {
+      const pages = [...orgPages, page('taufe-geschenke'), ...fillers(10)];
+      expect(pickLinkSources({ target: generic, pages })).toEqual([{ slug: 'taufe-geschenke', via: ['taufe'] }]);
+    });
+
+    it('counts a compound for its shorter token', () => {
+      const pages = ['festival', 'messe', 'umzug'].map(s => page(`${s}-organisation`)).concat(fillers(10));
+      expect(pickLinkSources({ target: { slug: 'x', text: 'organisation' }, pages })).toEqual([]);
+    });
+
+    it('is generic only above 20 percent of the pages and from 3 pages', () => {
+      const three = (n) => [...orgPages, ...fillers(n)];
+      // target + 3 pages hold the token: 4 of 20 is exactly 20 percent, not above
+      expect(pickLinkSources({ target: generic, pages: three(16) }).map(p => p.slug).sort()).toEqual(['festival-organisieren', 'messe-organisieren', 'umzug-organisieren']);
+      expect(pickLinkSources({ target: generic, pages: three(15) })).toEqual([]);
+      // two pages is below the floor of 3, however small the site
+      expect(pickLinkSources({ target: generic, pages: orgPages.slice(0, 1) }).map(p => p.slug)).toEqual(['festival-organisieren']);
+    });
   });
 });
 
@@ -114,8 +151,8 @@ describe('buildInboundLinkFiles', () => {
       config, cwd: dir,
     });
     expect(links).toEqual([
-      { source: 'hochzeit-ablauf', target: 'hochzeit-planen' },
-      { source: 'hochzeit-ablauf', target: 'hochzeit-kosten' },
+      { source: 'hochzeit-ablauf', target: 'hochzeit-planen', via: ['hochzeit'] },
+      { source: 'hochzeit-ablauf', target: 'hochzeit-kosten', via: ['hochzeit'] },
     ]);
     expect(files).toHaveLength(1);
     expect(files[0].path).toBe(join('content/landing/de/', 'hochzeit-ablauf.md'));

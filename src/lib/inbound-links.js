@@ -44,29 +44,48 @@ const tokensMatch = (a, b) => {
   return short.length >= 5 && long.startsWith(short);
 };
 
+/**
+ * Tokens of `a` that match a token of `b`, each token of `a` once. A token in `ignore`, or a match
+ * through one, does not count.
+ */
+export function matchedTokens(a, b, ignore = new Set()) {
+  const tokensB = [...tokenize(b)].filter(t => !ignore.has(t));
+  return [...tokenize(a)].filter(token => !ignore.has(token) && tokensB.some(other => tokensMatch(token, other)));
+}
+
 /** Number of significant tokens of `a` that match a token of `b`; each token of `a` counts once. */
-export function topicOverlap(a, b) {
-  const tokensB = [...tokenize(b)];
-  let count = 0;
-  for (const token of tokenize(a)) {
-    if (tokensB.some(other => tokensMatch(token, other))) count++;
+export function topicOverlap(a, b, ignore) {
+  return matchedTokens(a, b, ignore).length;
+}
+
+// A token that is in more than 20 percent of the texts, and in at least 3, says nothing about a
+// topic on this site ("organisieren", "party"). A compound counts for its shorter token.
+function genericTokens(texts) {
+  const sets = texts.map(t => [...tokenize(t)]);
+  const generic = new Set();
+  for (const token of new Set(sets.flat())) {
+    const df = sets.filter(tokens => tokens.some(other => tokensMatch(token, other))).length;
+    if (df >= 3 && df / texts.length > 0.2) generic.add(token);
   }
-  return count;
+  return generic;
 }
 
 /**
- * Up to `max` slugs of `pages` (`[{ slug, markdown, title }]`, same locale) that should link to
- * `target` (`{ slug, text }`): on topic, not linking to it yet, with room left in `related_pages`.
- * Best overlap first, then fewer related entries, then slug, so the pick is deterministic.
+ * Up to `max` `{ slug, via }` of `pages` (`[{ slug, markdown, title }]`, same locale) that should
+ * link to `target` (`{ slug, text }`): on topic, not linking to it yet, with room left in
+ * `related_pages`. `via` are the shared tokens. Tokens generic for the site do not count. Best
+ * overlap first, then fewer related entries, then slug, so the pick is deterministic.
  */
 export function pickLinkSources({ target, pages, max = 3, maxRelated = 4 }) {
+  const textOf = p => `${p.title ?? ''} ${p.slug}`;
+  const ignore = genericTokens([target.text, ...pages.filter(p => p.slug !== target.slug).map(textOf)]);
   return pages
     .filter(p => p.slug !== target.slug && !linkTargets(p.markdown).has(target.slug))
-    .map(p => ({ slug: p.slug, related: relatedList(p.markdown).length, overlap: topicOverlap(target.text, `${p.title ?? ''} ${p.slug}`) }))
-    .filter(c => c.related < maxRelated && c.overlap >= 1)
-    .sort((a, b) => b.overlap - a.overlap || a.related - b.related || a.slug.localeCompare(b.slug))
+    .map(p => ({ slug: p.slug, related: relatedList(p.markdown).length, via: matchedTokens(target.text, textOf(p), ignore) }))
+    .filter(c => c.related < maxRelated && c.via.length >= 1)
+    .sort((a, b) => b.via.length - a.via.length || a.related - b.related || a.slug.localeCompare(b.slug))
     .slice(0, max)
-    .map(c => c.slug);
+    .map(c => ({ slug: c.slug, via: c.via }));
 }
 
 /**

@@ -211,11 +211,11 @@ export function buildInboundLinkFiles({ targets, config, cwd = process.cwd(), lo
   const links = [];
   for (const target of targets) {
     const candidates = pages.map(p => ({ ...p, markdown: current.get(p.slug) }));
-    for (const source of pickLinkSources({ target, pages: candidates, max: target.max })) {
+    for (const { slug: source, via } of pickLinkSources({ target, pages: candidates, max: target.max })) {
       const updated = addRelatedPage(current.get(source), target.slug);
       if (updated === current.get(source)) continue;
       current.set(source, updated);
-      links.push({ source, target: target.slug });
+      links.push({ source, target: target.slug, via });
     }
   }
   const landingPath = localeLandingPath(config, locale);
@@ -243,5 +243,5 @@ export function tryInboundLinkFiles(args, onWarning) {
 /** `source -> target` lines of a PR body section, empty without links. */
 export function inboundLinksSection(links, heading = 'Inbound links') {
   if (!links.length) return '';
-  return `\n## ${heading}\n\n${links.map(l => `- \`${l.source}\` -> \`${l.target}\``).join('\n')}\n`;
+  return `\n## ${heading}\n\n${links.map(l => `- \`${l.source}\` -> \`${l.target}\` (via: ${l.via.join(', ')})`).join('\n')}\n`;
 }

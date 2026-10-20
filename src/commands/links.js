@@ -27,7 +27,7 @@ function planLocale(config, cwd, locale) {
   return { files, rows };
 }
 
-const rowLine = (r) => `- \`${r.source}\` -> \`${r.target}\` (${r.locale}, inbound ${r.before} -> ${r.after})`;
+const rowLine = (r) => `- \`${r.source}\` -> \`${r.target}\` (${r.locale}, inbound ${r.before} -> ${r.after}, via: ${r.via.join(', ')})`;
 
 /**
  * `seo links`: one PR (`seo/links/<week>`) that gives every landing page with fewer than three

@@ -46,7 +46,7 @@ describe('linksCommand', () => {
     const { files, branch } = createBranchAndCommit.mock.calls[0][0];
     expect(branch).toMatch(/^seo\/links\/\d{4}-W\d{2}$/);
     expect(files.map(f => f.path).sort()).toEqual(['content/landing/de/hochzeit-kosten.md', 'content/landing/de/hochzeit-planen.md']);
-    expect(openPR.mock.calls[0][0].body).toContain('`hochzeit-kosten` -> `hochzeit-planen` (de, inbound 0 -> 1)');
+    expect(openPR.mock.calls[0][0].body).toContain('`hochzeit-kosten` -> `hochzeit-planen` (de, inbound 0 -> 1, via: hochzeit)');
   });
 
   it('writes nothing on a dry run', async () => {
