@@ -222,7 +222,7 @@ function landingPages(config, cwd, base) {
 function structuredPages(config, cwd, base, entries) {
   if (config.landing_path) return landingPages(config, cwd, base);
   if (!entries) return null;
-  return entries.map(e => ({ slug: new URL(e.url).pathname, url: e.url, hasFaq: false }));
+  return entries.map(e => ({ slug: new URL(e.url).pathname, url: e.url, hasFaq: false, discovered: true }));
 }
 
 // Bots and pages the run could not decide, for one warning.
@@ -291,7 +291,13 @@ async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchB
       const res = results.get(`data:${p.slug}`);
       const ok = res && res.status >= 200 && res.status < 300;
       const page = ok ? pageCheck({ html: res.html, headers: res.headers, url: p.url, hasFaq: p.hasFaq, truncated: res.truncated }) : null;
-      return { slug: p.slug, codes: page?.codes ?? null, recommended: page?.recommended ?? [] };
+      // A sitemap-discovered page (legal pages, app pages) may legitimately carry no JSON-LD: report only, no alert.
+      const soft = p.discovered && page?.codes.includes('jsonld_missing');
+      return {
+        slug: p.slug,
+        codes: soft ? page.codes.filter(c => c !== 'jsonld_missing') : page?.codes ?? null,
+        recommended: soft ? ['jsonld_missing', ...page.recommended] : page?.recommended ?? [],
+      };
     });
     structuredData = { slugs: pages.map(p => p.slug), results: checked.map(({ slug, codes }) => ({ slug, codes })) };
     report.structured_data = {

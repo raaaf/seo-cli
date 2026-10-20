@@ -45,7 +45,7 @@ export function structuredDataFindings({ html, truncated }) {
 // structured-data/<type>). `required` gaps keep a page out of the rich result and open the alert as `required:<Type>.<path>`;
 // `recommended` gaps are what Search Console mails as non-critical issues and only land in the report. A rule is a
 // path (`location.address`), alternatives joined by `|` (one of them suffices) or a function for the nested lists.
-// Fields that only apply to some sites (aggregateRating on a recipe, review on a local business) are left out.
+// Fields that only apply to some sites (aggregateRating on a recipe, review on a local business) are left out, and an app without real reviews cannot add them (SoftwareApplication: recommended).
 
 // LocalBusiness and the subtypes a small business site is likely to use; schema.org has more, an unknown subtype is
 // simply not checked.
@@ -140,8 +140,8 @@ const RULES = [
     recommended: missing(n, ['description', 'contentUrl|embedUrl', 'duration']),
   })],
   [n => list(n['@type']).some(t => SOFTWARE.has(t)), 'SoftwareApplication', n => ({
-    required: missing(n, ['name', 'offers.price', 'aggregateRating|review']),
-    recommended: missing(n, ['applicationCategory', 'operatingSystem']),
+    required: missing(n, ['name', 'offers.price']),
+    recommended: missing(n, ['aggregateRating|review', 'applicationCategory', 'operatingSystem']),
   })],
   [n => isType(n, 'ProfilePage'), 'ProfilePage', n => ({
     required: missing(n, ['mainEntity', 'mainEntity.name|mainEntity.alternateName']).slice(0, 1),

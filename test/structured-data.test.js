@@ -91,7 +91,10 @@ describe('field gaps per rich result type', () => {
 describe('more types', () => {
   it('video, software app, profile page and website', () => {
     expect(fieldGaps([{ '@type': 'VideoObject', name: 'V' }]).required).toEqual(['VideoObject.thumbnailUrl', 'VideoObject.uploadDate']);
-    expect(fieldGaps([{ '@type': 'MobileApplication', name: 'A', offers: { price: 0 } }]).required).toEqual(['SoftwareApplication.aggregateRating|review']);
+    const app = fieldGaps([{ '@type': 'MobileApplication', name: 'A', offers: { price: 0 } }]);
+    expect(app.required).toEqual([]);
+    expect(app.recommended).toContain('SoftwareApplication.aggregateRating|review');
+    expect(fieldGaps([{ '@type': 'MobileApplication', name: 'A' }]).required).toEqual(['SoftwareApplication.offers.price']);
     expect(fieldGaps([{ '@type': 'ProfilePage', mainEntity: { '@type': 'Person' } }]).required).toEqual(['ProfilePage.mainEntity.name|mainEntity.alternateName']);
     expect(fieldGaps([{ '@type': 'ProfilePage' }]).required).toEqual(['ProfilePage.mainEntity']);
     expect(fieldGaps([{ '@type': 'WebSite', name: 'S' }]).required).toEqual(['WebSite.url']);
