@@ -185,6 +185,14 @@ describe('pr-create inbound links', () => {
     expect(createBranchAndCommit.mock.calls[1][0].files.map(f => f.path)).not.toContain(shared);
   });
 
+  it('never edits a slug the caller excludes (files of a sibling seasonal PR)', async () => {
+    write('hochzeit-ablauf', existing);
+    judge('hochzeit-ablauf');
+    await createPRs({ generatedPages: [page()], keywordsData: kwData('hochzeit planen'), config, cwd: dir, exclude: ['hochzeit-ablauf'] });
+
+    expect(filesOf().map(f => f.path)).toEqual(['resources/landing/de/hochzeit-planen.md']);
+  });
+
   it('adds nothing and asks no model with inbound_links: false', async () => {
     write('hochzeit-ablauf', existing);
     judge('hochzeit-ablauf');

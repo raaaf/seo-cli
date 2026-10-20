@@ -18,6 +18,7 @@ import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { prepareOverlay } from '../steps/overlay.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
+import { pickSeasonPage } from '../lib/seasons.js';
 
 /**
  * Selects the one existing page with the strongest case (or takes the one named
@@ -41,7 +42,9 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   // Overlays also need the performance rows, so they are fetched outside the targeted path.
   let rows = null;
   const targeted = Boolean(opts.slug);
-  if (!targeted) {
+  // A page listed under an active season beats the Search Console pick; it needs no GSC rows.
+  const seasonal = targeted ? null : pickSeasonPage({ config, cwd });
+  if (!targeted && !seasonal) {
     try {
       rows = await fetchPagePerformance(config);
     } catch (e) {
@@ -64,6 +67,14 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   if (targeted) {
     const brief = opts.brief ? readFileSync(join(cwd, opts.brief), 'utf8') : null;
     page = targetedPage({ slug: opts.slug, mergeFrom: opts.mergeFrom ?? [], brief }, config, cwd);
+  } else if (seasonal) {
+    const reason = `Saison ${seasonal.season}, Peak ${seasonal.peak}`;
+    page = {
+      ...targetedPage({ slug: seasonal.slug }, config, cwd),
+      reason,
+      diagnosis: `Seasonal refresh ahead of the peak on ${seasonal.peak} (${seasonal.season}). Bring the page up to date for the coming season: dates, deadlines, checklists and examples.`,
+      season: seasonal.season,
+    };
   } else {
     page = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(loadImprovements(cwd)), engagement: await loadEngagement(config, cwd, dryRun) });
   }
@@ -94,6 +105,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   if (!result.ok) {
     console.log(chalk.red(`  Improvement discarded: the rewrite of ${page.slug} does not validate after 2 attempts`));
     result.errors.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
+    if (page.season && !dryRun) recordSeasonFailure(page.slug, cwd);
     return null;
   }
 
@@ -105,6 +117,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     if (unchecked) factCheckError = error;
     if (unresolvedSeverity(findings) === 'high') {
       console.log(chalk.red(`  Improvement discarded: unresolved factual error in the rewrite of ${page.slug}`));
+      if (page.season) recordSeasonFailure(page.slug, cwd);
       return null;
     }
     if (reviewed !== markdown && validate(reviewed, keywordLike, validateOpts).ok) finalMarkdown = reviewed;
@@ -137,6 +150,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   const inbound = await inboundLinkEdits({ slug: page.slug, markdown: finalMarkdown, files, config, cwd });
   return {
     slug: page.slug,
+    ...(page.season ? { season: page.season } : {}),
     files: [...files, ...inbound.files],
     record: { slug: page.slug, queries: page.queries.map(q => q.query) },
     commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
@@ -150,6 +164,14 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       newLinks: inbound.links,
     }),
   };
+}
+
+// A seasonal rewrite that ends without a PR takes the normal cooldown (a `failed` entry, as overlays do),
+// so the same page does not cost a rewrite every week. It does not count as a refresh for the 300-day rule.
+function recordSeasonFailure(slug, cwd) {
+  const improvements = recordImprovement(loadImprovements(cwd), { slug, queries: [] });
+  improvements.entries.at(-1).failed = true;
+  saveImprovements(improvements, cwd);
 }
 
 // A page with fewer than three inbound links from the other default-locale pages gets some, as
@@ -210,6 +232,7 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
     const warning = `Improve skipped: branch ${branch} already exists (an earlier PR for ${prepared.slug} is still open)`;
     console.log(chalk.yellow(`  ${warning}`));
     warnings.push(warning);
+    if (prepared.season) recordSeasonFailure(prepared.slug, cwd);
     return null;
   }
 

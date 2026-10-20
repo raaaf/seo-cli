@@ -117,6 +117,103 @@ afterEach(() => {
 });
 
 describe('run-pipeline', () => {
+  describe('seasons in the report', () => {
+    const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    afterEach(() => { delete CONFIG.seasons; CONFIG.weekly_cap = 2; });
+
+    it('lists an active season with its seeded keywords and the refreshed slug', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      CONFIG.weekly_cap = 0; // nothing to generate, so the run takes the improve slot
+      seedState('keywords.json', { keywords: [{ keyword: 'old', status: 'skip', score: 2, season: 'Muttertag' }] });
+      discover.mockResolvedValue({ keywords: [
+        { keyword: 'old', status: 'skip', score: 2, season: 'Muttertag' },
+        { keyword: 'muttertag geschenk', status: 'proposed', score: 9, source: 'season', season: 'Muttertag' },
+        { keyword: 'muttertag basteln', status: 'skip', score: 3, source: 'season', season: 'Muttertag' },
+      ] });
+      prepareImprove.mockResolvedValue({ slug: 'muttertag', season: 'Muttertag', files: [] });
+      publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+      await run();
+
+      expect(report().seasons).toEqual([{ name: 'Muttertag', peak: inDays(20), seeded: 1, refreshed: 'muttertag' }]);
+    });
+
+    it('counts a seeded keyword generated in the same run, but not a skipped one', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5) }];
+      discover.mockResolvedValue({ keywords: [
+        { keyword: 'muttertag geschenk', status: 'proposed', score: 9, target_slug: 'muttertag-geschenk', type: 'guide', source: 'season', season: 'Muttertag' },
+        { keyword: 'muttertag basteln', status: 'skip', score: 3, source: 'season', season: 'Muttertag' },
+      ] });
+      await run();
+      expect(generatePage).toHaveBeenCalledTimes(1);
+      expect(report().seasons[0]).toMatchObject({ seeded: 1, refreshed: null });
+    });
+
+    it('also rewrites the seasonal page in a week that generates pages', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'resources/landing/de/muttertag.md'), '---\nslug: muttertag\n---\nbody');
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove.mockResolvedValue({ slug: 'muttertag', season: 'Muttertag', files: [] });
+      publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+      await run();
+
+      expect(generatePage).toHaveBeenCalledTimes(1);
+      expect(prepareImprove).toHaveBeenCalledTimes(1);
+      expect(report().prs).toEqual(expect.arrayContaining([{ url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'muttertag' }]));
+    });
+
+    it('still opens the PRs of generated pages when the seasonal rewrite throws', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'resources/landing/de/muttertag.md'), '---\nslug: muttertag\n---\nbody');
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove.mockRejectedValue(new Error('rewrite exploded'));
+
+      await run();
+
+      expect(createPRs).toHaveBeenCalledTimes(1);
+      expect(createPRs.mock.calls[0][0].generatedPages).toHaveLength(1);
+      expect(report().warnings).toContain('Seasonal rewrite failed: rewrite exploded');
+      expect(report().status).toBe('prs_opened');
+    });
+
+    it('keeps the new pages\' inbound-link edits off the files of the seasonal PR', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'resources/landing/de/muttertag.md'), '---\nslug: muttertag\n---\nbody');
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove.mockResolvedValue({ slug: 'muttertag', season: 'Muttertag', files: [
+        { path: 'resources/landing/de/muttertag.md', content: 'x' },
+        { path: 'resources/landing/de/ratgeber.md', content: 'y' },
+      ] });
+      publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+      await run();
+
+      expect(createPRs.mock.calls[0][0].exclude).toEqual(['muttertag', 'ratgeber']);
+    });
+
+    it('does not improve in a generation week without a seasonal page', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      discover.mockResolvedValue(keywordsData());
+      await run();
+      expect(generatePage).toHaveBeenCalledTimes(1);
+      expect(prepareImprove).not.toHaveBeenCalled();
+    });
+
+    it('omits the key when no season is active', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(-20).slice(5) }];
+      discover.mockResolvedValue({ keywords: [] });
+      await run();
+      expect(report()).not.toHaveProperty('seasons');
+    });
+  });
+
   it('measures after the reconcile and before discover, and puts the result in the report', async () => {
     const order = [];
     getPR.mockImplementation(async () => { order.push('reconcile'); return { state: 'open' }; });

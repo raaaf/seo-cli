@@ -29,7 +29,7 @@ const safeKeyword = (kw) => String(kw ?? '').replace(/\r?\n/g, ' ').slice(0, 200
  * existing branch (open PR for the same keyword) is a warning, any other
  * failure an error. Returns `{ prs: [{ url, keyword, slug }], warnings, errors }`.
  */
-export async function createPRs({ generatedPages, keywordsData, config, cwd = process.cwd() }) {
+export async function createPRs({ generatedPages, keywordsData, config, cwd = process.cwd(), exclude = [] }) {
   const locales = config.locales || [config.locale || 'de'];
   // hreflang needs every locale of a slug, so it runs over the whole run
   // before the pages are split up by keyword.
@@ -51,7 +51,7 @@ export async function createPRs({ generatedPages, keywordsData, config, cwd = pr
     const kw = keywordsData.keywords.find(k => k.keyword === keyword);
     const sitemapSlugs = [...new Set(pages.map(p => sitemapSlug(p, config)))];
 
-    const inbound = await inboundLinkEdits(pages, config, cwd, result.warnings, editedSources);
+    const inbound = await inboundLinkEdits(pages, config, cwd, result.warnings, editedSources, exclude);
 
     let branchCreated = false;
     try {
@@ -94,7 +94,7 @@ export async function createPRs({ generatedPages, keywordsData, config, cwd = pr
 
 // Existing pages of each locale that should link to the new page of that locale. Never throws:
 // a failure is a warning and the PR ships without the extra files.
-async function inboundLinkEdits(pages, config, cwd, warnings, editedSources) {
+async function inboundLinkEdits(pages, config, cwd, warnings, editedSources, excluded = []) {
   const edits = { files: [], links: [] };
   const locales = [...new Set(pages.map(p => p.locale ?? defaultLocale(config)))];
   for (const locale of locales) {
@@ -103,7 +103,7 @@ async function inboundLinkEdits(pages, config, cwd, warnings, editedSources) {
       const { parsed } = parseFrontmatter(p.markdown);
       return { slug: p.slug, title: parsed.meta_title ?? parsed.title ?? p.keyword, description: parsed.meta_description ?? '' };
     });
-    const { files, links } = await tryInboundLinkFiles({ targets, config, cwd, locale, exclude: [...own.map(p => p.slug), ...(editedSources.get(locale) ?? [])] }, warning => {
+    const { files, links } = await tryInboundLinkFiles({ targets, config, cwd, locale, exclude: [...own.map(p => p.slug), ...excluded, ...(editedSources.get(locale) ?? [])] }, warning => {
       console.log(chalk.yellow(`  ${warning}`));
       warnings.push(warning);
     });

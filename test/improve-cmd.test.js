@@ -51,6 +51,7 @@ vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig
 const { BudgetExceededError } = await import('../src/lib/budget.js');
 const { improveCommand, prepareImprove, publishImprove } = await import('../src/commands/improve.js');
 const { loadImprovements } = await import('../src/lib/improvements.js');
+const { pickSeasonPage } = await import('../src/lib/seasons.js');
 
 const PAGE = {
   slug: 'preise', kind: 'snippet', reason: 'no clicks', impressions: 300, clicks: 0, bestPosition: 3,
@@ -81,6 +82,49 @@ afterEach(() => {
 });
 
 describe('improveCommand', () => {
+  describe('seasons', () => {
+    const SEASON_CONFIG = (peak) => ({ ...CONFIG, seasons: [{ name: 'Muttertag', peak, pages: ['muttertag'] }] });
+    const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(5, 10);
+
+    beforeEach(() => {
+      mkdirSync(join(dir, 'content/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'content/landing/de/muttertag.md'), '---\nslug: muttertag\n---\nbody');
+      targetedPage.mockReturnValue({ slug: 'muttertag', kind: 'targeted', reason: 'targeted rewrite', queries: [], impressions: 0, clicks: 0, bestPosition: 0 });
+    });
+
+    it('rewrites a listed page of an active season instead of the GSC pick', async () => {
+      const prepared = await prepareImprove({ config: SEASON_CONFIG(day(20)) }, dir);
+      expect(selectPage).not.toHaveBeenCalled();
+      expect(fetchPagePerformance).not.toHaveBeenCalled();
+      expect(targetedPage).toHaveBeenCalledWith({ slug: 'muttertag' }, expect.anything(), dir);
+      expect(improvePage.mock.calls[0][0]).toMatchObject({ slug: 'muttertag', reason: expect.stringMatching(/^Saison Muttertag, Peak \d{4}-\d{2}-\d{2}$/) });
+      expect(prepared).toMatchObject({ slug: 'muttertag', season: 'Muttertag' });
+    });
+
+    it('puts a seasonal page whose rewrite fails validation on the normal cooldown', async () => {
+      validate.mockReturnValue({ ok: false, errors: ['too short'], warnings: [] });
+      const cfg = SEASON_CONFIG(day(20));
+      expect(await prepareImprove({ config: cfg }, dir)).toBeNull();
+      expect(loadImprovements(dir).entries).toEqual([expect.objectContaining({ slug: 'muttertag', failed: true })]);
+      expect(pickSeasonPage({ config: cfg, cwd: dir })).toBeNull();
+    });
+
+    it('puts a seasonal page on the cooldown when its branch already exists', async () => {
+      createBranchAndCommit.mockRejectedValue(Object.assign(new Error('exists'), { code: 'BRANCH_EXISTS' }));
+      const prepared = await prepareImprove({ config: SEASON_CONFIG(day(20)) }, dir);
+      expect(await publishImprove(prepared, { config: CONFIG, cwd: dir })).toBeNull();
+      expect(loadImprovements(dir).entries).toEqual([expect.objectContaining({ slug: 'muttertag', failed: true })]);
+    });
+
+    it('keeps the GSC pick while no season is active', async () => {
+      const prepared = await prepareImprove({ config: SEASON_CONFIG(day(-20)) }, dir);
+      expect(selectPage).toHaveBeenCalledTimes(1);
+      expect(targetedPage).not.toHaveBeenCalled();
+      expect(prepared.slug).toBe('preise');
+      expect(prepared.season).toBeUndefined();
+    });
+  });
+
   it('writes the run log before the last state commit, and none on a dry run', async () => {
     const seen = [];
     commitState.mockImplementation(async () => { seen.push(existsSync(join(dir, 'seo/last-run.json'))); return []; });
