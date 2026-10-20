@@ -68,6 +68,7 @@ seo run --dry-run  # preview without committing
 | `seo run [--dry-run] [--report <path>]` | Full pipeline: reconcile status with the real PR state, discover, generate, validate, fact-check, one PR per keyword. Improves an existing page when the backlog is empty. `--report` writes the run report as JSON |
 | `seo watch [--commit] [--report <path>] [--dry-run]` | Daily guard without an LLM: index status plus landing page traffic against `seo/alerts.json`. Open index alerts get a technical diagnosis (live fetch as Googlebot plus the last Google crawl), and a clean one resubmits the sitemap and IndexNow at most every 7 days. Reports (`status: alert`/`resolved`) only what opens, changes diagnosis or resolves, `watch_ok` otherwise. `--commit` pushes only `seo/alerts.json` and `seo/index-status.json`, only when they changed |
 | `seo improve [--dry-run]` | Rewrite the existing page with the strongest case, from live GSC data |
+| `seo links [--dry-run]` | Gives every landing page with fewer than 3 inbound links up to 3, as `related_pages` entries on on-topic pages (code checks eligibility, Haiku judges the topic, one call per page). One PR on `seo/links/<week>`. New-page and improve PRs do the same for their own page; `inbound_links: false` turns that off |
 | `seo check <files...>` | Validate already-generated landing-page markdown (CI gate) |
 | `seo dashboard [--live] [--project <name>] [--json]` | Cross-project overview: funnel, rankings, movers, suggestions |
 | `seo submit-sitemap` | (Re)submit `<base_url>/sitemap.xml` to Google Search Console |

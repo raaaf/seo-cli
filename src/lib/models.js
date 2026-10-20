@@ -3,6 +3,7 @@
 export const MODELS = Object.freeze({
   generate: 'claude-opus-5-5', // page generation, improve rewrites, counterpart adaptation, fact check
   default: 'claude-sonnet-5-5', // scoring, greenfield, site analysis (claude.js default)
+  judge: 'claude-haiku-5-5', // topic judgment for inbound links; claude.js only sets thinking for generate
 });
 
 // Adaptive thinking is always on whenever the model is MODELS.generate (see

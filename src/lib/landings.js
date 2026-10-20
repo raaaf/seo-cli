@@ -3,6 +3,8 @@ import { join } from 'path';
 import { parseFrontmatter } from './frontmatter.js';
 import { isValidSlug } from './keywords.js';
 import { defaultLocale, localeLandingPath, isStrict } from './config.js';
+import { eligibleSources, addRelatedPage } from './inbound-links.js';
+import { judgeLinkSources } from '../steps/link-judge.js';
 
 const slugsCache = new Map();
 const titlesCache = new Map();
@@ -181,4 +183,68 @@ export function buildMergeFiles({ survivor, mergeFrom, config, cwd = process.cwd
   }
   const counterparts = [...cpMerged].map(([slug, to]) => ({ slug, to, manualRedirect: needsManualRedirect }));
   return { files, counterparts, counterpartPrefix: config.counterpart_url_prefix || '' };
+}
+
+/** Slug, title and markdown of every landing page of a locale on disk; empty without the directory. */
+export function readLandingPages(config, cwd = process.cwd(), locale = defaultLocale(config)) {
+  const dir = join(cwd, localeLandingPath(config, locale));
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter(f => f.endsWith('.md'))
+    .map(f => {
+      const slug = f.replace(/\.md$/, '');
+      const markdown = readFileSync(join(dir, f), 'utf8');
+      const { parsed } = parseFrontmatter(markdown);
+      return { slug, markdown, title: parsed.meta_title ?? parsed.hero?.headline ?? slug, description: parsed.meta_description ?? '' };
+    });
+}
+
+/**
+ * Edits that give each target page inbound links: for every `{ slug, title, description, max }` of
+ * `targets` the eligible pages of `locale` (`eligibleSources`) that the judge calls on topic
+ * (`judgeLinkSources`) get the target added to `related_pages`. A source picked for several targets
+ * ends up as one file entry. `exclude` are slugs whose files are already part of the PR and are never
+ * edited. Returns `{ files: [{ path, content }], links: [{ source, target, reason }] }`.
+ */
+export async function buildInboundLinkFiles({ targets, config, cwd = process.cwd(), locale = defaultLocale(config), exclude = [], onWarning }) {
+  const skip = new Set(exclude);
+  const pages = readLandingPages(config, cwd, locale).filter(p => !skip.has(p.slug));
+  const current = new Map(pages.map(p => [p.slug, p.markdown]));
+  const links = [];
+  for (const target of targets) {
+    const candidates = eligibleSources({ targetSlug: target.slug, pages: pages.map(p => ({ ...p, markdown: current.get(p.slug) })) });
+    for (const { slug: source, reason } of await judgeLinkSources({ target, candidates, max: target.max }, onWarning)) {
+      const updated = addRelatedPage(current.get(source), target.slug);
+      if (updated === current.get(source)) continue;
+      current.set(source, updated);
+      links.push({ source, target: target.slug, reason });
+    }
+  }
+  const landingPath = localeLandingPath(config, locale);
+  const files = pages
+    .filter(p => current.get(p.slug) !== p.markdown)
+    .map(p => ({ path: join(landingPath, `${p.slug}.md`), content: current.get(p.slug) }));
+  return { files, links };
+}
+
+/**
+ * `buildInboundLinkFiles` for a PR that ships anyway: off with `inbound_links: false` or without a
+ * landing path, and any failure (judge, budget, disk) becomes a warning (`onWarning`) and no extra
+ * files instead of an error.
+ */
+export async function tryInboundLinkFiles(args, onWarning) {
+  const none = { files: [], links: [] };
+  if (args.config.inbound_links === false || !args.config.landing_path) return none;
+  try {
+    return await buildInboundLinkFiles({ ...args, onWarning });
+  } catch (e) {
+    onWarning(`Inbound links skipped: ${String(e.message).split('\n')[0]}`);
+    return none;
+  }
+}
+
+/** `source -> target` lines of a PR body section, empty without links. */
+export function inboundLinksSection(links, heading = 'Inbound links') {
+  if (!links.length) return '';
+  return `\n## ${heading}\n\n${links.map(l => `- \`${l.source}\` -> \`${l.target}\` (${l.reason})`).join('\n')}\n`;
 }

@@ -246,7 +246,8 @@ export async function complete({
   // Set explicitly rather than relying on the model default: the
   // generation/review/improve/counterpart routes are judgment-heavy and
   // should think, whichever model MODELS.generate points at.
-  const thinking = model === MODELS.generate ? { type: 'adaptive' } : undefined;
+  // Haiku 5.5 thinks by default and the judge needs a plain JSON answer, so it is switched off.
+  const thinking = model === MODELS.generate ? { type: 'adaptive' } : model === MODELS.judge ? { type: 'disabled' } : undefined;
   const useFallback = model === MODELS.generate && !batch;
   // Structured Outputs are incompatible with citations, so callers that use
   // web search (and therefore citations) must not pass a schema. Opus 5.5's
