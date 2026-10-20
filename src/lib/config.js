@@ -95,6 +95,9 @@ export const DEFAULTS = {
   // Invent keywords when Search Console yields none. Off by default: an empty
   // backlog means the topic space is covered, not that the week needs filling.
   greenfield: false,
+  // Seasonal calendar: [{ name, peak: 'MM-DD', lead_weeks: 10, keywords: [], pages: [slug] }]. Inside the lead
+  // window before a peak, discover seeds the keywords and improve rewrites the listed pages first.
+  seasons: [],
   // Verify checkable claims against the live web before a page is committed.
   fact_check: true,
   // 'strict' turns on the content rules for sites that were demoted for thin or

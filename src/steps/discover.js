@@ -13,6 +13,7 @@ import { findTokenSetDuplicate } from '../lib/similarity.js';
 import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
 import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
 import { readBingQueries, bingCandidates } from '../lib/signals/bing.js';
+import { activeSeasons } from '../lib/seasons.js';
 
 const SCORE_PROMPT = readFileSync(new URL('../prompts/score.md', import.meta.url), 'utf8');
 const GREENFIELD_PROMPT = readFileSync(new URL('../prompts/greenfield.md', import.meta.url), 'utf8');
@@ -118,9 +119,21 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
   // six pages answering one question. An empty backlog is now a valid result:
   // it means the topic space is covered and the week belongs to improving what
   // already ranks.
+  let pageRows = null;
   if (candidates.length > 0) {
-    const pageRows = await fetchPageRows(config);
+    pageRows = await fetchPageRows(config);
     await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, pageRows, cwd });
+  }
+
+  // Seasonal keywords have no GSC history yet, so the calendar supplies them. They run through the same
+  // guards and scoring as any candidate, whatever `greenfield` says, and never re-score a known keyword.
+  for (const season of activeSeasons(config.seasons)) {
+    const fresh = season.keywords.filter(keyword => !data.keywords.some(k => k.keyword === keyword));
+    if (fresh.length === 0) continue;
+    console.log(chalk.gray(`  Season ${season.name} (peak ${season.peak}): ${fresh.length} new keyword(s)`));
+    const candidates = fresh.map(keyword => ({ keyword, impressions: 0, position: 0, clicks: 0 }));
+    pageRows ??= await fetchPageRows(config);
+    await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, pageRows, cwd, source: 'season', season });
   }
 
   const cap = config.weekly_cap ?? 2;
@@ -161,7 +174,7 @@ function isSlugTaken(targetSlug, keyword, data, existingFiles = [], reservedSlug
   return data.keywords.some(k => k.target_slug === targetSlug && k.keyword !== keyword);
 }
 
-function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, expected_entities, content_gaps, serp, stats, scoreCutoff }) {
+function buildKeywordEntry({ keyword, source, season, score, type, intent, target_slug, expected_entities, content_gaps, serp, stats, scoreCutoff }) {
   if (score < scoreCutoff) {
     return { keyword, status: KEYWORD_STATUS.SKIP, score, discovered_at: format(new Date()) };
   }
@@ -179,6 +192,7 @@ function buildKeywordEntry({ keyword, source, score, type, intent, target_slug, 
     discovered_at: format(new Date()),
   };
   if (serp.features) entry.serp_features = { ...serp.features, checked_at: format(new Date()) };
+  if (season) entry.season = season.name;
   if (stats) entry[source === 'bing' ? 'bing' : 'gsc'] = stats;
   return entry;
 }
@@ -214,7 +228,7 @@ function shopOnlyQueries(pageRows) {
   return new Set([...onShop].filter(([, only]) => only).map(([query]) => query));
 }
 
-async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], pageRows = [], cwd, source = 'gsc', maxScored = MAX_SCORED_PER_RUN }) {
+async function scoreAndSave({ candidates, config, data, existingSlugs, existingFiles = [], pageRows = [], cwd, source = 'gsc', season = null, maxScored = MAX_SCORED_PER_RUN }) {
   const existingTitles = getExistingTitles(config.landing_path, cwd);
   const knownKeywords = data.keywords.map(k => k.keyword).filter(Boolean);
   let scored = 0;
@@ -273,7 +287,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       console.log(chalk.yellow(`  SerpAPI skip (${row.keyword}): ${e.message}`));
     }
 
-    const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData, existingTitles, cwd);
+    const prompt = buildScorePrompt(row.keyword, row, config, existingSlugs, serpData, existingTitles, cwd, season);
     let result;
     try {
       result = await complete({ system: 'You are an SEO expert.', prompt, json: true, schema: SCORE_SCHEMA });
@@ -310,6 +324,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
     upsertKeyword(data, buildKeywordEntry({
       keyword: row.keyword,
       source,
+      season,
       score: result.score,
       type: result.type,
       intent: result.intent,
@@ -317,7 +332,7 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       expected_entities: result.expected_entities,
       content_gaps: result.content_gaps,
       serp: serpData,
-      stats: { impressions: row.impressions, position: row.position, clicks: row.clicks },
+      stats: season ? null : { impressions: row.impressions, position: row.position, clicks: row.clicks },
       scoreCutoff: config.score_cutoff,
     }));
     if (result.score >= config.score_cutoff) scored++;
@@ -419,7 +434,7 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   }
 }
 
-function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = [], cwd) {
+function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = [], cwd, season = null) {
   const vars = {
     keyword: String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200),
     impressions: row.impressions,
@@ -435,6 +450,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existin
     locale: config.locale || 'de',
     gsc_guardrail: GSC_GUARDRAIL,
     icp: icpBlock(config, cwd),
+    season: season ? `\n\nSeasonal keyword (${season.name}, peak ${season.peak}): there is no search data yet and the current volume is low because demand builds towards the peak. Judge fit and intent, not the missing numbers.` : '',
   };
   return fillTemplate(SCORE_PROMPT, vars);
 }

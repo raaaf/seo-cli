@@ -397,3 +397,87 @@ describe('discover-run: Bing start mode', () => {
   });
 });
 
+
+describe('discover: seasons', () => {
+  const SCORED = { score: 9, type: 'guide', intent: 'informational', target_slug: 'muttertag-geschenk', expected_entities: [], content_gaps: [] };
+  const season = { name: 'Muttertag', peak: '05-10', lead_weeks: 10, keywords: ['muttertag geschenk'] };
+  const writeKeywords = (keywords) => {
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/keywords.json'), JSON.stringify({ keywords }));
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-04-01T12:00:00Z'));
+    querySearchAnalytics.mockResolvedValue([]);
+    complete.mockResolvedValue(SCORED);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('scores and stores the keywords of an active season, independent of greenfield', async () => {
+    const data = await discover({ ...config, greenfield: false, seasons: [season] }, dir);
+    expect(data.keywords.find(k => k.keyword === 'muttertag geschenk')).toMatchObject({
+      status: 'proposed', source: 'season', season: 'Muttertag', score: 9, target_slug: 'muttertag-geschenk',
+    });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('works the same with greenfield on (the cap is met, so no greenfield call follows)', async () => {
+    const data = await discover({ ...config, greenfield: true, seasons: [season] }, dir);
+    expect(data.keywords.find(k => k.keyword === 'muttertag geschenk')).toMatchObject({ source: 'season' });
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('seeds nothing while the season is inactive', async () => {
+    vi.setSystemTime(new Date('2026-02-01T12:00:00Z'));
+    const data = await discover({ ...config, seasons: [season] }, dir);
+    expect(data.keywords).toEqual([]);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('does not re-score a keyword that is already in keywords.json', async () => {
+    writeKeywords([{ keyword: 'muttertag geschenk', status: 'skip', score: 3 }]);
+    const data = await discover({ ...config, seasons: [season] }, dir);
+    expect(complete).not.toHaveBeenCalled();
+    expect(data.keywords).toEqual([{ keyword: 'muttertag geschenk', status: 'skip', score: 3 }]);
+  });
+
+  it('runs season keywords through the cannibalization guard, with page rows fetched for them', async () => {
+    mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+    for (const slug of ['a', 'b']) writeFileSync(join(dir, `resources/landing/de/${slug}.md`), `---\nslug: ${slug}\n---\n`);
+    queryPagePerformance.mockResolvedValue(['a', 'b'].map(slug => ({
+      keys: [`https://acme.io/${slug}`, 'muttertag geschenk'], impressions: 40, position: 30, clicks: 0,
+    })));
+    const data = await discover({ ...config, seasons: [season] }, dir);
+    expect(complete).not.toHaveBeenCalled();
+    expect(data.keywords.find(k => k.keyword === 'muttertag geschenk')).toMatchObject({ status: 'skip' });
+  });
+
+  it('keeps seeding when the page rows cannot be fetched', async () => {
+    queryPagePerformance.mockRejectedValue(new Error('GSC down'));
+    const data = await discover({ ...config, seasons: [season] }, dir);
+    expect(data.keywords.find(k => k.keyword === 'muttertag geschenk')).toMatchObject({ status: 'proposed' });
+  });
+
+  it('runs season keywords through the duplicate guard', async () => {
+    writeKeywords([{ keyword: 'geschenk muttertag', status: 'done', score: 8 }]);
+    const data = await discover({ ...config, seasons: [season] }, dir);
+    expect(complete).not.toHaveBeenCalled();
+    expect(data.keywords.find(k => k.keyword === 'muttertag geschenk')).toMatchObject({ status: 'skip' });
+  });
+
+  it('puts the seasonal line into the score prompt, and into no other', async () => {
+    await discover({ ...config, seasons: [season] }, dir);
+    expect(complete.mock.calls[0][0].prompt)
+      .toContain('Locale: de\n\nSeasonal keyword (Muttertag, peak 2026-05-10)');
+
+    complete.mockClear();
+    rmSync(join(dir, 'seo'), { recursive: true });
+    querySearchAnalytics.mockResolvedValue([{ keyword: 'hochzeit planen', impressions: 50, clicks: 0, ctr: 0, position: 12 }]);
+    await discover(config, dir);
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('Locale: de\n\n## Reading the numbers');
+    expect(prompt).not.toContain('{{season}}');
+    expect(prompt).not.toContain('Seasonal');
+  });
+});

@@ -1,4 +1,4 @@
-import { join } from 'path';
+import { join, basename } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import chalk from 'chalk';
 import {
@@ -32,6 +32,7 @@ import { createPRs } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 import { measure } from '../steps/measure.js';
 import { assessAlerts } from '../steps/assess.js';
+import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
 
 function pLimit(concurrency) {
   const queue = [];
@@ -474,7 +475,8 @@ export async function runCommand(opts) {
     }
 
     // 2. Discover, unless the monthly cap is already used up: its result could not be generated anyway
-    const newPagesUsed = newPagesThisMonth(loadKeywords(cwd));
+    const keywordsBefore = loadKeywords(cwd);
+    const newPagesUsed = newPagesThisMonth(keywordsBefore);
     const remaining = Math.max(0, config.max_new_pages_per_month - newPagesUsed);
     const discovering = remaining > 0 && !catalogDown;
 
@@ -494,6 +496,7 @@ export async function runCommand(opts) {
     }
     const generatedPages = [];
     let prepared = null;
+    let refreshedSlug = null;
 
     if (toGenerate.length === 0) {
       // An empty backlog is the normal state once a topic space is covered. The
@@ -528,6 +531,19 @@ export async function runCommand(opts) {
       const settled = await Promise.allSettled(tasks);
       const rejected = settled.filter(s => s.status === 'rejected').map(s => s.reason);
       if (rejected.length) throw rejected.find(r => r instanceof BudgetExceededError) ?? rejected[0];
+
+      // Peaks are fixed dates, so a seasonal rewrite does not wait for an empty backlog (prepareImprove picks the page itself).
+      if (!dryRun && pickSeasonPage({ config, cwd })) {
+        try {
+          prepared = await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd);
+        } catch (e) {
+          // The generated pages must still get their PRs.
+          rethrowIfBudget(e);
+          const warning = `Seasonal rewrite failed: ${e.message}`;
+          console.log(chalk.yellow(`\n${warning}`));
+          report.warnings.push(warning);
+        }
+      }
     }
 
     if (!dryRun) {
@@ -541,7 +557,9 @@ export async function runCommand(opts) {
 
       // 5. One PR per keyword, one per rewrite
       if (generatedPages.length > 0) {
-        const created = await createPRs({ generatedPages, keywordsData, config, cwd });
+        // Sibling PRs branch from one checkout: the seasonal PR's files must not be edited by the new pages' inbound-link edits too.
+        const exclude = (prepared?.files ?? []).map(f => basename(f.path, '.md'));
+        const created = await createPRs({ generatedPages, keywordsData, config, cwd, exclude });
         report.prs.push(...created.prs.map(p => ({ url: p.url, kind: 'new', slug: p.slug })));
         report.warnings.push(...created.warnings);
         report.errors.push(...created.errors);
@@ -549,7 +567,10 @@ export async function runCommand(opts) {
       if (prepared) {
         try {
           const url = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
-          if (url) report.prs.push({ url, kind: 'improve', slug: prepared.slug });
+          if (url) {
+            report.prs.push({ url, kind: 'improve', slug: prepared.slug });
+            refreshedSlug = prepared.slug;
+          }
         } catch (e) {
           console.error(chalk.red(`\nImprove PR failed: ${e.message}`));
           report.errors.push(`Improve PR failed for ${prepared.slug}: ${e.message}`);
@@ -559,6 +580,17 @@ export async function runCommand(opts) {
       // 6. Track
       console.log('');
       await track(config, cwd);
+    }
+
+    const seasons = activeSeasons(config.seasons);
+    if (seasons.length > 0) {
+      const had = new Set(keywordsBefore.keywords.map(k => k.keyword));
+      report.seasons = seasons.map(({ name, peak }) => ({
+        name,
+        peak,
+        seeded: keywordsData.keywords.filter(k => k.season === name && !had.has(k.keyword) && k.status !== KEYWORD_STATUS.SKIP).length,
+        refreshed: prepared?.season === name ? refreshedSlug : null,
+      }));
     }
 
     if (report.prs.length > 0) report.status = 'prs_opened';

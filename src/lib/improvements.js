@@ -31,9 +31,9 @@ export function recordImprovement(data, { slug, queries }) {
   return data;
 }
 
-/** Slugs improved within the cooldown window, relative to `today`. */
-export function slugsInCooldown(data, today = new Date()) {
-  const cutoff = new Date(today.getTime() - COOLDOWN_DAYS * 24 * 60 * 60 * 1000);
+/** Slugs improved within the cooldown window (`days`), relative to `today`. */
+export function slugsInCooldown(data, today = new Date(), days = COOLDOWN_DAYS) {
+  const cutoff = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
   return new Set(
     (data.entries || [])
       .filter(e => e.date && new Date(e.date) >= cutoff)
