@@ -76,7 +76,7 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
  * JSON is retried once, told what went wrong; transport errors are already
  * retried in claude.js. Throws when the second answer is no JSON either.
  */
-export async function runJsonCheck({ system, prompt }) {
+export async function runJsonCheck({ system, prompt, maxSearches, webFetch }) {
   const request = (text) => complete({
     system,
     prompt: text,
@@ -84,6 +84,8 @@ export async function runJsonCheck({ system, prompt }) {
     maxTokens: GENERATE_MAX_TOKENS,
     json: true,
     webSearch: true,
+    ...(maxSearches !== undefined ? { maxSearches } : {}),
+    ...(webFetch !== undefined ? { webFetch } : {}),
   });
   try {
     return await request(prompt);

@@ -20,6 +20,7 @@ function getClient() {
 // Server-side web search. Runs on Anthropic's side, so a single request returns
 // the searched-and-answered result: no client tool loop, only pause_turn resumes.
 const WEB_SEARCH_TOOL = Object.freeze({ type: 'web_search_20260209', name: 'web_search' });
+const WEB_FETCH_TOOL = Object.freeze({ type: 'web_fetch_20260209', name: 'web_fetch' });
 const MAX_PAUSE_RESUMES = 3;
 
 // Opus 5.5 runs broader safety classifiers (bio, reasoning_extraction, on top
@@ -196,10 +197,10 @@ function extractJson(text) {
 
 export async function complete({
   system, prompt, model = MODELS.default, maxTokens = 4096, json = false, schema = null,
-  webSearch = false, maxSearches = 6, batch = false, batchWaitMs = 45 * 60 * 1000, batchPollMs = BATCH_POLL_MS,
+  webSearch = false, webFetch = false, maxSearches = 6, batch = false, batchWaitMs = 45 * 60 * 1000, batchPollMs = BATCH_POLL_MS,
   backend = null,
 }) {
-  if (batch && webSearch) {
+  if (batch && (webSearch || webFetch)) {
     throw new Error('complete(): batch and webSearch cannot be combined, a batch cannot resume a pause_turn.');
   }
 
@@ -220,7 +221,7 @@ export async function complete({
       }
     } else {
       try {
-        const res = await completeViaClaudeCode({ system, prompt, model, maxTokens, schema: json && schema ? schema : null, webSearch, maxSearches });
+        const res = await completeViaClaudeCode({ system, prompt, model, maxTokens, schema: json && schema ? schema : null, webSearch, webFetch, maxSearches });
         addSubscriptionUsage(res.costUsd);
         stats.subscription_calls += 1;
         stats.usd_equivalent += res.costUsd;
@@ -242,7 +243,13 @@ export async function complete({
   }
 
   const messages = [{ role: 'user', content: prompt }];
-  const tools = webSearch ? [{ ...WEB_SEARCH_TOOL, max_uses: maxSearches }] : undefined;
+  // Web fetch has no per-request fee (only the fetched tokens, booked as input),
+  // so recordUsage needs no counter for it.
+  const toolList = [
+    ...(webSearch ? [{ ...WEB_SEARCH_TOOL, max_uses: maxSearches }] : []),
+    ...(webFetch ? [{ ...WEB_FETCH_TOOL, max_uses: maxSearches }] : []),
+  ];
+  const tools = toolList.length ? toolList : undefined;
   // Set explicitly rather than relying on the model default: the
   // generation/review/improve/counterpart routes are judgment-heavy and
   // should think, whichever model MODELS.generate points at.

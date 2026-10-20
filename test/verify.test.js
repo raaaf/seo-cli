@@ -55,6 +55,12 @@ describe('runVerify', () => {
     expect(complete).toHaveBeenCalledTimes(2);
   });
 
+  it('gives the model 20 searches and web fetch for the statute texts', async () => {
+    complete.mockResolvedValue({ findings: [], statute_checks: [] });
+    await runVerify([FILE], {}, cwd, deps);
+    expect(complete.mock.calls[0][0]).toMatchObject({ maxSearches: 20, webFetch: true });
+  });
+
   it('replaces a quote that recurs when the finding names one corrected value for all', async () => {
     complete
       .mockResolvedValueOnce({ findings: [finding({ quote: '1.400 abrechenbare Stunden', replacement: '1.200 abrechenbare Stunden', replace_all: true })] })

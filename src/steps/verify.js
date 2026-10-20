@@ -11,6 +11,8 @@ const VERIFY_PROMPT = readFileSync(new URL('../prompts/verify.md', import.meta.u
 // A verify round that patched something is checked once more; after the second round
 // whatever stands is the verdict.
 const MAX_ROUNDS = 2;
+// Law-heavy pages carry about 20 § references, each needs its statute text fetched and quoted.
+const VERIFY_MAX_SEARCHES = 20;
 const SECTION_START = '<!-- seo-verify:start -->';
 const SECTION_END = '<!-- seo-verify:end -->';
 
@@ -41,6 +43,8 @@ async function verifyRound(markdown, config, cwd, locale) {
   const parsed = await runJsonCheck({
     system: 'You are an independent fact verifier. You recompute numbers and confirm claims against primary sources. You do not rewrite prose you cannot fault.',
     prompt,
+    maxSearches: VERIFY_MAX_SEARCHES,
+    webFetch: true,
   });
   const findings = parseFindings(parsed);
   const patched = applyFindings(markdown, findings, { allowMulti: true });

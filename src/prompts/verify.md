@@ -30,8 +30,12 @@ sources (blogs, tax software sites) do not count.
 
 For every such claim you checked, add an entry to `statute_checks` with the
 wording of the statute you relied on, copied word for word from the primary
-source. A claim without a statute quote is not confirmed, and the page is
-blocked. Do not paraphrase the statute in the `statute_quote` field. If the
+source. Fetch the statute page directly with web fetch from
+gesetze-im-internet.de (URL pattern
+`https://www.gesetze-im-internet.de/<law-abbrev-lowercase>/__<nr>.html`, for
+example `ustdv/__34a.html` or `ustg/__19.html`). Fetch each § once and reuse it
+for every claim that cites that §; quote from the fetched text. A claim without a statute quote is not
+confirmed, and the page is blocked. Do not paraphrase the statute in the `statute_quote` field. If the
 page states the rule differently from the statute (wrong condition, wrong
 deadline, wrong paragraph), it is also a finding.
 

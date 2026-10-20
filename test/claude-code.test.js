@@ -69,6 +69,15 @@ describe('claude-code-backend', () => {
     expect(args[args.indexOf('--max-turns') + 1]).toBe('6');
   });
 
+  it('adds WebFetch and doubles the turn allowance when webFetch is on', async () => {
+    spawn.mockReturnValue(fakeChild(OK));
+    await call({ webSearch: true, webFetch: true, maxSearches: 4 });
+    const { args } = spawned();
+    expect(args[args.indexOf('--tools') + 1]).toBe('WebSearch,WebFetch');
+    expect(args[args.indexOf('--allowedTools') + 1]).toBe('WebSearch,WebFetch');
+    expect(args[args.indexOf('--max-turns') + 1]).toBe('10');
+  });
+
   it('passes the schema and returns structured_output', async () => {
     spawn.mockReturnValue(fakeChild({ ...OK, structured_output: { count: 3 } }));
     const schema = { type: 'object' };

@@ -20,6 +20,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { verifyPage } from '../../src/steps/verify.js';
+import { resetLlmState } from '../../src/lib/claude.js';
 
 const ZEIT = 'rafaelalex-dev/zeit';
 const SHOP = 'raaaf/shop-alex';
@@ -135,6 +136,7 @@ if (DRY) {
 
 const perRun = [];
 for (let run = 1; run <= RUNS; run++) {
+  resetLlmState(); // each run starts inside the subscription window, like a short production run
   console.log(`\n=== run ${run}/${RUNS} ===`);
   const results = [];
   for (const c of cases) {

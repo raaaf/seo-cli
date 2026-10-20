@@ -57,12 +57,15 @@ function classify(text) {
   return { kind: 'error', family: null };
 }
 
-function buildArgs({ system, model, schema, webSearch, maxSearches }) {
+function buildArgs({ system, model, schema, webSearch, webFetch, maxSearches }) {
+  const tools = webFetch ? 'WebSearch,WebFetch' : 'WebSearch';
+  // Fetches take turns too, so the cap doubles when they are allowed.
+  const maxTurns = webFetch ? maxSearches * 2 + 2 : maxSearches + 2;
   return [
     '-p', '--output-format', 'json', '--model', model, '--system-prompt', system,
     '--no-session-persistence', '--strict-mcp-config', '--setting-sources', '',
     ...(webSearch
-      ? ['--tools', 'WebSearch', '--allowedTools', 'WebSearch', '--max-turns', String(maxSearches + 2)]
+      ? ['--tools', tools, '--allowedTools', tools, '--max-turns', String(maxTurns)]
       : ['--tools', '', '--max-turns', '2']),
     ...(model === MODELS.generate ? ['--effort', 'high'] : []),
     ...(schema ? ['--json-schema', JSON.stringify(schema)] : []),
@@ -97,7 +100,7 @@ function run(args, { prompt, cwd, env, timeoutMs }) {
 }
 
 export async function completeViaClaudeCode({
-  system, prompt, model, maxTokens, schema = null, webSearch = false, maxSearches = 6, timeoutMs = CLAUDE_TIMEOUT_MS,
+  system, prompt, model, maxTokens, schema = null, webSearch = false, webFetch = false, maxSearches = 6, timeoutMs = CLAUDE_TIMEOUT_MS,
 }) {
   const workDir = mkdtempSync(join(tmpdir(), 'seo-claude-'));
   try {
@@ -113,7 +116,7 @@ export async function completeViaClaudeCode({
       DISABLE_AUTOUPDATER: '1',
     };
     const { code, stdout, stderr } = await run(
-      buildArgs({ system, model, schema, webSearch, maxSearches }),
+      buildArgs({ system, model, schema, webSearch, webFetch, maxSearches }),
       { prompt, cwd: workDir, env, timeoutMs },
     );
 
