@@ -18,7 +18,9 @@ break-even points, "X € netto ergibt Y h") is recomputed by you from the input
 the page states itself. Do the arithmetic step by step. If the result differs
 from the printed number, that is a finding, whether or not the page contradicts
 itself elsewhere. Check units: net against gross, billable against total hours,
-per month against per year.
+per month against per year. A derived range is checked at both ends. Every
+result the page presents as following from its own inputs (summary lines, the
+tldr, FAQ answers) is recomputed too, not only the worked steps.
 
 ### 2. Law and regulation
 
@@ -103,6 +105,12 @@ Rules for `findings`:
   appears several times and the same corrected text is right for all of them,
   quote the shortest text that is identical in every place, set `replace_all`
   to `true` and give the single corrected value. Otherwise `replace_all` is `false`.
+- Once a value is wrong, search the whole page, frontmatter included (tldr,
+  meta description, FAQ, tables), for every other place that states the same
+  value, also in another spelling (a digit instead of a word, another unit or
+  word order). Cover each place, either with `replace_all` or with one finding
+  per distinct wording. A page with one copy of the wrong value left is not
+  fixed.
 - `replacement` substitutes `quote` verbatim. Keep language, register and
   address form, keep the length about the same, add no sentence, delete no claim
   that can be corrected. Never introduce an em-dash or an emoji.
