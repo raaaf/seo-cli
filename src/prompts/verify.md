@@ -29,15 +29,25 @@ Bundesanzeiger or the equivalent primary source of the jurisdiction. Secondary
 sources (blogs, tax software sites) do not count.
 
 For every such claim you checked, add an entry to `statute_checks` with the
-wording of the statute you relied on, copied word for word from the primary
-source. Fetch the statute page directly with web fetch from
-gesetze-im-internet.de (URL pattern
+wording you relied on, copied word for word from the fetched official page.
+gesetze-im-internet.de is the first choice for a paragraph (URL pattern
 `https://www.gesetze-im-internet.de/<law-abbrev-lowercase>/__<nr>.html`, for
 example `ustdv/__34a.html` or `ustg/__19.html`). Fetch each § once and reuse it
-for every claim that cites that §; quote from the fetched text. A claim without a statute quote is not
-confirmed, and the page is blocked. Do not paraphrase the statute in the `statute_quote` field. If the
-page states the rule differently from the statute (wrong condition, wrong
-deadline, wrong paragraph), it is also a finding.
+for every claim that cites that §. For a deadline or rule the statute text does
+not carry, `statute_quote` may come from any other official source named
+above: a Bundesfinanzministerium page including its FAQ pages, a BMF letter or
+the Bundesanzeiger. A claim without a quote is not confirmed, and the page is
+blocked. Do not paraphrase the statute in the `statute_quote` field.
+
+If you cannot obtain the official wording for a claim, do not leave an
+unquoted entry. Add a finding instead: its replacement keeps the sentence but
+removes the specific legal detail you could not confirm (paragraph number,
+date, threshold) and points the reader to the official source, the same way
+the third-party price rule handles an unconfirmed figure. Then leave that claim
+out of `statute_checks`, since the page no longer states it.
+
+If the page states the rule differently from the statute (wrong condition,
+wrong deadline, wrong paragraph), it is also a finding.
 
 ### 3. Third-party prices and plan limits
 
@@ -100,7 +110,8 @@ Rules for `findings`:
   replace it with a hedged formulation that stays true, or drop the specific
   number while keeping the sentence intact.
 
-`statute_checks` lists every law claim you checked, confirmed or not. Return
+`statute_checks` lists every law claim the page still states after your
+findings, each with its quote. Return
 `{"findings": [], "statute_checks": []}` when the page has nothing to check. An
 empty result is a normal outcome. Do not invent findings to appear thorough.
 
