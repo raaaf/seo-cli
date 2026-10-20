@@ -2,11 +2,9 @@
 //
 // A new page links out to existing pages (`related_pages`, body links), but no
 // existing page ever linked to it, so most pages sat with fewer than three
-// inbound links. Everything here is deterministic: sources are chosen by token
-// overlap between the target's topic and a candidate's title and slug, never by
-// a model, and a candidate with no overlap is never linked.
+// inbound links. This module is pure: link counting, eligibility and the text
+// edit. Which eligible pages are on topic is judged by a model (steps/link-judge.js).
 import { parseFrontmatter } from './frontmatter.js';
-import { tokenize } from './similarity.js';
 
 const lastSegment = (href) => {
   const path = String(href).split(/[#?]/)[0].replace(/\/+$/, '');
@@ -37,55 +35,15 @@ export function inboundLinks(pages) {
   return inbound;
 }
 
-// German compounds: "hochzeit" matches "hochzeitsplanung", but a short token such as "web" does not match "webinar".
-const tokensMatch = (a, b) => {
-  if (a === b) return true;
-  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
-  return short.length >= 5 && long.startsWith(short);
-};
-
 /**
- * Tokens of `a` that match a token of `b`, each token of `a` once. A token in `ignore`, or a match
- * through one, does not count.
+ * The pages (`[{ slug, markdown, ... }]`, same locale) that may link to `targetSlug`: not the target,
+ * not linking to it yet, with room left in `related_pages`. Whether they are on topic is not decided
+ * here, see `judgeLinkSources` in `steps/link-judge.js`.
  */
-export function matchedTokens(a, b, ignore = new Set()) {
-  const tokensB = [...tokenize(b)].filter(t => !ignore.has(t));
-  return [...tokenize(a)].filter(token => !ignore.has(token) && tokensB.some(other => tokensMatch(token, other)));
-}
-
-/** Number of significant tokens of `a` that match a token of `b`; each token of `a` counts once. */
-export function topicOverlap(a, b, ignore) {
-  return matchedTokens(a, b, ignore).length;
-}
-
-// A token that is in more than 20 percent of the texts, and in at least 3, says nothing about a
-// topic on this site ("organisieren", "party"). A compound counts for its shorter token.
-function genericTokens(texts) {
-  const sets = texts.map(t => [...tokenize(t)]);
-  const generic = new Set();
-  for (const token of new Set(sets.flat())) {
-    const df = sets.filter(tokens => tokens.some(other => tokensMatch(token, other))).length;
-    if (df >= 3 && df / texts.length > 0.2) generic.add(token);
-  }
-  return generic;
-}
-
-/**
- * Up to `max` `{ slug, via }` of `pages` (`[{ slug, markdown, title }]`, same locale) that should
- * link to `target` (`{ slug, text }`): on topic, not linking to it yet, with room left in
- * `related_pages`. `via` are the shared tokens. Tokens generic for the site do not count. Best
- * overlap first, then fewer related entries, then slug, so the pick is deterministic.
- */
-export function pickLinkSources({ target, pages, max = 3, maxRelated = 4 }) {
-  const textOf = p => `${p.title ?? ''} ${p.slug}`;
-  const ignore = genericTokens([target.text, ...pages.filter(p => p.slug !== target.slug).map(textOf)]);
-  return pages
-    .filter(p => p.slug !== target.slug && !linkTargets(p.markdown).has(target.slug))
-    .map(p => ({ slug: p.slug, related: relatedList(p.markdown).length, via: matchedTokens(target.text, textOf(p), ignore) }))
-    .filter(c => c.related < maxRelated && c.via.length >= 1)
-    .sort((a, b) => b.via.length - a.via.length || a.related - b.related || a.slug.localeCompare(b.slug))
-    .slice(0, max)
-    .map(c => ({ slug: c.slug, via: c.via }));
+export function eligibleSources({ targetSlug, pages, maxRelated = 4 }) {
+  return pages.filter(p => p.slug !== targetSlug
+    && !linkTargets(p.markdown).has(targetSlug)
+    && relatedList(p.markdown).length < maxRelated);
 }
 
 /**

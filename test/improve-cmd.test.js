@@ -129,12 +129,13 @@ describe('improveCommand', () => {
 
     it('adds on-topic pages that link to a rewritten page with fewer than 3 inbound links', async () => {
       landing('preise-vergleich');
+      complete.mockResolvedValue({ judgments: [{ slug: 'preise-vergleich', score: 2, reason: 'same pricing need' }] });
       await improveCommand({ config: CONFIG });
 
       const { files } = createBranchAndCommit.mock.calls[0][0];
       expect(files.map(f => f.path)).toEqual(['content/landing/de/preise.md', 'content/landing/de/preise-vergleich.md']);
       expect(files[1].content).toContain('related_pages:\n  - preise');
-      expect(openPR.mock.calls[0][0].body).toContain('`preise-vergleich` -> `preise`');
+      expect(openPR.mock.calls[0][0].body).toContain('`preise-vergleich` -> `preise` (same pricing need)');
     });
 
     it('adds nothing once the page has 3 inbound links', async () => {
@@ -144,6 +145,16 @@ describe('improveCommand', () => {
       await improveCommand({ config: CONFIG });
 
       expect(createBranchAndCommit.mock.calls[0][0].files.map(f => f.path)).toEqual(['content/landing/de/preise.md']);
+      expect(complete).not.toHaveBeenCalled();
+    });
+
+    it('still opens the PR when the judge fails', async () => {
+      landing('preise-vergleich');
+      complete.mockRejectedValue(new Error('API down'));
+      await improveCommand({ config: CONFIG });
+
+      expect(createBranchAndCommit.mock.calls[0][0].files.map(f => f.path)).toEqual(['content/landing/de/preise.md']);
+      expect(openPR).toHaveBeenCalled();
     });
   });
 

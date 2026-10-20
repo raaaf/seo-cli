@@ -6,6 +6,11 @@ import { tmpdir } from 'os';
 const createBranchAndCommit = vi.fn();
 const openPR = vi.fn();
 const deleteBranch = vi.fn();
+const complete = vi.fn();
+vi.mock('../src/lib/claude.js', () => ({
+  complete: (...a) => complete(...a),
+  getLlmStats: () => ({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] }),
+}));
 vi.mock('../src/lib/github.js', () => ({
   createBranchAndCommit: (...a) => createBranchAndCommit(...a),
   openPR: (...a) => openPR(...a),
@@ -28,6 +33,10 @@ beforeEach(() => {
   createBranchAndCommit.mockReset().mockResolvedValue('seo/links/x');
   openPR.mockReset().mockResolvedValue('https://github.com/o/demo/pull/5');
   deleteBranch.mockReset();
+  // The judge calls every page on topic with every other page.
+  complete.mockReset().mockImplementation(async ({ prompt }) => ({
+    judgments: !/TARGET_START>>>\nhochzeit-/.test(prompt) ? [] : [...prompt.matchAll(/^(hochzeit-[a-z]+) \|/gm)].map(m => ({ slug: m[1], score: 2, reason: 'same wedding need' })),
+  }));
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 afterEach(() => {
@@ -46,7 +55,7 @@ describe('linksCommand', () => {
     const { files, branch } = createBranchAndCommit.mock.calls[0][0];
     expect(branch).toMatch(/^seo\/links\/\d{4}-W\d{2}$/);
     expect(files.map(f => f.path).sort()).toEqual(['content/landing/de/hochzeit-kosten.md', 'content/landing/de/hochzeit-planen.md']);
-    expect(openPR.mock.calls[0][0].body).toContain('`hochzeit-kosten` -> `hochzeit-planen` (de, inbound 0 -> 1, via: hochzeit)');
+    expect(openPR.mock.calls[0][0].body).toContain('`hochzeit-kosten` -> `hochzeit-planen` (de, inbound 0 -> 1, same wedding need)');
   });
 
   it('writes nothing on a dry run', async () => {

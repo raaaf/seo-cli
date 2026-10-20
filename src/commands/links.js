@@ -4,20 +4,22 @@ import { readLandingPages, buildInboundLinkFiles } from '../lib/landings.js';
 import { inboundLinks } from '../lib/inbound-links.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { isoWeek } from '../lib/date.js';
+import { loadBudget } from '../lib/budget.js';
+import { getLlmStats } from '../lib/claude.js';
 
 const MIN_INBOUND_LINKS = 3;
 
 // Every page of the locale with fewer than three inbound links gets `related_pages` entries on
 // on-topic pages. Returns `{ files, rows }`, rows being `{ locale, source, target, before, after }`.
-function planLocale(config, cwd, locale) {
+async function planLocale(config, cwd, locale, warn) {
   const pages = readLandingPages(config, cwd, locale);
   const inbound = inboundLinks(pages);
   const needy = pages
     .map(p => ({ ...p, count: inbound.get(p.slug).size }))
     .filter(p => p.count < MIN_INBOUND_LINKS)
     .sort((a, b) => a.count - b.count || a.slug.localeCompare(b.slug));
-  const targets = needy.map(p => ({ slug: p.slug, text: `${p.title} ${p.slug}`, max: MIN_INBOUND_LINKS - p.count }));
-  const { files, links } = buildInboundLinkFiles({ targets, config, cwd, locale });
+  const targets = needy.map(p => ({ slug: p.slug, title: p.title, description: p.description, max: MIN_INBOUND_LINKS - p.count }));
+  const { files, links } = await buildInboundLinkFiles({ targets, config, cwd, locale, onWarning: warn });
   const before = new Map(needy.map(p => [p.slug, p.count]));
   const rows = links.map(l => ({
     locale, ...l,
@@ -27,7 +29,16 @@ function planLocale(config, cwd, locale) {
   return { files, rows };
 }
 
-const rowLine = (r) => `- \`${r.source}\` -> \`${r.target}\` (${r.locale}, inbound ${r.before} -> ${r.after}, via: ${r.via.join(', ')})`;
+// What the judge calls of this run cost: API spend from the project budget, subscription use at API prices.
+function costLine(cwd, before) {
+  const after = loadBudget(cwd).anthropic;
+  const sub = getLlmStats();
+  const calls = after.calls - before.calls + sub.subscription_calls;
+  const usd = after.usd - before.usd + sub.usd_equivalent;
+  return `LLM cost: ${usd.toFixed(4)} USD (${calls} judge calls)`;
+}
+
+const rowLine = (r) => `- \`${r.source}\` -> \`${r.target}\` (${r.locale}, inbound ${r.before} -> ${r.after}, ${r.reason})`;
 
 /**
  * `seo links`: one PR (`seo/links/<week>`) that gives every landing page with fewer than three
@@ -42,7 +53,11 @@ export async function linksCommand(opts = {}, cwd = process.cwd()) {
 
   console.log(chalk.bold(`\nseo links: ${config.project}${opts.dryRun ? ' (dry run)' : ''}\n`));
 
-  const plans = locales.map(locale => planLocale(config, cwd, locale));
+  const spentBefore = loadBudget(cwd).anthropic;
+  const warn = (w) => console.log(chalk.yellow(`  ${w}`));
+  const plans = [];
+  for (const locale of locales) plans.push(await planLocale(config, cwd, locale, warn));
+  console.log(chalk.gray(`  ${costLine(cwd, spentBefore)}`));
   const files = plans.flatMap(p => p.files);
   const rows = plans.flatMap(p => p.rows);
   if (!rows.length) {

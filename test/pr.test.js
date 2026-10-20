@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 const createBranchAndCommit = vi.fn();
 const openPR = vi.fn();
 const deleteBranch = vi.fn();
+const complete = vi.fn();
+vi.mock('../src/lib/claude.js', () => ({ complete: (...a) => complete(...a) }));
 vi.mock('../src/lib/github.js', () => ({
   createBranchAndCommit: (...a) => createBranchAndCommit(...a),
   openPR: (...a) => openPR(...a),
@@ -142,22 +144,28 @@ describe('pr-create inbound links', () => {
     writeFileSync(join(dir, 'content/landing/de', `${slug}.md`), markdown);
   };
   const existing = '---\nslug: x\nmeta_title: Hochzeit Ablauf\n---\nbody';
+  const judge = (...slugs) => complete.mockResolvedValue({ judgments: slugs.map(slug => ({ slug, score: 2, reason: 'same wedding need' })) });
   const filesOf = () => createBranchAndCommit.mock.calls[0][0].files;
 
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'seo-pr-inbound-')); });
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'seo-pr-inbound-'));
+    complete.mockReset();
+  });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
   it('adds the edited source pages to the PR files and lists them in the body', async () => {
     write('hochzeit-ablauf', existing);
+    judge('hochzeit-ablauf');
     await createPRs({ generatedPages: [page()], keywordsData: kwData('hochzeit planen'), config, cwd: dir });
 
     expect(filesOf().map(f => f.path)).toEqual(['resources/landing/de/hochzeit-planen.md', 'content/landing/de/hochzeit-ablauf.md']);
     expect(filesOf()[1].content).toContain('related_pages:\n  - hochzeit-planen');
-    expect(openPR.mock.calls[0][0].body).toContain('`hochzeit-ablauf` -> `hochzeit-planen`');
+    expect(openPR.mock.calls[0][0].body).toContain('`hochzeit-ablauf` -> `hochzeit-planen` (same wedding need)');
   });
 
   it('commits a source picked for two new pages once', async () => {
     write('hochzeit-ablauf', existing);
+    judge('hochzeit-ablauf');
     const second = page({ slug: 'hochzeit-kosten', filePath: 'resources/landing/de/hochzeit-kosten.md' });
     await createPRs({ generatedPages: [page(), second], keywordsData: kwData('hochzeit planen'), config, cwd: dir });
 
@@ -166,21 +174,24 @@ describe('pr-create inbound links', () => {
     expect(sources[0].content).toContain('  - hochzeit-planen\n  - hochzeit-kosten');
   });
 
-  it('adds nothing with inbound_links: false', async () => {
+  it('adds nothing and asks no model with inbound_links: false', async () => {
     write('hochzeit-ablauf', existing);
+    judge('hochzeit-ablauf');
     await createPRs({ generatedPages: [page()], keywordsData: kwData('hochzeit planen'), config: { ...config, inbound_links: false }, cwd: dir });
 
+    expect(complete).not.toHaveBeenCalled();
     expect(filesOf().map(f => f.path)).toEqual(['resources/landing/de/hochzeit-planen.md']);
     expect(openPR.mock.calls[0][0].body).not.toContain('Inbound links');
   });
 
-  it('turns a failing builder into a warning and still opens the PR', async () => {
-    mkdirSync(join(dir, 'content/landing/de/broken.md'), { recursive: true }); // reading a directory as a page throws
+  it('turns a failing judge into a warning and still opens the PR', async () => {
+    write('hochzeit-ablauf', existing);
+    complete.mockRejectedValue(new Error('API down'));
 
     const { prs, warnings } = await createPRs({ generatedPages: [page()], keywordsData: kwData('hochzeit planen'), config, cwd: dir });
 
     expect(prs).toHaveLength(1);
-    expect(warnings[0]).toMatch(/^Inbound links skipped/);
+    expect(warnings[0]).toMatch(/^Inbound links skipped: API down/);
     expect(filesOf().map(f => f.path)).toEqual(['resources/landing/de/hochzeit-planen.md']);
   });
 });

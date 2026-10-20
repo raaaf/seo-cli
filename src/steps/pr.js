@@ -48,7 +48,7 @@ export async function createPRs({ generatedPages, keywordsData, config, cwd = pr
     const kw = keywordsData.keywords.find(k => k.keyword === keyword);
     const sitemapSlugs = [...new Set(pages.map(p => sitemapSlug(p, config)))];
 
-    const inbound = inboundLinkEdits(pages, keyword, config, cwd, result.warnings);
+    const inbound = await inboundLinkEdits(pages, config, cwd, result.warnings);
 
     let branchCreated = false;
     try {
@@ -91,16 +91,16 @@ export async function createPRs({ generatedPages, keywordsData, config, cwd = pr
 
 // Existing pages of each locale that should link to the new page of that locale. Never throws:
 // a failure is a warning and the PR ships without the extra files.
-function inboundLinkEdits(pages, keyword, config, cwd, warnings) {
+async function inboundLinkEdits(pages, config, cwd, warnings) {
   const edits = { files: [], links: [] };
   const locales = [...new Set(pages.map(p => p.locale ?? defaultLocale(config)))];
   for (const locale of locales) {
     const own = pages.filter(p => (p.locale ?? defaultLocale(config)) === locale);
     const targets = own.map(p => {
       const { parsed } = parseFrontmatter(p.markdown);
-      return { slug: p.slug, text: `${keyword} ${parsed.meta_title ?? parsed.title ?? ''} ${p.slug}` };
+      return { slug: p.slug, title: parsed.meta_title ?? parsed.title ?? p.keyword, description: parsed.meta_description ?? '' };
     });
-    const { files, links } = tryInboundLinkFiles({ targets, config, cwd, locale, exclude: own.map(p => p.slug) }, warning => {
+    const { files, links } = await tryInboundLinkFiles({ targets, config, cwd, locale, exclude: own.map(p => p.slug) }, warning => {
       console.log(chalk.yellow(`  ${warning}`));
       warnings.push(warning);
     });

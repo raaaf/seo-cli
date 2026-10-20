@@ -134,7 +134,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
     ...(merge ? merge.files : []),
   ];
-  const inbound = inboundLinkEdits({ slug: page.slug, keyword: keywordLike.keyword, markdown: finalMarkdown, files, config, cwd });
+  const inbound = await inboundLinkEdits({ slug: page.slug, markdown: finalMarkdown, files, config, cwd });
   return {
     slug: page.slug,
     files: [...files, ...inbound.files],
@@ -157,7 +157,7 @@ const MIN_INBOUND_LINKS = 3;
 // A page with fewer than three inbound links from the other default-locale pages gets some, as
 // `related_pages` entries of on-topic pages. Pages already in the PR (rewrite, counterpart, merge
 // files) are never edited, and pages the merge deletes do not count as links. Never throws.
-function inboundLinkEdits({ slug, keyword, markdown, files, config, cwd }) {
+async function inboundLinkEdits({ slug, markdown, files, config, cwd }) {
   const none = { files: [], links: [] };
   if (config.inbound_links === false) return none;
   const inPR = new Set(files.map(f => basename(f.path, '.md')));
@@ -166,9 +166,9 @@ function inboundLinkEdits({ slug, keyword, markdown, files, config, cwd }) {
     const pages = readLandingPages(config, cwd).filter(p => !deleted.has(p.slug));
     const have = inboundLinks(pages).get(slug)?.size ?? 0;
     if (have >= MIN_INBOUND_LINKS) return none;
-    const title = parseFrontmatter(markdown).parsed.meta_title ?? '';
-    const targets = [{ slug, text: `${keyword} ${title} ${slug}`, max: MIN_INBOUND_LINKS - have }];
-    return tryInboundLinkFiles({ targets, config, cwd, exclude: [...inPR] }, warning => console.log(chalk.yellow(`  ${warning}`)));
+    const { meta_title: title, meta_description: description } = parseFrontmatter(markdown).parsed;
+    const targets = [{ slug, title: title ?? slug, description: description ?? '', max: MIN_INBOUND_LINKS - have }];
+    return await tryInboundLinkFiles({ targets, config, cwd, exclude: [...inPR] }, warning => console.log(chalk.yellow(`  ${warning}`)));
   } catch (e) {
     console.log(chalk.yellow(`  Inbound links skipped: ${e.message}`));
     return none;
