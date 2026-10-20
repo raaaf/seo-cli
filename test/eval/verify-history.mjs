@@ -121,7 +121,14 @@ async function runCase(c) {
     flagged ||= result.findings.length > 0;
     blocked ||= result.blocked;
     patched ||= result.markdown !== page.content;
-    wrongLeft ||= (c.wrong ?? []).some(re => re.test(result.markdown));
+    for (const re of c.wrong ?? []) {
+      const m = result.markdown.match(re);
+      if (!m) continue;
+      wrongLeft = true;
+      // Print the surrounding text: a corrected sentence can still match a loose pattern.
+      const at = result.markdown.indexOf(m[0]);
+      console.log(`    wrong text left (${re}): ...${result.markdown.slice(Math.max(0, at - 80), at + m[0].length + 80).replace(/\n/g, ' ')}...`);
+    }
   }
   const caught = flagged && !blocked && !wrongLeft;
   return { caught, blocked, patched };
