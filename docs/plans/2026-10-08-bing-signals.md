@@ -8,7 +8,7 @@
 - Planned at: commit `eb0f7aa` (seo-cli main), 2026-10-08. Branch `feature/bing-signals`, worktree `apps/seo-cli-bing`.
 - Teil von Etappe H (weitere Quellen) aus `docs/plans/2026-10-06-system-architecture.md`. Nutzt den Signal-Speicher aus B.1 (`src/lib/signals/store.js`).
 - Nutzerentscheidung 2026-10-08: Bing dient der **KI-Sichtbarkeit** (Bing speist ChatGPT-Suche und Copilot) und als **Zusatzsignal**; die Search Console bleibt Hauptquelle.
-- Key: 1Password `op://seo-cli/seo-cli/BING-WEBMASTER-API`, verifiziert 2026-10-08 (GetUserSites: events, rafaelalex.de, zeit; punktundpause.de wird gerade aus der GSC importiert).
+- Key: 1Password `op://development/seo-cli/BING-WEBMASTER-API`, verifiziert 2026-10-08 (GetUserSites: events, rafaelalex.de, zeit; punktundpause.de wird gerade aus der GSC importiert).
 - Challengers: Architecture und Risk (immer). Product, Design, Simplicity übersprungen (Ziel und Umfang vom Nutzer entschieden, keine UI außer Mailzeile).
 - Status: Spec
 
