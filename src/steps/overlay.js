@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { complete } from '../lib/claude.js';
 import { MODELS } from '../lib/models.js';
 import { fillTemplate } from '../lib/template.js';
