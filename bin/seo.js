@@ -15,6 +15,8 @@ import { program } from 'commander';
 import { initCommand } from '../src/commands/init.js';
 import { runCommand } from '../src/commands/run.js';
 import { checkCommand } from '../src/commands/check.js';
+import { verifyCommand } from '../src/commands/verify.js';
+import { liveCheckCommand } from '../src/commands/live-check.js';
 import { submitSitemapCommand } from '../src/commands/submit-sitemap.js';
 import { indexnowCommand } from '../src/commands/indexnow.js';
 import { indexStatusCommand } from '../src/commands/index-status.js';
@@ -63,6 +65,25 @@ program
   .argument('<files...>', 'markdown files to validate (e.g. the PR\'s changed .md files)')
   .option('--strict', 'apply the strict quality rules even without `quality: strict` in seo.config.yaml')
   .action(checkCommand);
+
+program
+  .command('verify')
+  .description('Independent second fact pass on the PR\'s markdown pages (CI gate, quality: strict projects only); exit 3 when a finding stands')
+  .argument('<files...>', 'markdown files to verify (the PR\'s changed .md files)')
+  .option('--commit', 'push the corrections to the PR branch and print VERIFY_HEAD_SHA=<sha>')
+  .option('--branch <name>', 'with --commit: the PR head branch')
+  .option('--pr <number>', 'write the findings into this PR\'s body (seo-verify markers)')
+  .option('--report <path>', 'write the verify result as JSON')
+  .option('--strict', 'verify even without `quality: strict` in seo.config.yaml')
+  .action(verifyCommand);
+
+program
+  .command('live-check')
+  .description('Wait until pages answer like a deployed page (only with watch.check_deploy); exit 1 when still not live')
+  .argument('<targets...>', 'page URLs, or changed files of a PR (with --head-ref)')
+  .option('--head-ref <ref>', 'PR head branch, decides whether a changed landing file is a new page')
+  .option('--wait <minutes>', 'poll for at most this long', '0')
+  .action(liveCheckCommand);
 
 program
   .command('dashboard')

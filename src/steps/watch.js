@@ -51,7 +51,7 @@ const LIVE_TIMEOUT_MS = 10_000;
 const MAX_LIVE_HTML = 200_000;
 
 /** HEAD or GET of a live URL: `{ status, html }`, html only for GET. Throws on DNS, timeout and the like. */
-async function fetchLive(url, { method }) {
+export async function fetchLive(url, { method }) {
   const res = await safeFetch(url, { method, signal: AbortSignal.timeout(LIVE_TIMEOUT_MS) });
   return { status: res.status, html: method === 'GET' ? (await res.text()).slice(0, MAX_LIVE_HTML) : '' };
 }
@@ -65,7 +65,7 @@ const pageTitle = (html) => {
 // Is this change live? true/false, or null when the answer does not decide (5xx, 403, missing local file).
 // A new page counts as live once a HEAD answers below 400 (404 is the "not deployed" answer); an overlay
 // is only live when the page title carries the overlay's meta_title, because the page itself existed before.
-async function isLive(entry, { config, cwd, fetchPage }) {
+export async function isLive(entry, { config, cwd, fetchPage }) {
   const key = parseOverlayKey(entry.slug);
   if (!key) {
     const { status } = await fetchPage(entry.urls[0], { method: 'HEAD' });
@@ -83,7 +83,7 @@ async function isLive(entry, { config, cwd, fetchPage }) {
 
 // What a merged seo PR should have put live, from its changed files: a new landing page (`seo/new/`)
 // by its page URL, an overlay file by its overlay key and URL. Rewrites of landing pages are not checked.
-function expectedLive(pr, config) {
+export function expectedLive(pr, config) {
   const base = String(config.base_url || '').replace(/\/+$/, '');
   const def = defaultLocale(config);
   const landingDir = localeLandingPath(config, def).replace(/^\.\//, '').replace(/\/+$/, '');

@@ -393,6 +393,13 @@ describe('validate-page: page contract', () => {
     expect(errors).toContain('Invalid facts_denylist pattern: (');
   });
 
+  it('fails a forbidden claim without needing the catalog', () => {
+    const contract = { forbidden_claims: ['\\brechtssicher\\w*'] };
+    const forbidden = (md) => validate(md, KW, { contract }).errors.filter(e => e.includes('Forbidden claim'));
+    expect(forbidden(page({ bodyText: `${body()} die rechnung ist rechtssicher.` }))).toEqual(['Forbidden claim (page contract): "rechtssicher"']);
+    expect(forbidden(page())).toEqual([]);
+  });
+
   it('rejects a reserved slug', () => {
     const md = page().replace('slug: webdesign-berlin', 'slug: admin');
     expect(run(md, { reservedSlugs: ['admin', 'up'] }).errors).toContain('Slug "admin" is a reserved path of the site');

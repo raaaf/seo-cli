@@ -78,8 +78,9 @@ jobs:
     concurrency:
       group: seo-${{ github.repository }}
       cancel-in-progress: false
-    # Batched generation waits up to 45 minutes per call.
-    timeout-minutes: 120
+    # Batched generation waits up to 45 minutes per call; the gate adds a verify
+    # pass and a live poll of up to 12 minutes per merged PR.
+    timeout-minutes: 135
     permissions:
       contents: write
       pull-requests: write
@@ -272,10 +273,16 @@ jobs:
         if: always() && inputs.mode != 'watch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `seo verify --commit` pushes through the API client, which reads GITHUB_TOKEN.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REQUIRE_REVIEW: ${{ inputs.require_review }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gsc-credentials.json
+          # ANTHROPIC_API_KEY (from GITHUB_ENV) stays set: it is the fallback.
+          SECRET_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -uo pipefail
+          # A repo secret wins; otherwise CLAUDE_CODE_OAUTH_TOKEN may already be set from 1Password.
+          if [ -n "${SECRET_CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then export CLAUDE_CODE_OAUTH_TOKEN="$SECRET_CLAUDE_CODE_OAUTH_TOKEN"; fi
 
           REPORT_FILE="$RUNNER_TEMP/seo-report.json"
           GATE_STATUS_FILE="$RUNNER_TEMP/gate-status.txt"
@@ -290,7 +297,7 @@ jobs:
           gate_pr() {
             local PR_URL="$1"
             local PR_NUM="${PR_URL##*/}"
-            local STATUS CHECKS_STATUS CHECK_EXIT
+            local STATUS CHECKS_STATUS CHECK_EXIT HEAD_REF VERIFY_EXIT VERIFIED_SHA FACT_BLOCKED=0
 
             if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
               echo "Refusing to gate: PR number is not numeric ('$PR_NUM')."
@@ -327,6 +334,36 @@ jobs:
             node .seo-cli/bin/seo.js check "${MD[@]}" | tee /tmp/seo-check.out
             CHECK_EXIT=${PIPESTATUS[0]}
 
+            # Independent fact pass on the PR head. It skips itself on projects
+            # that are not `quality: strict`, patches what it can onto the PR
+            # branch and exits 3 while a finding stands. A failed push or a
+            # patch that breaks `seo check` counts the same: fact_blocked, no
+            # merge. Runs also under require_review, so the shadow phase sees
+            # its findings in the PR body.
+            HEAD_REF=$(gh pr view "$PR_NUM" --json headRefName -q .headRefName)
+            node .seo-cli/bin/seo.js verify "${MD[@]}" --commit --branch "$HEAD_REF" --pr "$PR_NUM" | tee /tmp/seo-verify.out
+            VERIFY_EXIT=${PIPESTATUS[0]}
+            if [ "$VERIFY_EXIT" -ne 0 ]; then
+              echo "seo verify left PR #$PR_NUM blocked (exit $VERIFY_EXIT)."
+              FACT_BLOCKED=1
+            elif grep -q '^VERIFY_HEAD_SHA=' /tmp/seo-verify.out; then
+              # The patches moved the PR head: take it over and check the patched pages again.
+              # verify also wrote the patches into the working tree: discard them so the
+              # fast-forward onto the pushed head cannot abort on local changes.
+              git checkout -- "${MD[@]}" 2>/dev/null || true
+              NEW_SHA=$(sed -n 's/^VERIFY_HEAD_SHA=//p' /tmp/seo-verify.out | tail -n 1)
+              if gh pr checkout "$PR_NUM" && [ "$(git rev-parse HEAD)" = "$NEW_SHA" ]; then
+                node .seo-cli/bin/seo.js check "${MD[@]}" | tee /tmp/seo-check.out
+                CHECK_EXIT=${PIPESTATUS[0]}
+                [ "$CHECK_EXIT" -ne 0 ] && FACT_BLOCKED=1
+              else
+                echo "PR head is not the pushed verify commit ($NEW_SHA)."
+                FACT_BLOCKED=1
+              fi
+            fi
+            # The head every later step acts on: only this exact commit may be merged.
+            VERIFIED_SHA=$(git rev-parse HEAD)
+
             # Human review gate: skip the CI wait and the merge entirely. The
             # notify path still runs so the needs_review mail goes out.
             if [ "${REQUIRE_REVIEW}" = "true" ]; then
@@ -337,7 +374,7 @@ jobs:
             # No branch protection is available on private/free-plan repos, so the
             # gate itself must not merge ahead of a slow test run.
             CHECKS_STATUS=""
-            if [ "$CHECK_EXIT" -eq 0 ] && [ "${REQUIRE_REVIEW}" != "true" ]; then
+            if [ "$CHECK_EXIT" -eq 0 ] && [ "$FACT_BLOCKED" -eq 0 ] && [ "${REQUIRE_REVIEW}" != "true" ]; then
               POLL_INTERVAL=30
               MAX_WAIT=1500
               ELAPSED=0
@@ -421,7 +458,10 @@ jobs:
               fi
             fi
 
-            if [ "${REQUIRE_REVIEW}" = "true" ]; then
+            if [ "$FACT_BLOCKED" -eq 1 ]; then
+              STATUS=fact_blocked
+              echo "Not merging PR #$PR_NUM: seo verify did not clear it."
+            elif [ "${REQUIRE_REVIEW}" = "true" ]; then
               STATUS=needs_review
             elif [ "$CHECK_EXIT" -eq 0 ]; then
               if [ "$CHECKS_STATUS" = "failed" ] || [ "$CHECKS_STATUS" = "timeout" ]; then
@@ -431,7 +471,7 @@ jobs:
                   STATUS=checks_timeout
                 fi
                 echo "Not merging PR #$PR_NUM: PR checks did not pass ($STATUS)."
-              elif gh pr merge "$PR_NUM" --squash --delete-branch; then
+              elif gh pr merge "$PR_NUM" --squash --delete-branch --match-head-commit "$VERIFIED_SHA"; then
                 STATUS=merged
                 # A merge by GITHUB_TOKEN does not trigger other workflows (incl. deploy).
                 # Dispatch the deploy explicitly so the merged pages go live.
@@ -440,10 +480,16 @@ jobs:
                 else
                   echo "Deploy dispatch skipped (no deploy.yml or no workflow_dispatch trigger)."
                 fi
-                # (Re)submit the sitemap so Google re-crawls the new pages. Non-fatal.
-                node .seo-cli/bin/seo.js submit-sitemap || echo "Sitemap submit skipped/failed (non-fatal)."
-                # Same for Bing, Yandex and friends via IndexNow. Non-fatal, and a no-op without indexnow_key.
-                node .seo-cli/bin/seo.js indexnow || echo "IndexNow submit skipped/failed (non-fatal)."
+                # Projects with `watch.check_deploy` go live minutes after the merge (content sync,
+                # cache): wait for the page before telling search engines about it. Others pass at once.
+                if node .seo-cli/bin/seo.js live-check "${MD[@]}" --head-ref "$HEAD_REF" --wait 12; then
+                  # (Re)submit the sitemap so Google re-crawls the new pages. Non-fatal.
+                  node .seo-cli/bin/seo.js submit-sitemap || echo "Sitemap submit skipped/failed (non-fatal)."
+                  # Same for Bing, Yandex and friends via IndexNow. Non-fatal, and a no-op without indexnow_key.
+                  node .seo-cli/bin/seo.js indexnow || echo "IndexNow submit skipped/failed (non-fatal)."
+                else
+                  echo "::warning::PR #$PR_NUM not live after 12 minutes, sitemap and IndexNow not submitted (the watcher's not_deployed alert follows up)."
+                fi
               else
                 STATUS=merge_failed
               fi

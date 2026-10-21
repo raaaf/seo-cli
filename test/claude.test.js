@@ -208,6 +208,27 @@ describe('claude-complete', () => {
     expect(batchResults).not.toHaveBeenCalled();
   });
 
+  it('sends web_fetch next to web_search with the same max_uses when webFetch is on', async () => {
+    stream.mockReturnValue(streamsTo(reply('ok')));
+    await complete({ system: 's', prompt: 'p', webSearch: true, webFetch: true, maxSearches: 20 });
+    expect(stream.mock.calls[0][0].tools).toEqual([
+      { type: 'web_search_20260209', name: 'web_search', max_uses: 20 },
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 20 },
+    ]);
+  });
+
+  it('sends only web_search without webFetch', async () => {
+    stream.mockReturnValue(streamsTo(reply('ok')));
+    await complete({ system: 's', prompt: 'p', webSearch: true });
+    expect(stream.mock.calls[0][0].tools).toEqual([{ type: 'web_search_20260209', name: 'web_search', max_uses: 6 }]);
+  });
+
+  it('throws when batch and webFetch are combined', async () => {
+    await expect(complete({ system: 's', prompt: 'p', batch: true, webFetch: true }))
+      .rejects.toThrow(/cannot be combined/);
+    expect(batchCreate).not.toHaveBeenCalled();
+  });
+
   it('throws when batch and webSearch are combined', async () => {
     await expect(complete({ system: 's', prompt: 'p', batch: true, webSearch: true }))
       .rejects.toThrow(/batch and webSearch/);

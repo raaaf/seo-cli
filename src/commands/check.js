@@ -26,7 +26,7 @@ function keywordFor(slug, keywordsData, frontmatter) {
 }
 
 // `quality: strict` in the project's config, or --strict. A project without a config file is standard.
-function wantsStrict(cwd, flag) {
+export function wantsStrict(cwd, flag) {
   if (flag) return true;
   try {
     return isStrict(loadConfig(cwd));
