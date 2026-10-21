@@ -197,9 +197,16 @@ export function validate(markdown, keyword, opts = {}) {
   const faqCount = Array.isArray(parsed.faq) ? parsed.faq.length : 0;
   if (faqCount < SEO_THRESHOLDS.faqMin) errors.push(`Too few FAQ entries (${faqCount}, min 3)`);
 
+  // A service page (page_type: service) carries its substance in
+  // steps/checklist/faq and states prices in prose, so the guide rules for
+  // body length, tldr length and digit count below do not apply to it.
+  const service = parsed.page_type === 'service';
+
   // Body word count — min 800 words (thin-content guard)
   const wordCount = body.split(/\s+/).filter(Boolean).length;
-  if (contract?.body_words) {
+  if (service) {
+    // no length rule
+  } else if (contract?.body_words) {
     const [minWords, maxWords] = contract.body_words;
     if (wordCount < minWords) errors.push(`Body too short: ${wordCount} words (min ${minWords})`);
     if (wordCount > maxWords) errors.push(`Body too long: ${wordCount} words (max ${maxWords})`);
@@ -241,7 +248,7 @@ export function validate(markdown, keyword, opts = {}) {
   }
 
   // tldr word count (40–60 words)
-  if (parsed.tldr != null) {
+  if (parsed.tldr != null && !service) {
     const tldrWords = String(parsed.tldr).split(/\s+/).filter(Boolean).length;
     if (tldrWords < SEO_THRESHOLDS.tldrWords.errorMin) errors.push(`tldr too short: ${tldrWords} words (need ${SEO_THRESHOLDS.tldrWords.errorMin}-${SEO_THRESHOLDS.tldrWords.errorMax})`);
     if (tldrWords > SEO_THRESHOLDS.tldrWords.errorMax) errors.push(`tldr too long: ${tldrWords} words (need ${SEO_THRESHOLDS.tldrWords.errorMin}-${SEO_THRESHOLDS.tldrWords.errorMax})`);
@@ -250,7 +257,7 @@ export function validate(markdown, keyword, opts = {}) {
   // Information density: >= 5 digits in body. Not under strict: padding a page
   // with numbers is what produced unsourced figures in the first place.
   const digitCount = (body.match(/\d/g) || []).length;
-  if (!strict && digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
+  if (!strict && !service && digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
 
   if (strict) errors.push(...strictErrors({ parsed, body, otherPages }));
 
