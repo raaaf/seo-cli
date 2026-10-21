@@ -203,6 +203,27 @@ ${makeBody()}`;
   });
 });
 
+describe('validate-page: service pages (page_type: service)', () => {
+  // A service page carries its substance in steps/checklist/faq, not in a
+  // long body, and states prices in prose. The guide rules for body length,
+  // tldr length and digit count do not fit it.
+  const servicePage = (pageType) => makeValid({ body: 'Webdesign Berlin fuer kleine Firmen. ' + 'Klare Struktur und schnelle Seiten helfen allen Besuchern im Alltag. '.repeat(10), tldr: `${TLDR_50} ${TLDR_50}` })
+    .replace('slug: webdesign-berlin', `slug: webdesign-berlin\npage_type: ${pageType}`);
+
+  it('skips body length, tldr length and digit count on a service page', () => {
+    const { ok, errors } = validate(servicePage('service'), KW);
+    expect(errors).toEqual([]);
+    expect(ok).toBe(true);
+  });
+
+  it('keeps those rules for any other page_type', () => {
+    const { errors } = validate(servicePage('guide'), KW);
+    expect(errors.some(e => e.includes('Body too short'))).toBe(true);
+    expect(errors.some(e => e.includes('tldr too long'))).toBe(true);
+    expect(errors.some(e => e.includes('Too few digits'))).toBe(true);
+  });
+});
+
 describe('validate-page: counterpart mode ({ counterpart: true })', () => {
   // The source keyword is German; a counterpart page is an English adaptation
   // and never contains it, so keyword/entity checks must not fire on it.
