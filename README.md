@@ -78,7 +78,7 @@ seo run --dry-run  # preview without committing
 
 A local `seo run` without `--dry-run` commits the machine state (see below) straight to `main` as well, so run `git pull` afterwards.
 
-`dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated).
+`dashboard` is cross-project: it auto-discovers every project with a `seo.config.yaml` under `~/Local Sites` (override via `SEO_PROJECT_ROOTS`, colon-separated). Linked git worktrees (a `.git` file instead of a directory) are skipped, so a project shows once.
 
 ## Automation (GitHub Actions)
 

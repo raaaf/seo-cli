@@ -1,4 +1,4 @@
-import { readdirSync, existsSync } from 'fs';
+import { readdirSync, existsSync, statSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 import { loadConfig } from './config.js';
@@ -13,8 +13,19 @@ function roots() {
 
 const IGNORE = new Set(['node_modules', 'vendor', 'dist', 'build', '.next', '.git']);
 
+// A linked git worktree (or submodule) has a `.git` file instead of a directory.
+// Its seo.config.yaml is a copy of the main checkout's, so listing it would show
+// the same project once per worktree.
+function isLinkedCheckout(dir) {
+  try {
+    return statSync(join(dir, '.git')).isFile();
+  } catch {
+    return false;
+  }
+}
+
 // Yield directories that hold a seo.config.yaml, up to `depth` levels deep.
-// Does not descend into a project once found.
+// Does not descend into a project once found, nor into linked worktrees.
 function* walk(dir, depth) {
   let entries;
   try {
@@ -25,6 +36,7 @@ function* walk(dir, depth) {
   for (const e of entries) {
     if (!e.isDirectory() || IGNORE.has(e.name) || e.name.startsWith('.')) continue;
     const child = join(dir, e.name);
+    if (isLinkedCheckout(child)) continue;
     if (existsSync(join(child, 'seo.config.yaml'))) {
       yield child;
       continue;

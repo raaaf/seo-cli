@@ -40,6 +40,19 @@ describe('projects-discover', () => {
     expect(found.map(p => p.name)).toContain('Acme');
   });
 
+  it('skips linked git worktrees and does not descend into them', () => {
+    project('events', 'project: Events\n');
+    mkdirSync(join(root, 'events/.git'));
+    project('_worktrees/events-preview', 'project: Events\n');
+    writeFileSync(join(root, '_worktrees/events-preview/.git'), 'gitdir: /x/events/.git/worktrees/events-preview\n');
+    mkdirSync(join(root, '_worktrees/events-nested/sub'), { recursive: true });
+    writeFileSync(join(root, '_worktrees/events-nested/.git'), 'gitdir: /x\n');
+    project('_worktrees/events-nested/sub/app', 'project: Events\n');
+
+    process.env.SEO_PROJECT_ROOTS = root;
+    expect(discoverProjects().map(p => p.path)).toEqual([join(root, 'events')]);
+  });
+
   it('returns an empty list when no roots exist', () => {
     process.env.SEO_PROJECT_ROOTS = join(root, 'nope');
     expect(discoverProjects()).toEqual([]);
