@@ -109,6 +109,16 @@ describe('claude-code-backend', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok');
   });
 
+  it('disables thinking only for the judge model, like the API path', async () => {
+    spawn.mockReturnValue(fakeChild(OK));
+    await call({ model: MODELS.judge });
+    expect(spawned().opts.env.MAX_THINKING_TOKENS).toBe('0');
+    spawn.mockReset();
+    spawn.mockReturnValue(fakeChild(OK));
+    await call();
+    expect(spawned().opts.env).not.toHaveProperty('MAX_THINKING_TOKENS');
+  });
+
   it('runs in a fresh temp directory that is also HOME and CLAUDE_CONFIG_DIR', async () => {
     spawn.mockReturnValue(fakeChild(OK));
     await call();
