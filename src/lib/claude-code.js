@@ -112,6 +112,10 @@ export async function completeViaClaudeCode({
       CLAUDE_CONFIG_DIR: workDir,
       CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens),
+      // Same as the API path: no thinking for the judge. Thinking counts against
+      // the output cap, and the link judge sizes that cap for the answer alone
+      // (304 tokens for one candidate, exceeded on 2026-10-22).
+      ...(model === MODELS.judge ? { MAX_THINKING_TOKENS: '0' } : {}),
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
       DISABLE_AUTOUPDATER: '1',
     };
