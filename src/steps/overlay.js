@@ -253,7 +253,8 @@ function buildBody(target, before, after) {
 /**
  * One overlay per run, as the same `prepared` shape `publishImprove` takes.
  * With shop traffic in Search Console the page with the strongest case is
- * rewritten; before that (start mode) a product without an overlay gets one.
+ * rewritten; before that (start mode), and whenever no shop page qualifies, a
+ * product without an overlay gets one.
  * Null when overlays are off, the catalog is unavailable, nothing qualifies,
  * the text does not validate after 2 attempts, or this is a dry run.
  */
@@ -273,11 +274,15 @@ export async function prepareOverlay({ config, cwd = process.cwd(), rows, catalo
 
   const cooldown = slugsInCooldown(loadImprovements(cwd));
   const startMode = isStartMode(rows);
-  const target = startMode
-    ? pickStartTarget({ config, catalog, cwd, cooldown })
-    : selectOverlayPage({ rows, config, cooldown, catalog });
+  // A few shop rows end start mode long before any shop page clears the
+  // impression floor (punktundpause, 2026-10-22: no overlay at all), so a run
+  // without a ranked target still gives the next product without one an overlay.
+  const ranked = startMode ? null : selectOverlayPage({ rows, config, cooldown, catalog });
+  const fallback = ranked ? null : pickStartTarget({ config, catalog, cwd, cooldown });
+  const target = ranked
+    ?? (fallback && !startMode ? { ...fallback, reason: 'No shop page has enough Search Console data yet, this product has no overlay' } : fallback);
   if (!target) {
-    console.log(chalk.gray(`  No overlay to write (${startMode ? 'every product has one' : 'no shop page qualifies'}).`));
+    console.log(chalk.gray(`  No overlay to write (${startMode ? 'every product has one' : 'no shop page qualifies and every product has one'}).`));
     return null;
   }
   const filePath = overlayFilePath(config, target.slug);
