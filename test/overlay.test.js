@@ -241,6 +241,21 @@ describe('overlay: start target and prepareOverlay', () => {
     expect(complete.mock.calls[0][0].prompt).toContain('nachteule shirt');
   });
 
+  it('falls back to a product without an overlay when shop rows exist but none qualifies', async () => {
+    complete.mockResolvedValue(GOOD);
+    const rows = [{ url: 'https://shop.test/shop/nachteule', query: 'nachteule shirt', impressions: 5, position: 11, clicks: 0 }];
+    const prepared = await prepareOverlay({ config: CONFIG, cwd: dir, rows, catalog });
+    expect(prepared.slug).toBe('product:tanz-mit-mir');
+    expect(prepared.record.queries).toEqual([]);
+  });
+
+  it('writes nothing when no shop page qualifies and every product has an overlay', async () => {
+    for (const p of catalog.products) seedOverlay(p.slug);
+    const rows = [{ url: 'https://shop.test/shop/nachteule', query: 'nachteule shirt', impressions: 5, position: 11, clicks: 0 }];
+    expect(await prepareOverlay({ config: CONFIG, cwd: dir, rows, catalog })).toBeNull();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it('does nothing without the overlays key', async () => {
     expect(await prepareOverlay({ config: { ...CONFIG, overlays: null }, cwd: dir, rows: [], catalog })).toBeNull();
     expect(complete).not.toHaveBeenCalled();
