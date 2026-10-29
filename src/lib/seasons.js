@@ -39,7 +39,9 @@ function nextPeak(peak, todayTime) {
 /**
  * Seasons whose lead window contains `today`: from `lead_weeks` weeks before the
  * nearest upcoming peak until the peak day itself. Sorted nearest peak first,
- * each with the resolved peak as YYYY-MM-DD. Malformed entries are skipped with a warning.
+ * each with the resolved peak as YYYY-MM-DD. An `evergreen: true` entry has no peak
+ * and is always active (peak null, sorted last): it seeds year-round topics without
+ * telling the scorer that demand builds towards a date. Malformed entries are skipped with a warning.
  */
 export function activeSeasons(seasons, today = new Date()) {
   if (!Array.isArray(seasons)) return [];
@@ -47,6 +49,11 @@ export function activeSeasons(seasons, today = new Date()) {
   const active = [];
   for (const [i, season] of seasons.entries()) {
     const name = typeof season?.name === 'string' ? season.name.trim() : '';
+    if (name && season.evergreen === true) {
+      // No pages: a seasonal rewrite is timed to a peak, an evergreen topic has none.
+      active.push({ name, peak: null, evergreen: true, lead_weeks: null, keywords: strings(season.keywords), pages: [] });
+      continue;
+    }
     const lead = season?.lead_weeks ?? DEFAULT_LEAD_WEEKS;
     const peakTime = name ? nextPeak(season.peak, todayTime) : null;
     if (!name || peakTime === null || !(Number.isFinite(lead) && lead > 0)) {
@@ -56,7 +63,7 @@ export function activeSeasons(seasons, today = new Date()) {
     if (todayTime < peakTime - lead * 7 * DAY_MS) continue;
     active.push({ name, peak: format(new Date(peakTime)), lead_weeks: lead, keywords: strings(season.keywords), pages: strings(season.pages) });
   }
-  return active.sort((a, b) => a.peak.localeCompare(b.peak));
+  return active.sort((a, b) => (a.peak === null) - (b.peak === null) || (a.peak ?? '').localeCompare(b.peak ?? ''));
 }
 
 /**

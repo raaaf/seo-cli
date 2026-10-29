@@ -190,6 +190,7 @@ greenfield: false       # invent keywords when GSC yields none. Off by default:
                         # an empty backlog means the topic space is covered
 seasons: []             # [{ name, peak: 'MM-DD', lead_weeks: 10, keywords: [], pages: [slug] }]
                         # inside the lead window discover seeds keywords, improve rewrites pages first
+                        # { name, evergreen: true, keywords: [] }: always active, no peak, no pages
 fact_check: true        # verify claims against the live web before committing
 counterpart_locale: null  # e.g. 'en' — also generate a reciprocal counterpart
                            # page per default-locale page, own slug, sharing the

@@ -32,6 +32,14 @@ describe('activeSeasons', () => {
     expect(names([newYear], '2026-10-01')).toEqual([]);
   });
 
+  it('keeps an evergreen season active all year, after the dated ones, without pages', () => {
+    const evergreen = { name: 'gifts', evergreen: true, keywords: ['geschenk'], pages: ['some-page'] };
+    for (const today of ['2026-01-01', '2026-06-30', '2026-12-31']) expect(names([evergreen], today)).toEqual(['gifts']);
+    const active = activeSeasons([evergreen, xmas], day('2026-12-01'));
+    expect(active.map(s => s.name)).toEqual(['xmas', 'gifts']);
+    expect(active[1]).toMatchObject({ peak: null, evergreen: true, keywords: ['geschenk'], pages: [] });
+  });
+
   it('defaults lead_weeks to 10', () => {
     const season = activeSeasons([{ name: 'a', peak: '12-24' }], day('2026-10-15'));
     expect(season[0].lead_weeks).toBe(10);
