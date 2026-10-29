@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import * as yaml from 'js-yaml';
+import { normalizeContentOwners } from './content-owners.js';
 
 export const CONFIG_FILE = 'seo.config.yaml';
 
@@ -20,6 +21,9 @@ export function loadConfig(cwd = process.cwd()) {
   config.bing = { ...DEFAULTS.bing, ...(isPlainObject(config.bing) ? config.bing : {}) };
   config.rybbit = { ...DEFAULTS.rybbit, ...(isPlainObject(config.rybbit) ? config.rybbit : {}) };
   if (!Array.isArray(config.rybbit.micro_goals)) config.rybbit.micro_goals = [];
+  config.content_owners = normalizeContentOwners(config.content_owners, (msg) => {
+    config.config_warnings = [...(config.config_warnings || []), msg];
+  });
   return config;
 }
 
@@ -137,6 +141,9 @@ export const DEFAULTS = {
   // Rybbit analytics as a signal source (needs RYBBIT_API_KEY): entries, bounce rate, goals and AI visitors per
   // landing page. Goals are named as in Rybbit; macro_goal is the main goal, micro_goals the smaller ones.
   rybbit: { enabled: false, url: null, site_id: null, macro_goal: null, micro_goals: [] },
+  // Pages whose text someone else writes, e.g. [{ name: 'Alex', paths: ['/shop/'] }]: their content findings
+  // carry `content_owner`, so the notify mail can list them in a block to forward.
+  content_owners: [],
 };
 
 export function isStrict(config) {
