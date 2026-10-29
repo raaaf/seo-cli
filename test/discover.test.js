@@ -428,6 +428,21 @@ describe('discover: seasons', () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
+  it('scores evergreen keywords all year with a prompt that names no peak', async () => {
+    vi.setSystemTime(new Date('2026-02-01T12:00:00Z'));
+    const evergreen = { name: 'geschenkideen', evergreen: true, keywords: ['geschenk beste freundin'] };
+    const data = await discover({ ...config, seasons: [evergreen] }, dir);
+    expect(data.keywords.find(k => k.keyword === 'geschenk beste freundin')).toMatchObject({ status: 'proposed', source: 'season', season: 'geschenkideen' });
+    const prompt = complete.mock.calls[0][0].prompt;
+    expect(prompt).toContain('Evergreen keyword (geschenkideen)');
+    expect(prompt).not.toContain('demand builds towards the peak');
+  });
+
+  it('keeps the peak hint for a dated season', async () => {
+    await discover({ ...config, seasons: [season] }, dir);
+    expect(complete.mock.calls[0][0].prompt).toContain('demand builds towards the peak');
+  });
+
   it('seeds nothing while the season is inactive', async () => {
     vi.setSystemTime(new Date('2026-02-01T12:00:00Z'));
     const data = await discover({ ...config, seasons: [season] }, dir);

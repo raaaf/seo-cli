@@ -102,6 +102,7 @@ export const DEFAULTS = {
   greenfield: false,
   // Seasonal calendar: [{ name, peak: 'MM-DD', lead_weeks: 10, keywords: [], pages: [slug] }]. Inside the lead
   // window before a peak, discover seeds the keywords and improve rewrites the listed pages first.
+  // { name, evergreen: true, keywords: [] } seeds year-round keywords (no peak, no pages).
   seasons: [],
   // Verify checkable claims against the live web before a page is committed.
   fact_check: true,

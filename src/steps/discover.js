@@ -130,7 +130,7 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
   for (const season of activeSeasons(config.seasons)) {
     const fresh = season.keywords.filter(keyword => !data.keywords.some(k => k.keyword === keyword));
     if (fresh.length === 0) continue;
-    console.log(chalk.gray(`  Season ${season.name} (peak ${season.peak}): ${fresh.length} new keyword(s)`));
+    console.log(chalk.gray(`  Season ${season.name} (${season.evergreen ? 'evergreen' : `peak ${season.peak}`}): ${fresh.length} new keyword(s)`));
     const candidates = fresh.map(keyword => ({ keyword, impressions: 0, position: 0, clicks: 0 }));
     pageRows ??= await fetchPageRows(config);
     await scoreAndSave({ candidates, config, data, existingSlugs, existingFiles, pageRows, cwd, source: 'season', season });
@@ -434,6 +434,16 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
   }
 }
 
+// Seeded keywords have no Search Console history. A dated season explains the low volume with the
+// coming peak; an evergreen one must not, or the scorer reads year-round demand as still building.
+function seasonHint(season) {
+  if (!season) return '';
+  if (season.evergreen) {
+    return `\n\nEvergreen keyword (${season.name}), added by the site owner: there is no search data for this site yet. Demand does not depend on a date. Judge fit, intent and the SERP, not the missing numbers.`;
+  }
+  return `\n\nSeasonal keyword (${season.name}, peak ${season.peak}): there is no search data yet and the current volume is low because demand builds towards the peak. Judge fit and intent, not the missing numbers.`;
+}
+
 function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existingTitles = [], cwd, season = null) {
   const vars = {
     keyword: String(keyword).replace(/[\r\n]+/g, ' ').slice(0, 200),
@@ -450,7 +460,7 @@ function buildScorePrompt(keyword, row, config, existingSlugs, serpData, existin
     locale: config.locale || 'de',
     gsc_guardrail: GSC_GUARDRAIL,
     icp: icpBlock(config, cwd),
-    season: season ? `\n\nSeasonal keyword (${season.name}, peak ${season.peak}): there is no search data yet and the current volume is low because demand builds towards the peak. Judge fit and intent, not the missing numbers.` : '',
+    season: seasonHint(season),
   };
   return fillTemplate(SCORE_PROMPT, vars);
 }
