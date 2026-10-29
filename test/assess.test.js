@@ -292,6 +292,45 @@ describe('assess', () => {
     });
   });
 
+  describe('content owners', () => {
+    const owned = { ...CONFIG, content_owners: [{ name: 'Alex', paths: ['/shop/'] }] };
+
+    it('asks for an audience per action on a page someone else writes and stores the owner', async () => {
+      seed([deindexed('shop/poster')]);
+      complete.mockResolvedValue({ likely_causes: ['Kurzer Text'], actions: [
+        { action: 'Text ergänzen', why: 'zu kurz', audience: 'content' },
+        { action: 'Von der Startseite verlinken', why: 'kaum Links', audience: 'site' },
+        { action: 'Ohne Angabe', why: 'x' },
+      ] });
+
+      const { done } = await assess({ config: owned });
+
+      const call = complete.mock.calls[0][0];
+      expect(call.prompt).toContain('The text of this page is written by Alex');
+      expect(call.schema.properties.actions.items.required).toContain('audience');
+      expect(done[0]).toMatchObject({ content_owner: 'Alex', actions: [
+        { action: 'Text ergänzen', audience: 'content' },
+        { action: 'Von der Startseite verlinken', audience: 'site' },
+        { action: 'Ohne Angabe', audience: 'site' },
+      ] });
+      expect(saved()[0].assessment.content_owner).toBe('Alex');
+    });
+
+    it('leaves prompt, schema and result unchanged for pages outside the owner paths', async () => {
+      seed([deindexed('a')]);
+      await assess({ config: owned, dryRun: true });
+      await assess({ dryRun: true });
+
+      const [withOwners, plain] = complete.mock.calls.map(c => c[0]);
+      expect(withOwners.prompt).toBe(plain.prompt);
+      expect(withOwners.prompt).not.toContain('{{');
+      expect(withOwners.schema).toEqual(plain.schema);
+      const { done } = await assess({ config: owned });
+      expect(done[0].content_owner).toBeUndefined();
+      expect(done[0].actions[0].audience).toBeUndefined();
+    });
+  });
+
   describe('prompt data', () => {
     it('keeps real commits beyond a run of seo state commits and fences links and commits', async () => {
       seed([deindexed('a')]);

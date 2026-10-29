@@ -13,6 +13,7 @@ import { stripHtml } from '../lib/site-fetch.js';
 import { fillTemplate } from '../lib/template.js';
 import { MODELS } from '../lib/models.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
+import { contentOwnerFor } from '../lib/content-owners.js';
 
 const ASSESS_PROMPT = readFileSync(new URL('../prompts/assess.md', import.meta.url), 'utf8');
 
@@ -46,6 +47,30 @@ const ASSESS_SCHEMA = {
   additionalProperties: false,
 };
 
+// Pages someone else writes: every action says whether that person can do it in the page text.
+const AUDIENCES = ['content', 'site'];
+const OWNER_SCHEMA = {
+  ...ASSESS_SCHEMA,
+  properties: {
+    ...ASSESS_SCHEMA.properties,
+    actions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { action: { type: 'string' }, why: { type: 'string' }, audience: { type: 'string', enum: AUDIENCES } },
+        required: ['action', 'why', 'audience'],
+        additionalProperties: false,
+      },
+    },
+  },
+};
+
+// Glued to the end of the actions line, so without an owner the prompt is unchanged.
+function audienceNote(owner) {
+  if (!owner) return '';
+  return `\n\nThe text of this page is written by ${owner}, not by the site owner. ${owner} edits it in the site's admin and cannot change templates, menus, links on other pages or settings. Give every action an \`audience\`: \`"content"\` when ${owner} can do it by editing this page's own text (title, description, details), \`"site"\` for everything else. Write \`content\` actions so they make sense to ${owner} when forwarded on their own, still addressed with "du".`;
+}
+
 // The text ends up in a mail: no markup and no links, whatever the model returns.
 function plain(value, max) {
   return String(value ?? '')
@@ -56,12 +81,18 @@ function plain(value, max) {
     .slice(0, max);
 }
 
-function cleanAssessment(parsed, today) {
+function cleanAssessment(parsed, today, owner = null) {
   return {
     assessed_at: today,
+    ...(owner ? { content_owner: owner } : {}),
     likely_causes: (parsed?.likely_causes ?? []).slice(0, 3).map(c => plain(c, 300)).filter(Boolean),
     actions: (parsed?.actions ?? []).slice(0, 5)
-      .map(a => ({ action: plain(a?.action, 300), why: plain(a?.why, 450) }))
+      .map(a => ({
+        action: plain(a?.action, 300),
+        why: plain(a?.why, 450),
+        // An action without a valid audience stays with the site owner.
+        ...(owner ? { audience: a?.audience === 'content' ? 'content' : 'site' } : {}),
+      }))
       .filter(a => a.action),
   };
 }
@@ -206,6 +237,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
   for (const alert of candidates) {
     try {
       const pageUrl = alert.diagnosis.urls[0].url;
+      const owner = contentOwnerFor(config, alert.diagnosis.urls.map(u => u.url));
       const page = await fetch(pageUrl, { locale });
       const links = internalLinks(page.html, pageUrl);
       if (trimSlash(pageUrl) !== trimSlash(config.base_url)) {
@@ -236,12 +268,13 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         url_facts: urlFacts(alert, entries),
         engagement: engagementBlock(pageUrl, engagement),
         page_text: stripHtml(page.html).split(/\s+/).slice(0, PAGE_WORDS).join(' '),
+        audience: audienceNote(owner),
       });
       const parsed = await complete({
         system: 'You are an SEO analyst. You judge index coverage from data and say only what the data supports.',
-        prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: ASSESS_SCHEMA,
+        prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: owner ? OWNER_SCHEMA : ASSESS_SCHEMA,
       });
-      const assessment = cleanAssessment(parsed, today);
+      const assessment = cleanAssessment(parsed, today, owner);
       if (!assessment.actions.length) throw new Error('model returned no actions');
       console.log(chalk.blue(`  Assessment ${alert.id}: ${assessment.likely_causes.join(' | ') || 'no causes named'}`));
       if (!dryRun) {

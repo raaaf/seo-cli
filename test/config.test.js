@@ -136,6 +136,18 @@ describe('config-load: loadConfig', () => {
     expect(loadConfig(tmpDir).rybbit).toEqual(off);
   });
 
+  it('keeps content_owners empty by default and drops malformed entries with a warning', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'project: x\n', 'utf8');
+    expect(loadConfig(tmpDir).content_owners).toEqual([]);
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'content_owners:\n  - { name: Alex, paths: [/shop/, shop] }\n  - { name: Bo }\n', 'utf8');
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.content_owners).toEqual([{ name: 'Alex', paths: ['/shop/'] }]);
+    expect(cfg.config_warnings).toHaveLength(1);
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'content_owners: Alex\n', 'utf8');
+    expect(loadConfig(tmpDir).content_owners).toEqual([]);
+  });
+
   it('throws a config error naming the page_contract key with a wrong shape', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
     writeFileSync(join(tmpDir, 'seo.config.yaml'), 'page_contract:\n  body_words: [300]\n', 'utf8');
