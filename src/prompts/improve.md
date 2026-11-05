@@ -65,12 +65,21 @@ page answers weakly or not at all, and extend the page to cover them: a new
 section, additional FAQ entries, a sharper opening paragraph. Also align
 `meta_title` and `meta_description` with the strongest queries.
 
-In both cases:
+**When the diagnosis is an index problem** (Google crawled the page but does
+not show it): the page reads as interchangeable with its siblings or as
+untrustworthy. Do what the diagnosis lists. Cut passages that repeat a sibling's
+topic down to a sentence that points there, remove or qualify every figure that
+has no source, and give the page one concrete part of its own that the siblings
+do not have, built from what the page already offers. Shorter and more specific
+beats longer. Leave the query table aside unless a query is clearly this page's.
+
+In all cases:
 
 - Keep the slug, the frontmatter schema{{structure_rule}}.
 - Keep the address form (du or Sie) exactly as the page uses it now.
-- Keep every section that is already there unless it is factually wrong. You are
-  extending and sharpening, not replacing.
+- Keep every section that is already there unless it is factually wrong or an
+  index diagnosis asks you to trim it. You are extending and sharpening, not
+  replacing.
 - Do not invent facts, figures, laws, prices or sources to fill a gap. If a query
   demands a number you do not have, answer it qualitatively.{{sources_rule}}
 - **Never claim a service, tool, technology or qualification the current page

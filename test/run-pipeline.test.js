@@ -250,7 +250,7 @@ describe('run-pipeline', () => {
 
     expect(order).toEqual(['measure', 'assess', 'discover']);
     expect(assessAlerts.mock.calls[0][0]).toMatchObject({ dryRun: false });
-    expect(report().assessments).toEqual([{ alert_id: 'site_not_indexed', actions: [] }]);
+    expect(report().assessments).toEqual([{ alert_id: 'site_not_indexed', actions: [], followup: { status: 'site' } }]);
   });
 
   it('turns a failing assessment into a warning and carries on', async () => {
