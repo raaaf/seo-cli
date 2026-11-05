@@ -186,6 +186,8 @@ score_cutoff: 7         # 0–10, keywords below this are skipped
 weekly_cap: 2           # max pages generated per run
 max_new_pages_per_month: 4  # new-page PRs per calendar month, rewrites do not count
 min_impressions: 5      # min GSC impressions to consider a keyword
+exclude_terms: []       # services the site does not offer, e.g. [webflow, wix]: keywords naming
+                        # one are skipped before scoring, from every source
 greenfield: false       # invent keywords when GSC yields none. Off by default:
                         # an empty backlog means the topic space is covered
 seasons: []             # [{ name, peak: 'MM-DD', lead_weeks: 10, keywords: [], pages: [slug] }]

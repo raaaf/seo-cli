@@ -82,8 +82,19 @@ describe('config-load: loadConfig', () => {
     expect(cfg.overlays).toBeNull();
     expect(cfg.catalog_url).toBeNull();
     expect(cfg.reserved_slugs).toEqual([]);
+    expect(cfg.exclude_terms).toEqual([]);
     expect(cfg.watch).toEqual({ check_deploy: false, ai_crawlers: true, structured_data: true, ai_crawlers_ignore: [] });
     expect(cfg.config_warnings).toBeUndefined();
+  });
+
+  it('reads exclude_terms and ignores a malformed value with a warning', () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'seo-test-'));
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'exclude_terms: [webflow, wix]\n', 'utf8');
+    expect(loadConfig(tmpDir).exclude_terms).toEqual(['webflow', 'wix']);
+    writeFileSync(join(tmpDir, 'seo.config.yaml'), 'exclude_terms: webflow\n', 'utf8');
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.exclude_terms).toEqual([]);
+    expect(cfg.config_warnings).toContain('exclude_terms must be a list of strings, ignoring it');
   });
 
   it('reads the Etappe D keys and merges watch with its defaults', () => {

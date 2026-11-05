@@ -496,3 +496,40 @@ describe('discover: seasons', () => {
     expect(prompt).not.toContain('Seasonal');
   });
 });
+
+describe('discover exclude_terms', () => {
+  it('skips a GSC candidate naming an excluded term before any SERP or model call', async () => {
+    querySearchAnalytics.mockResolvedValue([
+      { keyword: 'webflow website erstellen lassen nürnberg', impressions: 80, clicks: 0, ctr: 0, position: 12 },
+    ]);
+
+    const data = await discover({ ...config, exclude_terms: ['webflow'] }, dir);
+    expect(data.keywords.find(k => k.keyword.startsWith('webflow'))).toMatchObject({ status: 'skip', score: 0 });
+    expect(getSerp).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('takes an already proposed keyword with an excluded term off the backlog', async () => {
+    mkdirSync(join(dir, 'seo'), { recursive: true });
+    writeFileSync(join(dir, 'seo/keywords.json'), JSON.stringify({ keywords: [
+      { keyword: 'webflow agentur fürth', status: 'proposed', score: 9, target_slug: 'webflow-agentur-fuerth' },
+      { keyword: 'hochzeit planen', status: 'proposed', score: 9, target_slug: 'hochzeit-planen' },
+    ] }));
+    querySearchAnalytics.mockResolvedValue([]);
+
+    const data = await discover({ ...config, exclude_terms: ['webflow'] }, dir);
+    expect(data.keywords.find(k => k.keyword === 'webflow agentur fürth').status).toBe('skip');
+    expect(data.keywords.find(k => k.keyword === 'hochzeit planen').status).toBe('proposed');
+  });
+
+  it('drops greenfield suggestions naming an excluded term', async () => {
+    querySearchAnalytics.mockResolvedValue([]);
+    complete.mockResolvedValueOnce({ keywords: [
+      { keyword: 'webflow freelancer', target_slug: 'webflow-freelancer' },
+    ] });
+
+    const data = await discover({ ...config, greenfield: true, exclude_terms: ['webflow'] }, dir);
+    expect(data.keywords.find(k => k.keyword === 'webflow freelancer')).toBeUndefined();
+    expect(getSerp).not.toHaveBeenCalled();
+  });
+});
