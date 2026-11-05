@@ -76,8 +76,8 @@ export function pickSeasonPage({ config, cwd = process.cwd(), today = new Date()
   const known = new Set(getExistingSlugs(config, cwd, defaultLocale(config)));
   const blocked = new Set([
     ...slugsInCooldown(improvements, today),
-    // A failed attempt (no PR) holds the page off for the normal cooldown only, it was never refreshed.
-    ...slugsInCooldown({ entries: (improvements.entries || []).filter(e => !e.failed) }, today, SEASON_REFRESH_DAYS),
+    // A failed attempt (no PR) or a revert holds the page off for the normal cooldown only, it was never refreshed.
+    ...slugsInCooldown({ entries: (improvements.entries || []).filter(e => !e.failed && !e.revert) }, today, SEASON_REFRESH_DAYS),
     ...(config.exclude_slugs || []),
   ]);
   for (const season of activeSeasons(config.seasons, today)) {

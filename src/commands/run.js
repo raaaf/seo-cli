@@ -34,6 +34,7 @@ import { measure } from '../steps/measure.js';
 import { assessAlerts } from '../steps/assess.js';
 import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
 import { pickAssessedPage, annotateFollowups } from '../lib/assessed-rewrite.js';
+import { revertWorseRewrites } from '../steps/revert.js';
 
 function pLimit(concurrency) {
   const queue = [];
@@ -270,10 +271,12 @@ function newPageEntry(kw, mergedAt, config) {
 }
 
 // The counterpart is named by the page's `alternate:` field, which is only on disk after the merge was pulled.
+// A revert PR (improvements entry with `revert: true`) is measured like a rewrite, as kind `revert`.
 function rewriteEntry(item, mergedAt, config, cwd) {
   const base = baseUrlOf(config);
+  const kind = item.revert ? 'revert' : 'rewrite';
   if (parseOverlayKey(item.slug)) {
-    return ledgerEntry({ kind: 'rewrite', slug: item.slug, urls: [overlayUrl(config, item.slug)], prUrl: item.pr_url, mergedAt });
+    return ledgerEntry({ kind, slug: item.slug, urls: [overlayUrl(config, item.slug)], prUrl: item.pr_url, mergedAt });
   }
   const urls = [base + localeUrlPath(config, item.slug, getDefaultLocale(config))];
   try {
@@ -281,7 +284,7 @@ function rewriteEntry(item, mergedAt, config, cwd) {
     const alternate = config.counterpart_locale ? parseFrontmatter(readFileSync(file, 'utf8')).parsed?.alternate : null;
     if (alternate) urls.push(`${base}${config.counterpart_url_prefix || ''}/${alternate}`);
   } catch { /* page not on disk: measured without its counterpart */ }
-  return ledgerEntry({ kind: 'rewrite', slug: item.slug, urls, prUrl: item.pr_url, mergedAt });
+  return ledgerEntry({ kind, slug: item.slug, urls, prUrl: item.pr_url, mergedAt });
 }
 
 // Merged PRs the ledger does not know yet: published keywords (the main loop skips
@@ -317,7 +320,7 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
     if (!item.pr_url || !item.merged_at || skipped.has(item.pr_url)) continue;
     const entry = known.get(item.pr_url);
     if (entry) {
-      if (entry.kind === 'rewrite' && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
+      if ((entry.kind === 'rewrite' || entry.kind === 'revert') && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
       continue;
     }
     const { state, mergedAt } = await readPR(config.repo, item.pr_url, warnings);
@@ -438,6 +441,18 @@ export async function runCommand(opts) {
       report.measurement = await measure({ config, cwd, dryRun, warnings: report.warnings });
     } catch (e) {
       report.warnings.push(`Measurement failed: ${e.message}`);
+    }
+
+    // 1b1. Take back rewrites that measured worse twice (a PR the gate merges). Before the
+    // improve pick, so the page is in its cooldown and not rewritten again in this run.
+    if (!dryRun) {
+      try {
+        const reverts = await revertWorseRewrites({ config, cwd, warnings: report.warnings });
+        if (reverts.length) report.reverts = reverts;
+        for (const r of reverts) if (r.status === 'opened') report.prs.push({ url: r.pr_url, kind: 'revert', slug: r.slug });
+      } catch (e) {
+        report.warnings.push(`Revert step failed: ${e.message}`);
+      }
     }
 
     // 1b2. Rybbit weekly signals per landing page. Never stops the run; a failure shows up in the mail as a task.
