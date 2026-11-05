@@ -5,9 +5,9 @@ import { format } from './date.js';
 export const CHANGES_FILE = 'seo/changes.json';
 
 /**
- * Ledger of every merged seo PR: `{ id (PR url), kind: 'new' | 'rewrite', slug,
+ * Ledger of every merged seo PR: `{ id (PR url), kind: 'new' | 'rewrite' | 'revert', slug,
  * urls, pr_url, merged_at, baseline, readings: { d28, d56 }, revert_candidate,
- * unmapped? }`, plus `skipped: [{ id, reason }]` for merged PRs that were read and will
+ * revert? ({ status, date, pr_url?, reason? }, set by steps/revert.js), unmapped? }`, plus `skipped: [{ id, reason }]` for merged PRs that were read and will
  * never get an entry (no real merge date, too old), so they are not read again.
  * A corrupt file throws instead of reading as empty, so the next save cannot
  * wipe the history.
@@ -40,7 +40,7 @@ export function upsertEntry(data, entry) {
     data.entries.push(entry);
     return true;
   }
-  if (existing.kind === 'rewrite' && existing.urls.length === 1 && entry.urls.length > 1) existing.urls = entry.urls;
+  if ((existing.kind === 'rewrite' || existing.kind === 'revert') && existing.urls.length === 1 && entry.urls.length > 1) existing.urls = entry.urls;
   return false;
 }
 

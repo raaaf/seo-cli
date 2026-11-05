@@ -185,3 +185,33 @@ export async function getBlobShas({ repo, branch = 'main' }) {
   if (tree.truncated) throw new Error(`Git tree of ${repo}@${branch} is truncated (too many files); cannot compare blob SHAs`);
   return Object.fromEntries(tree.tree.filter(t => t.type === 'blob').map(t => [t.path, t.sha]));
 }
+
+// What a merged PR changed, for the revert step: the merge commit, the commit before it
+// (its first parent, the default branch before the merge) and the changed files with
+// their status (`added`, `modified`, `removed`, `renamed`). Null when the PR is not merged.
+export async function getMergedPRChanges({ repo, url }) {
+  const [owner, name] = repo.split('/');
+  const octokit = getOctokit(owner);
+  const pullNumber = Number(String(url).match(/\/pull\/(\d+)\/?$/)?.[1]);
+  if (!Number.isInteger(pullNumber)) throw new Error(`Not a pull request reference: ${url}`);
+  const { data: pr } = await octokit.pulls.get({ owner, repo: name, pull_number: pullNumber });
+  if (!pr.merged || !pr.merge_commit_sha) return null;
+  const { data: commit } = await octokit.git.getCommit({ owner, repo: name, commit_sha: pr.merge_commit_sha });
+  const parentSha = commit.parents?.[0]?.sha;
+  if (!parentSha) return null;
+  const files = await octokit.paginate(octokit.pulls.listFiles, { owner, repo: name, pull_number: pullNumber, per_page: 100 });
+  return { mergeSha: pr.merge_commit_sha, parentSha, files: files.map(f => ({ path: f.filename, status: f.status })) };
+}
+
+// A file at a ref: `{ sha, content }` (git blob sha, utf8 text), null when it does not exist there.
+export async function getFileAt({ repo, path, ref }) {
+  const [owner, name] = repo.split('/');
+  try {
+    const { data } = await getOctokit(owner).repos.getContent({ owner, repo: name, path, ref });
+    if (Array.isArray(data) || data.type !== 'file') return null;
+    return { sha: data.sha, content: Buffer.from(data.content ?? '', data.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8') };
+  } catch (e) {
+    if (e.status === 404) return null;
+    throw e;
+  }
+}

@@ -929,6 +929,17 @@ describe('shop mode', () => {
     expect(prepareImprove).toHaveBeenCalledWith(expect.objectContaining({ catalog, skipOverlays: false }), process.cwd());
   });
 
+  it('records a merged revert PR as kind revert, which is never a revert candidate itself', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue(null);
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'p', date: '2026-10-01', pr_url: PR(5), revert: true }] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: '2026-10-03T09:00:00Z' });
+
+    await run();
+
+    expect(loadChanges(dir).entries.map(e => [e.slug, e.kind])).toEqual([['p', 'revert']]);
+  });
+
   it('writes a ledger entry with the shop URL for a merged overlay PR', async () => {
     discover.mockResolvedValue({ version: 1, keywords: [] });
     prepareImprove.mockResolvedValue(null);
