@@ -82,6 +82,40 @@ afterEach(() => {
 });
 
 describe('improveCommand', () => {
+  describe('index assessments', () => {
+    const BASE = 'https://example.com';
+    const writeAlerts = (assessed_at = '2026-11-05') => {
+      mkdirSync(join(dir, 'seo'), { recursive: true });
+      writeFileSync(join(dir, 'seo/alerts.json'), JSON.stringify({ version: 1, open: [{
+        id: `deindexed:${BASE}/teamevent`, kind: 'deindexed',
+        diagnosis: { cause: 'clean', urls: [{ url: `${BASE}/teamevent`, findings: [] }] },
+        assessment: { assessed_at, likely_causes: ['Erfundene Prozentzahlen'], actions: [{ action: 'Zahlen streichen', why: 'Vertrauen' }] },
+      }] }));
+    };
+
+    beforeEach(() => {
+      mkdirSync(join(dir, 'content/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'content/landing/de/teamevent.md'), '---\nslug: teamevent\n---\nbody');
+      targetedPage.mockReturnValue({ slug: 'teamevent', kind: 'targeted', reason: 'targeted rewrite', queries: [], impressions: 0, clicks: 0, bestPosition: 0 });
+    });
+
+    it('rewrites an assessed page along its assessment instead of the GSC pick', async () => {
+      writeAlerts();
+      const prepared = await prepareImprove({ config: { ...CONFIG, base_url: BASE } }, dir);
+      expect(selectPage).not.toHaveBeenCalled();
+      expect(improvePage.mock.calls[0][0]).toMatchObject({ slug: 'teamevent', assessed: `deindexed:${BASE}/teamevent` });
+      expect(improvePage.mock.calls[0][0].diagnosis).toContain('- Zahlen streichen (Vertrauen)');
+      expect(prepared).toMatchObject({ slug: 'teamevent', assessed: `deindexed:${BASE}/teamevent` });
+    });
+
+    it('puts an assessed page whose rewrite fails on the cooldown', async () => {
+      writeAlerts();
+      validate.mockReturnValue({ ok: false, errors: ['too short'], warnings: [] });
+      expect(await prepareImprove({ config: { ...CONFIG, base_url: BASE } }, dir)).toBeNull();
+      expect(loadImprovements(dir).entries).toEqual([expect.objectContaining({ slug: 'teamevent', failed: true })]);
+    });
+  });
+
   describe('seasons', () => {
     const SEASON_CONFIG = (peak) => ({ ...CONFIG, seasons: [{ name: 'Muttertag', peak, pages: ['muttertag'] }] });
     const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(5, 10);

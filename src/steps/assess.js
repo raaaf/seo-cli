@@ -14,6 +14,7 @@ import { fillTemplate } from '../lib/template.js';
 import { MODELS } from '../lib/models.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
 import { contentOwnerFor } from '../lib/content-owners.js';
+import { counterpartPairs } from '../lib/assessed-rewrite.js';
 
 const ASSESS_PROMPT = readFileSync(new URL('../prompts/assess.md', import.meta.url), 'utf8');
 
@@ -26,6 +27,7 @@ const CHANGES_WINDOW_DAYS = 56;
 const MAX_CHANGES = 20;
 const MAX_LINKS = 80;
 const MAX_COMMITS = 30;
+const MAX_PAIRS = 150;
 const ASSET_EXT = /\.(?:css|js|mjs|map|json|xml|txt|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot|pdf|zip|mp4|webm|mp3|wav)$/i;
 
 // Structured outputs reject maxLength/maxItems: the limits live in the prompt and in cleanAssessment.
@@ -65,9 +67,12 @@ const OWNER_SCHEMA = {
   },
 };
 
-// Glued to the end of the actions line, so without an owner the prompt is unchanged.
+// Glued to the end of the actions line.
+// Without an owner a rewrite carries the actions out, so they must be things a rewrite can do.
+const AUTO_SCOPE = `\n\nThe actions are carried out automatically by a rewrite of this page's own text (title, description, body, FAQ) and by links to it from on-topic pages. Name only what that can do: trim what repeats a sibling page, remove or qualify figures without a source, add a part only this page has, sharpen title and description. Do not propose merging, redirecting or deleting pages, editing other pages, anything in Search Console, or waiting: the pipeline already waits for Google to recrawl changed pages before it assesses them.`;
+
 function audienceNote(owner) {
-  if (!owner) return '';
+  if (!owner) return AUTO_SCOPE;
   return `\n\nThe text of this page is written by ${owner}, not by the site owner. ${owner} edits it in the site's admin and cannot change templates, menus, links on other pages or settings. Give every action an \`audience\`: \`"content"\` when ${owner} can do it by editing this page's own text (title, description, details), \`"site"\` for everything else. Write \`content\` actions so they make sense to ${owner} when forwarded on their own, still addressed with "du".`;
 }
 
@@ -161,6 +166,18 @@ function recentCommits(cwd, today, gitLog) {
   }
 }
 
+// Default-locale page and its counterpart, one line per pair: the model took them for duplicates.
+function counterpartList(config, cwd) {
+  try {
+    const prefix = config.counterpart_url_prefix || '';
+    const lines = counterpartPairs(config, cwd).filter(p => p.counterpart)
+      .slice(0, MAX_PAIRS).map(p => `- /${p.slug} = ${prefix}/${p.counterpart}`);
+    return lines.join('\n') || 'none';
+  } catch {
+    return 'unknown';
+  }
+}
+
 function urlFacts(alert, entries) {
   return alert.diagnosis.urls.slice(0, MAX_FACT_URLS).map((u) => {
     const e = entries.find(x => x.url === u.url) ?? {};
@@ -230,6 +247,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
   const indexed = entries.filter(e => isIndexed(e)).length;
   const recent_changes = recentChanges(cwd, today, warnings);
   const recent_commits = recentCommits(cwd, today, gitLog);
+  const counterparts = counterpartList(config, cwd);
   const locale = defaultLocale(config);
   let homeLinks;
   let homeFailed = false;
@@ -264,6 +282,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         indexed_share: entries.length ? `${indexed} of ${entries.length}` : 'n/a',
         recent_changes,
         recent_commits,
+        counterparts,
         page_links,
         url_facts: urlFacts(alert, entries),
         engagement: engagementBlock(pageUrl, engagement),

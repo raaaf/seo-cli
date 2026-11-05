@@ -9,6 +9,10 @@ import { MODELS } from './models.js';
 // falls back to the API on every ClaudeCodeError.
 
 export const CLAUDE_TIMEOUT_MS = 8 * 60 * 1000;
+// claude -p answers a --json-schema call through a tool call whose wrapping counts against the
+// output limit: the judge's 304 and 352 token budgets failed there (events, 2026-11-05) while the
+// same calls passed on the API. The subscription bills no tokens, so a floor costs nothing.
+export const MIN_OUTPUT_TOKENS = 4096;
 
 // kind: 'limit' | 'auth' | 'timeout' | 'error'. `family` ('opus' | 'sonnet')
 // is set for a limit that only covers one model family.
@@ -111,7 +115,7 @@ export async function completeViaClaudeCode({
       HOME: workDir,
       CLAUDE_CONFIG_DIR: workDir,
       CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-      CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxTokens),
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(Math.max(maxTokens, MIN_OUTPUT_TOKENS)),
       // Same as the API path: no thinking for the judge. Thinking counts against
       // the output cap, and the link judge sizes that cap for the answer alone
       // (304 tokens for one candidate, exceeded on 2026-10-22).

@@ -33,6 +33,7 @@ import { track } from '../steps/track.js';
 import { measure } from '../steps/measure.js';
 import { assessAlerts } from '../steps/assess.js';
 import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
+import { pickAssessedPage, annotateFollowups } from '../lib/assessed-rewrite.js';
 
 function pLimit(concurrency) {
   const queue = [];
@@ -532,8 +533,9 @@ export async function runCommand(opts) {
       const rejected = settled.filter(s => s.status === 'rejected').map(s => s.reason);
       if (rejected.length) throw rejected.find(r => r instanceof BudgetExceededError) ?? rejected[0];
 
-      // Peaks are fixed dates, so a seasonal rewrite does not wait for an empty backlog (prepareImprove picks the page itself).
-      if (!dryRun && pickSeasonPage({ config, cwd })) {
+      // Peaks are fixed dates, and a page Google skips should not wait for an empty backlog either
+      // (prepareImprove picks the page itself, season first).
+      if (!dryRun && (pickSeasonPage({ config, cwd }) || pickAssessedPage({ config, cwd }))) {
         try {
           prepared = await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd);
         } catch (e) {
@@ -568,7 +570,7 @@ export async function runCommand(opts) {
         try {
           const url = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
           if (url) {
-            report.prs.push({ url, kind: 'improve', slug: prepared.slug });
+            report.prs.push({ url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
             refreshedSlug = prepared.slug;
           }
         } catch (e) {
@@ -580,6 +582,15 @@ export async function runCommand(opts) {
       // 6. Track
       console.log('');
       await track(config, cwd);
+    }
+
+    // The mail reports what happens with each assessment instead of handing out its actions.
+    if (report.assessments?.length) {
+      try {
+        annotateFollowups({ assessments: report.assessments, config, cwd, prs: report.prs });
+      } catch (e) {
+        report.warnings.push(`Assessment follow-up unknown: ${e.message}`);
+      }
     }
 
     const seasons = activeSeasons(config.seasons);

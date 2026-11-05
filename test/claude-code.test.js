@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 const spawn = vi.fn();
 vi.mock('child_process', () => ({ spawn: (...a) => spawn(...a) }));
 
-const { completeViaClaudeCode, ClaudeCodeError } = await import('../src/lib/claude-code.js');
+const { completeViaClaudeCode, ClaudeCodeError, MIN_OUTPUT_TOKENS } = await import('../src/lib/claude-code.js');
 const { MODELS } = await import('../src/lib/models.js');
 
 const OK = { type: 'result', subtype: 'success', is_error: false, result: ' hello ', total_cost_usd: 0.05 };
@@ -97,7 +97,7 @@ describe('claude-code-backend', () => {
     expect(spawned().args).not.toContain('--effort');
   });
 
-  it('hands the child exactly the allowlisted environment, with maxTokens as output cap', async () => {
+  it('hands the child exactly the allowlisted environment, with the output cap at least the floor', async () => {
     spawn.mockReturnValue(fakeChild(OK));
     await call();
     const { env } = spawned().opts;
@@ -105,8 +105,18 @@ describe('claude-code-backend', () => {
       'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_CODE_OAUTH_TOKEN',
       'CLAUDE_CONFIG_DIR', 'DISABLE_AUTOUPDATER', 'HOME', 'PATH',
     ]);
-    expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('1234');
+    expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('4096');
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok');
+  });
+
+  it('raises a small maxTokens to the floor, keeps a larger one', async () => {
+    spawn.mockReturnValue(fakeChild(OK));
+    await call({ model: MODELS.judge, maxTokens: 304 });
+    expect(spawned().opts.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe(String(MIN_OUTPUT_TOKENS));
+    spawn.mockClear();
+    spawn.mockReturnValue(fakeChild(OK));
+    await call({ model: MODELS.generate, maxTokens: 32000 });
+    expect(spawned().opts.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32000');
   });
 
   it('disables thinking only for the judge model, like the API path', async () => {

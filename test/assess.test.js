@@ -332,6 +332,20 @@ describe('assess', () => {
   });
 
   describe('prompt data', () => {
+    it('lists translation pairs and limits the actions to what a rewrite can do', async () => {
+      seed([deindexed('a')]);
+      const cfg = { ...CONFIG, locale: 'de', landing_path: 'content/landing/de/', counterpart_locale: 'en' };
+      mkdirSync(join(dir, 'content/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'content/landing/de/silvesterparty-planen.md'), '---\nslug: silvesterparty-planen\nalternate: new-years-party\n---\nbody');
+
+      await assess({ config: cfg, dryRun: true });
+
+      const prompt = complete.mock.calls[0][0].prompt;
+      expect(prompt).toContain('## Translations of the same page\n\n- /silvesterparty-planen = /new-years-party\n');
+      expect(prompt).toContain('carried out automatically by a rewrite');
+      expect(prompt).not.toContain('{{');
+    });
+
     it('keeps real commits beyond a run of seo state commits and fences links and commits', async () => {
       seed([deindexed('a')]);
       const lines = [...Array.from({ length: 40 }, (_, i) => `2026-10-0${i % 9 + 1} seo: state ${i}`), '2026-09-30 fix: noindex', '2026-09-29 feat: menu', '2026-09-28 chore: robots'];
