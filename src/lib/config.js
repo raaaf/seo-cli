@@ -45,6 +45,10 @@ function normalizeShopKeys(config) {
     if (config.reserved_slugs != null) warn('reserved_slugs must be a list, ignoring it');
     config.reserved_slugs = [];
   }
+  if (!isStringList(config.exclude_terms)) {
+    if (config.exclude_terms != null) warn('exclude_terms must be a list of strings, ignoring it');
+    config.exclude_terms = [];
+  }
   if (typeof config.catalog_url !== 'string' || !config.catalog_url.trim()) config.catalog_url = null;
   config.watch = { ...DEFAULTS.watch, ...(isPlainObject(config.watch) ? config.watch : {}) };
 }
@@ -128,6 +132,9 @@ export const DEFAULTS = {
   page_contract: null,
   // One-segment paths the site already serves; no landing page may take them.
   reserved_slugs: [],
+  // Topics the site does not offer (e.g. [webflow, wix]). A keyword naming one is skipped
+  // before scoring, from every source (GSC, Bing, seasons, greenfield).
+  exclude_terms: [],
   // Machine-readable product catalog (the fact source for contract projects). Null: no catalog.
   catalog_url: null,
   // Directories of per-product and per-category overlay files, e.g.

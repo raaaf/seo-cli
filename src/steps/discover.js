@@ -10,6 +10,7 @@ import { getExistingTitles, getExistingSlugs } from '../lib/landings.js';
 import { fillTemplate } from '../lib/template.js';
 import { icpBlock } from './generate.js';
 import { findTokenSetDuplicate } from '../lib/similarity.js';
+import { matchExcludedTerm } from '../lib/exclude-terms.js';
 import { competingPages, describeCompetitors } from '../lib/cannibalization.js';
 import { formatCatalog, pageRulesSection } from '../lib/catalog.js';
 import { readBingQueries, bingCandidates } from '../lib/signals/bing.js';
@@ -94,6 +95,15 @@ export async function discover(config, cwd = process.cwd(), { catalog = null } =
     }
   }
   if (markedDone > 0) console.log(chalk.gray(`  Marked ${markedDone} keyword(s) as done (files found locally)`));
+
+  // A term added to exclude_terms after a keyword was proposed takes that keyword off the backlog too.
+  for (const kw of data.keywords) {
+    const term = kw.status === KEYWORD_STATUS.PROPOSED && matchExcludedTerm(kw.keyword, config.exclude_terms);
+    if (term) {
+      console.log(chalk.gray(`  Excluded topic: "${kw.keyword}" names "${term}", taking it off the backlog`));
+      Object.assign(kw, { status: KEYWORD_STATUS.SKIP, note: `Excluded topic "${term}" (exclude_terms)` });
+    }
+  }
 
   // Same reason as in improve.js: on a domain property the sibling subdomains
   // are in the same result set. Unfiltered, they take the row limit and the
@@ -248,6 +258,20 @@ async function scoreAndSave({ candidates, config, data, existingSlugs, existingF
       continue;
     }
 
+    // A service the site does not offer, however much demand it has.
+    const excluded = matchExcludedTerm(row.keyword, config.exclude_terms);
+    if (excluded) {
+      console.log(chalk.gray(`  Excluded topic: "${row.keyword}" names "${excluded}", skipping`));
+      upsertKeyword(data, {
+        keyword: row.keyword,
+        status: KEYWORD_STATUS.SKIP,
+        score: 0,
+        note: `Excluded topic "${excluded}" (exclude_terms)`,
+        discovered_at: format(new Date()),
+      });
+      continue;
+    }
+
     // Word-order variants of something we already have or already proposed.
     const duplicate = findTokenSetDuplicate(row.keyword, [...knownKeywords, ...existingSlugs, ...existingFiles]);
     if (duplicate) {
@@ -380,6 +404,12 @@ async function discoverGreenfield({ config, data, existingSlugs, existingFiles =
 
     if (!isValidSlug(kw.target_slug)) {
       console.log(chalk.yellow(`  Skipping invalid slug from Claude: ${JSON.stringify(kw.target_slug)}`));
+      continue;
+    }
+
+    const excluded = matchExcludedTerm(kw.keyword, config.exclude_terms) || matchExcludedTerm(kw.target_slug, config.exclude_terms);
+    if (excluded) {
+      console.log(chalk.gray(`  Excluded topic: "${kw.keyword}" names "${excluded}", skipping`));
       continue;
     }
 
