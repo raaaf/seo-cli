@@ -317,8 +317,8 @@ describe('claude-budget', () => {
   it('books an interactive call at the model price, cache tokens included', async () => {
     stream.mockReturnValue(streamsTo(sonnet({ input_tokens: 1_000_000, output_tokens: 100_000, cache_creation_input_tokens: 1_000_000, cache_read_input_tokens: 1_000_000 })));
     await complete({ system: 's', prompt: 'p' });
-    // 2 + 1 (output) + 2.5 + 0.2
-    expect(budgetOnDisk().usd).toBeCloseTo(5.7, 6);
+    // 2 + 1 (output) + 2.5 + 0.1
+    expect(budgetOnDisk().usd).toBeCloseTo(5.6, 6);
     expect(budgetOnDisk().calls).toBe(1);
   });
 
