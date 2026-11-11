@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-const { pickAssessedPage, slugForUrl, counterpartPairs, annotateFollowups, assessmentDiagnosis } = await import('../src/lib/assessed-rewrite.js');
+const { pickAssessedPage, pickMergePage, slugForUrl, counterpartPairs, annotateFollowups, assessmentDiagnosis } = await import('../src/lib/assessed-rewrite.js');
 
 const BASE = 'https://events.example.de';
 const config = (extra = {}) => ({ locale: 'de', landing_path: 'content/landing/de/', counterpart_locale: 'en', base_url: BASE, ...extra });
@@ -87,6 +87,49 @@ describe('assessed rewrite', () => {
     const run = (skip) => pickAssessedPage({ config: config(), cwd: dir, today, improvements: { entries: [] }, alerts: { open: [alert('teamevent-organisieren'), later] }, skip });
     expect(run(['teamevent-organisieren'])).toMatchObject({ slug: 'silvesterparty-planen' });
     expect(run(['teamevent-organisieren', 'silvesterparty-planen'])).toBeNull();
+  });
+
+  describe('merge proposals', () => {
+    const merged = { slug: 'teamevent-organisieren', date: '2026-09-01', merged_at: '2026-09-02T10:00:00Z' };
+    const mergeAlert = (extra = {}) => alert('teamevent-organisieren', { assessment: assessment({ merge_into: 'silvesterparty-planen', ...extra }) });
+    const indexedEntries = [{ url: `${BASE}/silvesterparty-planen`, verdict: 'PASS' }];
+    const pickMerge = (open, { improvements = { entries: [merged] }, entries = indexedEntries, cfg = config(), skip = [] } = {}) =>
+      pickMergePage({ config: cfg, cwd: dir, today, improvements, alerts: { open }, entries, skip });
+
+    it('proposes folding a page a rewrite did not help into the indexed sibling the assessment names', () => {
+      expect(pickMerge([mergeAlert()])).toEqual({ slug: 'silvesterparty-planen', from: 'teamevent-organisieren', alert_id: `deindexed:${BASE}/teamevent-organisieren` });
+    });
+
+    it('waits for a merged rewrite before the assessment, and proposes each assessment once', () => {
+      expect(pickMerge([mergeAlert()], { improvements: { entries: [] } })).toBeNull();
+      expect(pickMerge([mergeAlert()], { improvements: { entries: [{ ...merged, merged_at: undefined }] } })).toBeNull();
+      expect(pickMerge([mergeAlert()], { improvements: { entries: [{ ...merged, date: '2026-11-06' }] } })).toBeNull();
+      expect(pickMerge([mergeAlert({ merge_proposed_at: '2026-11-12' })])).toBeNull();
+    });
+
+    it('needs an indexed sibling outside the cooldown, exclude_slugs and skip', () => {
+      expect(pickMerge([mergeAlert()], { entries: [{ url: `${BASE}/silvesterparty-planen`, verdict: 'NEUTRAL' }] })).toBeNull();
+      expect(pickMerge([mergeAlert()], { improvements: { entries: [merged, { slug: 'silvesterparty-planen', date: '2026-11-01' }] } })).toBeNull();
+      expect(pickMerge([mergeAlert()], { cfg: config({ exclude_slugs: ['teamevent-organisieren'] }) })).toBeNull();
+      expect(pickMerge([mergeAlert()], { skip: ['silvesterparty-planen'] })).toBeNull();
+      expect(pickMerge([mergeAlert({ merge_into: 'gibt-es-nicht' })])).toBeNull();
+      expect(pickMerge([mergeAlert({ content_owner: 'Alex' })])).toBeNull();
+    });
+
+    it('leaves such a page to the merge instead of rewriting it again', () => {
+      expect(pick([mergeAlert()], { entries: [merged] })).toBeNull();
+      // Without a rewrite before the assessment, the page is rewritten first.
+      expect(pick([mergeAlert()], { entries: [] })).toMatchObject({ slug: 'teamevent-organisieren' });
+    });
+
+    it('reports a merge proposal in the follow-up', () => {
+      const list = [{ alert_id: `deindexed:${BASE}/teamevent-organisieren` }];
+      annotateFollowups({
+        assessments: list, config: config(), cwd: dir, today: '2026-11-05', improvements: { entries: [] },
+        prs: [{ kind: 'merge', slug: 'silvesterparty-planen', from: ['teamevent-organisieren'], url: 'https://github.com/x/pull/3', assessed: `deindexed:${BASE}/teamevent-organisieren` }],
+      });
+      expect(list[0].followup).toEqual({ status: 'merge_proposed', slug: 'silvesterparty-planen', from: ['teamevent-organisieren'], pr_url: 'https://github.com/x/pull/3' });
+    });
   });
 
   it('puts causes and actions into the rewrite diagnosis', () => {

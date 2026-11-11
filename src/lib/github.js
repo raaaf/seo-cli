@@ -19,7 +19,7 @@ function getOctokit(owner) {
 }
 
 // Without a baseBranch the PR targets the repo's default branch, the one commitState writes to.
-export async function openPR({ repo, branch, title, body, baseBranch }) {
+export async function openPR({ repo, branch, title, body, baseBranch, draft = false }) {
   const [owner, name] = repo.split('/');
   const octokit = getOctokit(owner);
   baseBranch ??= await getDefaultBranch({ repo });
@@ -31,6 +31,7 @@ export async function openPR({ repo, branch, title, body, baseBranch }) {
     body,
     head: branch,
     base: baseBranch,
+    ...(draft ? { draft: true } : {}),
   });
 
   return res.data.html_url;

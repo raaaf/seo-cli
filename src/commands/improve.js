@@ -7,7 +7,8 @@ import { inboundLinks, MIN_INBOUND_LINKS } from '../lib/inbound-links.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
-import { isoWeek } from '../lib/date.js';
+import { isoWeek, format } from '../lib/date.js';
+import { loadAlerts, saveAlerts } from '../lib/watch.js';
 import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown } from '../lib/improvements.js';
 import { fetchPagePerformance, selectPage, improvePage, keywordFor, targetedPage } from '../steps/improve.js';
 import { validate } from '../steps/validate.js';
@@ -167,11 +168,12 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     slug: page.slug,
     ...(page.season ? { season: page.season } : {}),
     ...(page.assessed ? { assessed: page.assessed } : {}),
+    ...(opts.mergeAlert ? { mergeAlert: opts.mergeAlert, mergeFrom } : {}),
     files: [...files, ...inbound.files],
     record: { slug: page.slug, queries: page.queries.map(q => q.query) },
     commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
-    prTitle: `SEO: improve ${page.slug} (${week})`,
-    prBody: buildBody(page, before, readMetaFrom(finalMarkdown), {
+    prTitle: opts.mergeAlert ? `SEO: merge ${mergeFrom.join(', ')} into ${page.slug} (${week})` : `SEO: improve ${page.slug} (${week})`,
+    prBody: (opts.mergeAlert ? mergeProposalNote(page.slug, mergeFrom) : '') + buildBody(page, before, readMetaFrom(finalMarkdown), {
       factCheckError,
       factChecked: config.fact_check !== false,
       warnings: validate(finalMarkdown, keywordLike, validateOpts).warnings,
@@ -180,6 +182,12 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       newLinks: inbound.links,
     }),
   };
+}
+
+// Top of an automatic merge PR: it deletes and redirects live pages, so it waits for the owner.
+function mergeProposalNote(slug, mergeFrom) {
+  const pages = mergeFrom.map(n => `/${n}`).join(', ');
+  return `> **Wartet auf dein Okay.** Google zeigt ${pages} trotz Überarbeitung nicht in der Suche, und die Index-Bewertung nennt /${slug} als Seite mit demselben Thema. Dieser PR legt beide zusammen: ${pages} wird gelöscht und auf /${slug} weitergeleitet. Er bleibt als Entwurf offen, bis du zustimmst; schließt du ihn, wird diese Bewertung nicht noch einmal vorgeschlagen.\n\n`;
 }
 
 // A seasonal or assessed rewrite that ends without a PR takes the normal cooldown (a `failed` entry, as overlays do),
@@ -255,7 +263,8 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
 
   let prUrl;
   try {
-    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody });
+    // An automatic merge deletes and redirects live pages: a draft, which the gate never merges.
+    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody, draft: Boolean(prepared.mergeAlert) });
   } catch (e) {
     // Without a PR the branch is an orphan that would block this page for good.
     await deleteBranch({ repo: config.repo, branch }).catch(err => {
@@ -271,8 +280,19 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
   improvements.entries.at(-1).pr_url = prUrl;
   saveImprovements(improvements, cwd);
 
+  // Each assessment proposes its merge once, whatever the owner decides.
+  if (prepared.mergeAlert) markMergeProposed(prepared.mergeAlert, cwd);
+
   console.log(chalk.green(`  PR opened: ${prUrl}`));
   return prUrl;
+}
+
+function markMergeProposed(alertId, cwd) {
+  const state = loadAlerts(cwd, []);
+  const alert = state.open.find(a => a.id === alertId);
+  if (!alert?.assessment) return;
+  alert.assessment.merge_proposed_at = format(new Date());
+  saveAlerts(state, cwd);
 }
 
 /**

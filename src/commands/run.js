@@ -33,7 +33,7 @@ import { track } from '../steps/track.js';
 import { measure } from '../steps/measure.js';
 import { assessAlerts } from '../steps/assess.js';
 import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
-import { pickAssessedPage, annotateFollowups } from '../lib/assessed-rewrite.js';
+import { pickAssessedPage, pickMergePage, annotateFollowups } from '../lib/assessed-rewrite.js';
 import { revertWorseRewrites } from '../steps/revert.js';
 
 function pushPrepared(list, prepared) {
@@ -573,9 +573,26 @@ export async function runCommand(opts) {
       }
     }
 
+    // A page a rewrite did not get into the index, whose assessment names the indexed sibling it
+    // duplicates: one merge proposal per run, a draft PR that waits for the owner.
+    if (!dryRun && !catalogDown && config.merge_proposals !== false) {
+      const skip = touchedSlugs(preparedList);
+      const merge = pickMergePage({ config, cwd, skip });
+      if (merge) {
+        try {
+          pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: true, slug: merge.slug, mergeFrom: [merge.from], mergeAlert: merge.alert_id, skip }, cwd));
+        } catch (e) {
+          rethrowIfBudget(e);
+          const warning = `Merge proposal failed (${merge.from} into ${merge.slug}): ${e.message}`;
+          console.log(chalk.yellow(`\n${warning}`));
+          report.warnings.push(warning);
+        }
+      }
+    }
+
     // A season holds the rewrite slot for weeks (events: Weihnachtsfeier and Silvester through
     // December), so a page Google skips gets its own slot next to it instead of waiting.
-    if (!dryRun && config.assessed_rewrites !== false && preparedList.length > 0 && !preparedList.some(p => p.assessed)) {
+    if (!dryRun && config.assessed_rewrites !== false && preparedList.some(p => !p.mergeAlert) && !preparedList.some(p => p.assessed)) {
       const skip = touchedSlugs(preparedList);
       if (pickAssessedPage({ config, cwd, skip })) {
         try {
@@ -611,7 +628,9 @@ export async function runCommand(opts) {
         try {
           const url = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
           if (url) {
-            report.prs.push({ url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
+            report.prs.push(prepared.mergeAlert
+              ? { url, kind: 'merge', slug: prepared.slug, from: prepared.mergeFrom, assessed: prepared.mergeAlert }
+              : { url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
             if (prepared.season) refreshedSlug = prepared.slug;
           }
         } catch (e) {

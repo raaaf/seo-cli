@@ -3,6 +3,7 @@ import { parseFrontmatter } from './frontmatter.js';
 import { readLandingPages } from './landings.js';
 import { loadImprovements, slugsInCooldown, COOLDOWN_DAYS } from './improvements.js';
 import { loadAlerts } from './watch.js';
+import { loadIndexStatus, isIndexed } from './index-status.js';
 import { addDays } from './measure.js';
 import { format } from './date.js';
 
@@ -63,10 +64,17 @@ export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date
       if (!slug || blocked.has(slug)) continue;
       const rewrittenSince = (improvements.entries || []).some(e => e.slug === slug && !e.failed && e.date >= alert.assessment.assessed_at);
       if (rewrittenSince) continue;
+      // A rewrite already did not help and the assessment names the sibling it duplicates: that is a merge (pickMergePage).
+      if (alert.assessment.merge_into && (alert.assessment.merge_proposed_at || rewrittenBefore(improvements, slug, alert.assessment.assessed_at))) continue;
       return { slug, alert_id: alert.id, assessment: alert.assessment };
     }
   }
   return null;
+}
+
+// A merged rewrite of the page from before the given day.
+function rewrittenBefore(improvements, slug, day) {
+  return (improvements.entries || []).some(e => e.slug === slug && !e.failed && e.merged_at && e.date < day);
 }
 
 const ASSESSED_KINDS = new Set(['deindexed', 'site_not_indexed']);
@@ -77,6 +85,35 @@ function alertUrls(alert) {
   if (diagnosed.length) return diagnosed;
   const fromId = alert.id.slice(alert.id.indexOf(':') + 1);
   return /^https?:\/\//.test(fromId) ? [fromId] : [];
+}
+
+/**
+ * A page Google still skips after a rewrite, whose newer assessment names an indexed sibling it
+ * duplicates (`merge_into`), is proposed for a merge into that sibling: one PR that rewrites the
+ * sibling with what is worth keeping, deletes the page and redirects it. The PR opens as a draft
+ * and waits for the owner (deleting and redirecting a live page is the owner's call); each
+ * assessment proposes at most once (`merge_proposed_at`). Both pages must exist, neither may be
+ * in `exclude_slugs` or `skip`, the sibling must be indexed and outside the improve cooldown, and
+ * the page must have had a merged rewrite before the assessment. Oldest assessment first.
+ * Returns `{ slug, from, alert_id }` (slug = the page that stays) or null.
+ */
+export function pickMergePage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), entries = loadIndexStatus(cwd).entries, skip = [] }) {
+  const pairs = counterpartPairs(config, cwd);
+  const excluded = new Set([...(config.exclude_slugs || []), ...skip]);
+  const cooldown = new Set(slugsInCooldown(improvements, today));
+  const indexed = new Set((entries || []).filter(e => isIndexed(e)).map(e => trimSlash(e.url)));
+  const candidates = (alerts.open || [])
+    .filter(a => a.kind === 'deindexed' && a.diagnosis?.cause === 'clean' && a.assessment?.merge_into && !a.assessment.content_owner && !a.assessment.merge_proposed_at)
+    .sort((a, b) => String(a.assessment.assessed_at).localeCompare(String(b.assessment.assessed_at)));
+  for (const alert of candidates) {
+    const from = alertUrls(alert).map(u => slugForUrl(u, config, pairs)).find(Boolean);
+    const into = alert.assessment.merge_into;
+    if (!from || from === into || excluded.has(from) || excluded.has(into) || cooldown.has(into)) continue;
+    if (!pairs.some(p => p.slug === into) || !indexed.has(`${trimSlash(config.base_url)}/${into}`)) continue;
+    if (!rewrittenBefore(improvements, from, alert.assessment.assessed_at)) continue;
+    return { slug: into, from, alert_id: alert.id };
+  }
+  return null;
 }
 
 /** Diagnosis text for the improve prompt: the assessment's causes and actions as the brief. */
@@ -106,6 +143,8 @@ export function annotateFollowups({ assessments = [], config, cwd = process.cwd(
   for (const s of assessments) {
     if (s.content_owner) { s.followup = { status: 'owner' }; continue; }
     // A rewrite this run carried out for the alert itself (also one page of a site-wide alert).
+    const proposed = prs.find(p => p.kind === 'merge' && p.assessed === s.alert_id);
+    if (proposed) { s.followup = { status: 'merge_proposed', slug: proposed.slug, from: proposed.from, pr_url: proposed.url }; continue; }
     const carried = prs.find(p => p.kind === 'improve' && p.assessed === s.alert_id);
     if (carried) { s.followup = { status: 'rewritten', slug: carried.slug, pr_url: carried.url }; continue; }
     const url = s.alert_id.includes(':') ? s.alert_id.slice(s.alert_id.indexOf(':') + 1) : '';
