@@ -42,27 +42,41 @@ export function slugForUrl(url, config, pairs) {
 }
 
 /**
- * An open `deindexed` alert whose live fetch was clean and that has a content assessment
- * gets the assessment carried out as a rewrite of the page: no to-do for the owner. The page
- * must exist, sit outside the improve cooldown and `exclude_slugs`, and must not have been
- * rewritten since the assessment. Pages someone else writes (`content_owner`) are left to them.
+ * An open `deindexed` or `site_not_indexed` alert whose live fetch was clean and that has a
+ * content assessment gets the assessment carried out as a rewrite: no to-do for the owner. A
+ * `deindexed` alert names one page; a `site_not_indexed` alert names the URLs it diagnosed, and
+ * the first of them that qualifies is rewritten (one page per pick, the next one next time).
+ * The page must exist, sit outside the improve cooldown, `exclude_slugs` and `skip` (pages
+ * another PR of the same run touches), and must not have been rewritten since the assessment.
+ * Pages someone else writes (`content_owner`) are left to them. Oldest assessment first.
  * Returns `{ slug, alert_id, assessment }` or null.
  */
-export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []) }) {
+export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), skip = [] }) {
   const pairs = counterpartPairs(config, cwd);
-  const blocked = new Set([...slugsInCooldown(improvements, today), ...(config.exclude_slugs || [])]);
+  const blocked = new Set([...slugsInCooldown(improvements, today), ...(config.exclude_slugs || []), ...skip]);
   const candidates = (alerts.open || [])
-    .filter(a => a.kind === 'deindexed' && a.diagnosis?.cause === 'clean' && a.assessment?.actions?.length && !a.assessment.content_owner)
+    .filter(a => ASSESSED_KINDS.has(a.kind) && a.diagnosis?.cause === 'clean' && a.assessment?.actions?.length && !a.assessment.content_owner)
     .sort((a, b) => String(a.assessment.assessed_at).localeCompare(String(b.assessment.assessed_at)));
   for (const alert of candidates) {
-    const url = alert.diagnosis.urls?.[0]?.url ?? alert.id.slice(alert.id.indexOf(':') + 1);
-    const slug = slugForUrl(url, config, pairs);
-    if (!slug || blocked.has(slug)) continue;
-    const rewrittenSince = (improvements.entries || []).some(e => e.slug === slug && !e.failed && e.date >= alert.assessment.assessed_at);
-    if (rewrittenSince) continue;
-    return { slug, alert_id: alert.id, assessment: alert.assessment };
+    for (const url of alertUrls(alert)) {
+      const slug = slugForUrl(url, config, pairs);
+      if (!slug || blocked.has(slug)) continue;
+      const rewrittenSince = (improvements.entries || []).some(e => e.slug === slug && !e.failed && e.date >= alert.assessment.assessed_at);
+      if (rewrittenSince) continue;
+      return { slug, alert_id: alert.id, assessment: alert.assessment };
+    }
   }
   return null;
+}
+
+const ASSESSED_KINDS = new Set(['deindexed', 'site_not_indexed']);
+
+// The page URLs an alert stands for: the diagnosed URLs, else the URL in a `deindexed:<url>` id.
+function alertUrls(alert) {
+  const diagnosed = (alert.diagnosis?.urls || []).map(u => u?.url).filter(Boolean);
+  if (diagnosed.length) return diagnosed;
+  const fromId = alert.id.slice(alert.id.indexOf(':') + 1);
+  return /^https?:\/\//.test(fromId) ? [fromId] : [];
 }
 
 /** Diagnosis text for the improve prompt: the assessment's causes and actions as the brief. */
@@ -91,8 +105,11 @@ export function annotateFollowups({ assessments = [], config, cwd = process.cwd(
   let pairs = null;
   for (const s of assessments) {
     if (s.content_owner) { s.followup = { status: 'owner' }; continue; }
+    // A rewrite this run carried out for the alert itself (also one page of a site-wide alert).
+    const carried = prs.find(p => p.kind === 'improve' && p.assessed === s.alert_id);
+    if (carried) { s.followup = { status: 'rewritten', slug: carried.slug, pr_url: carried.url }; continue; }
     const url = s.alert_id.includes(':') ? s.alert_id.slice(s.alert_id.indexOf(':') + 1) : '';
-    // A site-wide alert has no single page to rewrite: the page rewrites of the other alerts are the answer.
+    // A site-wide alert with no page rewritten this run: its pages come up one per run.
     if (!/^https?:\/\//.test(url)) { s.followup = { status: 'site' }; continue; }
     pairs ??= counterpartPairs(config, cwd);
     const slug = slugForUrl(url, config, pairs);

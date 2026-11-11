@@ -15,14 +15,17 @@ import { STRICT_THRESHOLDS } from '../lib/seo-thresholds.js';
 const GENERATE_PROMPT = readFileSync(new URL('../prompts/generate.md', import.meta.url), 'utf8');
 const DEFAULT_STYLE = readFileSync(new URL('../prompts/style-default.md', import.meta.url), 'utf8');
 
+// Every project: a statistic (share or rate of a group, ratio, cited study) needs a source; validate.js enforces it.
+export const STATISTICS_RULE = 'A statistic (a share or rate of a group such as "70 Prozent der Gäste" or "jeder dritte", a ratio such as "8 von 10", or a cited study) needs a deep link to its source in the same paragraph or a `sources:` entry (a list of `url` and `title`). Without a real source, say it qualitatively. Never invent a statistic.';
+
 // Strict mode (`quality: strict`): no fixed section or FAQ counts, every figure sourced.
 export const SOURCES_RULE = 'Every sentence with a percentage or an amount in euros needs a deep link to its source in the same paragraph, or the frontmatter needs a `sources:` entry (a list of `url` and `title`) that covers it. Do not state a figure you cannot source. Never add numbers to reach a count.';
 
-// What a standard project's prompt says today, so its rendered prompt does not change.
+// Standard: fixed counts, at least five figures, statistics sourced.
 const STANDARD_RULES = {
   faq_count: '4–6',
   h2_rule: 'Exactly 4–5 H2 sections',
-  numbers_rule: 'Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)',
+  numbers_rule: `Include at least 5 concrete numbers/digits (prices, counts, durations, dates). ${STATISTICS_RULE}`,
 };
 const STRICT_RULES = {
   faq_count: `3–${STRICT_THRESHOLDS.faqMax}, only as many as there are real questions`,

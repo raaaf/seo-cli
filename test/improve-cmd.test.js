@@ -108,6 +108,23 @@ describe('improveCommand', () => {
       expect(prepared).toMatchObject({ slug: 'teamevent', assessed: `deindexed:${BASE}/teamevent` });
     });
 
+    it('assessedOnly passes over the season and the GSC pick, and returns null without an assessed page', async () => {
+      const seasonCfg = { ...CONFIG, base_url: BASE, seasons: [{ name: 'Muttertag', peak: new Date(Date.now() + 20 * 86400000).toISOString().slice(5, 10), pages: ['teamevent'] }] };
+      expect(await prepareImprove({ config: seasonCfg, assessedOnly: true }, dir)).toBeNull();
+      expect(fetchPagePerformance).not.toHaveBeenCalled();
+      expect(improvePage).not.toHaveBeenCalled();
+
+      writeAlerts();
+      const prepared = await prepareImprove({ config: seasonCfg, assessedOnly: true }, dir);
+      expect(prepared).toMatchObject({ slug: 'teamevent', assessed: `deindexed:${BASE}/teamevent` });
+      expect(prepared.season).toBeUndefined();
+    });
+
+    it('does not pick a page a sibling PR touches (skip)', async () => {
+      writeAlerts();
+      expect(await prepareImprove({ config: { ...CONFIG, base_url: BASE }, assessedOnly: true, skip: ['teamevent'] }, dir)).toBeNull();
+    });
+
     it('puts an assessed page whose rewrite fails on the cooldown', async () => {
       writeAlerts();
       validate.mockReturnValue({ ok: false, errors: ['too short'], warnings: [] });

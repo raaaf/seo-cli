@@ -198,6 +198,65 @@ describe('run-pipeline', () => {
       expect(createPRs.mock.calls[0][0].exclude).toEqual(['muttertag', 'ratgeber']);
     });
 
+    it('rewrites a page Google skips next to the seasonal page, in its own PR', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      CONFIG.base_url = 'https://demo.example';
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      for (const slug of ['muttertag', 'teamevent']) writeFileSync(join(dir, `resources/landing/de/${slug}.md`), `---\nslug: ${slug}\n---\nbody`);
+      seedState('alerts.json', { open: [{
+        id: 'deindexed:https://demo.example/teamevent', kind: 'deindexed',
+        diagnosis: { cause: 'clean', urls: [{ url: 'https://demo.example/teamevent' }] },
+        assessment: { assessed_at: '2026-11-01', likely_causes: ['x'], actions: [{ action: 'y' }] },
+      }] });
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove
+        .mockResolvedValueOnce({ slug: 'muttertag', season: 'Muttertag', files: [{ path: 'resources/landing/de/muttertag.md', content: 'x' }] })
+        .mockResolvedValueOnce({ slug: 'teamevent', assessed: 'deindexed:https://demo.example/teamevent', files: [{ path: 'resources/landing/de/teamevent.md', content: 'y' }] });
+      publishImprove.mockResolvedValueOnce('https://github.com/o/demo/pull/5').mockResolvedValueOnce('https://github.com/o/demo/pull/6');
+
+      try {
+        await run();
+      } finally {
+        delete CONFIG.base_url;
+      }
+
+      expect(prepareImprove).toHaveBeenCalledTimes(2);
+      expect(prepareImprove.mock.calls[1][0]).toMatchObject({ assessedOnly: true, skip: ['muttertag'] });
+      expect(createPRs.mock.calls[0][0].exclude).toEqual(['muttertag', 'teamevent']);
+      expect(report().prs).toEqual(expect.arrayContaining([
+        { url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'muttertag' },
+        { url: 'https://github.com/o/demo/pull/6', kind: 'improve', slug: 'teamevent', assessed: 'deindexed:https://demo.example/teamevent' },
+      ]));
+      expect(report().seasons[0].refreshed).toBe('muttertag');
+    });
+
+    it('takes no extra slot with assessed_rewrites: false', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      CONFIG.base_url = 'https://demo.example';
+      CONFIG.assessed_rewrites = false;
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      for (const slug of ['muttertag', 'teamevent']) writeFileSync(join(dir, `resources/landing/de/${slug}.md`), `---\nslug: ${slug}\n---\nbody`);
+      seedState('alerts.json', { open: [{
+        id: 'deindexed:https://demo.example/teamevent', kind: 'deindexed',
+        diagnosis: { cause: 'clean', urls: [{ url: 'https://demo.example/teamevent' }] },
+        assessment: { assessed_at: '2026-11-01', likely_causes: ['x'], actions: [{ action: 'y' }] },
+      }] });
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove.mockResolvedValue({ slug: 'muttertag', season: 'Muttertag', files: [] });
+      publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+      try {
+        await run();
+      } finally {
+        delete CONFIG.base_url;
+        delete CONFIG.assessed_rewrites;
+      }
+
+      expect(prepareImprove).toHaveBeenCalledTimes(1);
+    });
+
     it('does not improve in a generation week without a seasonal page', async () => {
       CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
       discover.mockResolvedValue(keywordsData());
