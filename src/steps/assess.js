@@ -14,7 +14,7 @@ import { fillTemplate } from '../lib/template.js';
 import { MODELS } from '../lib/models.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
 import { contentOwnerFor } from '../lib/content-owners.js';
-import { counterpartPairs } from '../lib/assessed-rewrite.js';
+import { counterpartPairs, slugForUrl } from '../lib/assessed-rewrite.js';
 
 const ASSESS_PROMPT = readFileSync(new URL('../prompts/assess.md', import.meta.url), 'utf8');
 
@@ -67,6 +67,30 @@ const OWNER_SCHEMA = {
   },
 };
 
+// A single deindexed page without an owner: the model may also name the sibling it duplicates.
+const MERGE_SCHEMA = {
+  ...ASSESS_SCHEMA,
+  properties: { ...ASSESS_SCHEMA.properties, merge_into: { type: ['string', 'null'] } },
+  required: [...ASSESS_SCHEMA.required, 'merge_into'],
+};
+
+const MERGE_NOTE = `\n- \`merge_into\`: when one other page of this site in the page links above answers the same search need so closely that a visitor would miss nothing if this page were folded into it (same occasion and audience, not merely a related topic, never the translation pair listed above), its path, for example \`/firmenfeier-planen\`. Otherwise null. This is not an action: merging is decided outside this assessment and only after a rewrite did not help.`;
+
+/**
+ * The default-locale slug `merge_into` names, or null: it must be another existing page of the
+ * default locale, neither this page nor its translation pair.
+ */
+export function mergeTarget(value, pageUrl, config, cwd) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const path = value.trim().replace(/^https?:\/\/[^/]+/, '').replace(/^\/+|\/+$/g, '');
+  if (!path) return null;
+  const pairs = counterpartPairs(config, cwd);
+  const own = slugForUrl(pageUrl, config, pairs);
+  const target = slugForUrl(`${trimSlash(config.base_url)}/${path}`, config, pairs);
+  // A counterpart URL maps to its default-locale page: naming the own translation lands on `own`.
+  return target && own && target !== own ? target : null;
+}
+
 // Glued to the end of the actions line.
 // Without an owner a rewrite carries the actions out, so they must be things a rewrite can do.
 const AUTO_SCOPE = `\n\nThe actions are carried out automatically by a rewrite of this page's own text (title, description, body, FAQ) and by links to it from on-topic pages. Name only what that can do: trim what repeats a sibling page, remove or qualify figures without a source, add a part only this page has, sharpen title and description. Do not propose merging, redirecting or deleting pages, editing other pages, anything in Search Console, or waiting: the pipeline already waits for Google to recrawl changed pages before it assesses them.`;
@@ -101,6 +125,9 @@ function cleanAssessment(parsed, today, owner = null) {
       .filter(a => a.action),
   };
 }
+
+// Only a single page can be folded into a sibling, and only a page the site owner writes.
+const mergeable = (alert, owner) => alert.kind === 'deindexed' && !owner;
 
 const hasNoText = (alert) => alert.diagnosis.codes?.includes('no_text') || alert.diagnosis.urls.some(u => u.findings.some(f => f.code === 'no_text'));
 
@@ -287,13 +314,17 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         url_facts: urlFacts(alert, entries),
         engagement: engagementBlock(pageUrl, engagement),
         page_text: stripHtml(page.html).split(/\s+/).slice(0, PAGE_WORDS).join(' '),
-        audience: audienceNote(owner),
+        audience: audienceNote(owner) + (mergeable(alert, owner) ? MERGE_NOTE : ''),
       });
       const parsed = await complete({
         system: 'You are an SEO analyst. You judge index coverage from data and say only what the data supports.',
-        prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: owner ? OWNER_SCHEMA : ASSESS_SCHEMA,
+        prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: owner ? OWNER_SCHEMA : mergeable(alert, owner) ? MERGE_SCHEMA : ASSESS_SCHEMA,
       });
       const assessment = cleanAssessment(parsed, today, owner);
+      if (mergeable(alert, owner)) {
+        const target = mergeTarget(parsed?.merge_into, pageUrl, config, cwd);
+        if (target) assessment.merge_into = target;
+      }
       if (!assessment.actions.length) throw new Error('model returned no actions');
       console.log(chalk.blue(`  Assessment ${alert.id}: ${assessment.likely_causes.join(' | ') || 'no causes named'}`));
       if (!dryRun) {

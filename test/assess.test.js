@@ -331,6 +331,45 @@ describe('assess', () => {
     });
   });
 
+  describe('merge_into', () => {
+    const cfg = { ...CONFIG, locale: 'de', landing_path: 'content/landing/de/', counterpart_locale: 'en' };
+    const write = (locale, slug, alternate) => {
+      mkdirSync(join(dir, `content/landing/${locale}`), { recursive: true });
+      writeFileSync(join(dir, `content/landing/${locale}/${slug}.md`), `---\nslug: ${slug}\n${alternate ? `alternate: ${alternate}\n` : ''}---\nbody`);
+    };
+    beforeEach(() => {
+      write('de', 'teamevent', 'team-event');
+      write('en', 'team-event', 'teamevent');
+      write('de', 'firmenfeier', null);
+    });
+
+    it('asks a deindexed page for the sibling it duplicates and stores a valid one as a slug', async () => {
+      seed([deindexed('teamevent')]);
+      complete.mockResolvedValue({ ...answer, merge_into: 'https://a.de/firmenfeier/' });
+      await assess({ config: cfg });
+      const call = complete.mock.calls[0][0];
+      expect(call.schema.required).toContain('merge_into');
+      expect(call.prompt).toContain('`merge_into`');
+      expect(saved()[0].assessment.merge_into).toBe('firmenfeier');
+    });
+
+    it('drops the page itself, its translation and unknown paths', async () => {
+      for (const value of ['/teamevent', '/team-event', '/gibt-es-nicht', null]) {
+        seed([deindexed('teamevent')]);
+        complete.mockResolvedValue({ ...answer, merge_into: value });
+        await assess({ config: cfg });
+        expect(saved()[0].assessment.merge_into).toBeUndefined();
+      }
+    });
+
+    it('does not ask a site-wide alert', async () => {
+      seed([site()]);
+      await assess({ config: cfg, dryRun: true });
+      expect(complete.mock.calls[0][0].schema.required).not.toContain('merge_into');
+      expect(complete.mock.calls[0][0].prompt).not.toContain('`merge_into`');
+    });
+  });
+
   describe('prompt data', () => {
     it('lists translation pairs and limits the actions to what a rewrite can do', async () => {
       seed([deindexed('a')]);

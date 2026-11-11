@@ -231,6 +231,39 @@ describe('run-pipeline', () => {
       expect(report().seasons[0].refreshed).toBe('muttertag');
     });
 
+    it('proposes a merge for a page a rewrite did not help, next to the seasonal rewrite', async () => {
+      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
+      CONFIG.base_url = 'https://demo.example';
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      for (const slug of ['muttertag', 'teamevent', 'firmenfeier']) writeFileSync(join(dir, `resources/landing/de/${slug}.md`), `---\nslug: ${slug}\n---\nbody`);
+      const id = 'deindexed:https://demo.example/teamevent';
+      seedState('alerts.json', { open: [{
+        id, kind: 'deindexed',
+        diagnosis: { cause: 'clean', urls: [{ url: 'https://demo.example/teamevent' }] },
+        assessment: { assessed_at: '2026-11-01', likely_causes: ['x'], actions: [{ action: 'y' }], merge_into: 'firmenfeier' },
+      }] });
+      seedState('improvements.json', { version: 1, entries: [{ slug: 'teamevent', date: '2026-09-01', merged_at: '2026-09-02T00:00:00Z', queries: [] }] });
+      seedState('index-status.json', { version: 1, entries: [{ url: 'https://demo.example/firmenfeier', verdict: 'PASS' }] });
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove
+        .mockResolvedValueOnce({ slug: 'muttertag', season: 'Muttertag', files: [{ path: 'resources/landing/de/muttertag.md', content: 'x' }] })
+        .mockResolvedValueOnce({ slug: 'firmenfeier', mergeAlert: id, mergeFrom: ['teamevent'], files: [{ path: 'resources/landing/de/firmenfeier.md', content: 'y' }, { path: 'resources/landing/de/teamevent.md', delete: true }] });
+      publishImprove.mockResolvedValueOnce('https://github.com/o/demo/pull/5').mockResolvedValueOnce('https://github.com/o/demo/pull/7');
+
+      try {
+        await run();
+      } finally {
+        delete CONFIG.base_url;
+      }
+
+      expect(prepareImprove).toHaveBeenCalledTimes(2);
+      expect(prepareImprove.mock.calls[1][0]).toMatchObject({ slug: 'firmenfeier', mergeFrom: ['teamevent'], mergeAlert: id, skip: ['muttertag'] });
+      expect(report().prs).toEqual(expect.arrayContaining([
+        { url: 'https://github.com/o/demo/pull/7', kind: 'merge', slug: 'firmenfeier', from: ['teamevent'], assessed: id },
+      ]));
+    });
+
     it('takes no extra slot with assessed_rewrites: false', async () => {
       CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(20).slice(5), pages: ['muttertag'] }];
       CONFIG.base_url = 'https://demo.example';

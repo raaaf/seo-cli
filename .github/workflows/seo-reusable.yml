@@ -297,7 +297,7 @@ jobs:
           gate_pr() {
             local PR_URL="$1"
             local PR_NUM="${PR_URL##*/}"
-            local STATUS CHECKS_STATUS CHECK_EXIT HEAD_REF VERIFY_EXIT VERIFIED_SHA FACT_BLOCKED=0
+            local STATUS CHECKS_STATUS CHECK_EXIT HEAD_REF VERIFY_EXIT VERIFIED_SHA FACT_BLOCKED=0 HOLD=false
 
             if ! [[ "$PR_NUM" =~ ^[0-9]+$ ]]; then
               echo "Refusing to gate: PR number is not numeric ('$PR_NUM')."
@@ -367,14 +367,21 @@ jobs:
             # Human review gate: skip the CI wait and the merge entirely. The
             # notify path still runs so the needs_review mail goes out.
             if [ "${REQUIRE_REVIEW}" = "true" ]; then
+              HOLD=true
               echo "require_review is set, leaving PR #$PR_NUM open for human review."
+            fi
+            # A draft (seo-cli opens automatic page merges as drafts: they delete and redirect
+            # live pages) waits for the owner like require_review.
+            if [ "$(gh pr view "$PR_NUM" --json isDraft -q .isDraft 2>/dev/null)" != "false" ]; then
+              HOLD=true
+              echo "PR #$PR_NUM is a draft (or its state is unknown), leaving it open for the owner."
             fi
 
             # Wait for the target repo's PR checks (e.g. Pest CI) before merging.
             # No branch protection is available on private/free-plan repos, so the
             # gate itself must not merge ahead of a slow test run.
             CHECKS_STATUS=""
-            if [ "$CHECK_EXIT" -eq 0 ] && [ "$FACT_BLOCKED" -eq 0 ] && [ "${REQUIRE_REVIEW}" != "true" ]; then
+            if [ "$CHECK_EXIT" -eq 0 ] && [ "$FACT_BLOCKED" -eq 0 ] && [ "$HOLD" != "true" ]; then
               POLL_INTERVAL=30
               MAX_WAIT=1500
               ELAPSED=0
@@ -461,7 +468,7 @@ jobs:
             if [ "$FACT_BLOCKED" -eq 1 ]; then
               STATUS=fact_blocked
               echo "Not merging PR #$PR_NUM: seo verify did not clear it."
-            elif [ "${REQUIRE_REVIEW}" = "true" ]; then
+            elif [ "$HOLD" = "true" ]; then
               STATUS=needs_review
             elif [ "$CHECK_EXIT" -eq 0 ]; then
               if [ "$CHECKS_STATUS" = "failed" ] || [ "$CHECKS_STATUS" = "timeout" ]; then
@@ -570,7 +577,7 @@ jobs:
             --argjson gates "$GATES" \
             --argjson extra "$EXTRA_WARNINGS" \
             '{repo:$repo, run_url:$run_url, status:$status, mode:$mode, alerts:$alerts,
-              prs: ($report.prs // [] | map({url, kind, slug, gate_status: ($gates[.url] // "unknown")})),
+              prs: ($report.prs // [] | map({url, kind, slug, from, gate_status: ($gates[.url] // "unknown")})),
               site: ($report.site // null),
               budget: ($report.budget // null),
               llm: ($report.llm // null),

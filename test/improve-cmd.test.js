@@ -522,6 +522,25 @@ describe('improve --slug', () => {
     expect(prepared.files.some(f => f.path.includes('keywords.json'))).toBe(false);
   });
 
+  it('opens an automatic merge as a draft that waits for the owner and marks the assessment proposed', async () => {
+    writeFileSync(join(dir, 'seo/alerts.json'), JSON.stringify({ version: 1, open: [{ id: 'deindexed:x/alt-a', kind: 'deindexed', assessment: { assessed_at: '2026-11-01', merge_into: 'preise' } }] }));
+    const prepared = await prepareImprove({ config: CONFIG, slug: 'preise', mergeFrom: ['alt-a', 'alt-b'], mergeAlert: 'deindexed:x/alt-a' });
+    expect(prepared).toMatchObject({ mergeAlert: 'deindexed:x/alt-a', mergeFrom: ['alt-a', 'alt-b'] });
+    expect(prepared.prTitle).toMatch(/^SEO: merge alt-a, alt-b into preise/);
+    expect(prepared.prBody).toMatch(/^> \*\*Wartet auf dein Okay\.\*\*/);
+
+    await publishImprove(prepared, { config: CONFIG, cwd: dir });
+
+    expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: true }));
+    const alert = JSON.parse(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).open[0];
+    expect(alert.assessment.merge_proposed_at).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('opens a manual merge as a normal PR', async () => {
+    await publishImprove(await prepareImprove({ config: CONFIG, slug: 'preise', mergeFrom: ['alt-a', 'alt-b'] }), { config: CONFIG, cwd: dir });
+    expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: false }));
+  });
+
   it('opens a plain rewrite PR without merge files when nothing is merged', async () => {
     targetedPage.mockReturnValue({ ...TARGET, mergeFrom: [] });
     const prepared = await prepareImprove({ config: CONFIG, slug: 'preise' });
