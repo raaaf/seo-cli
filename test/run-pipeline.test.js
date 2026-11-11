@@ -14,6 +14,7 @@ const validate = vi.fn();
 const createPRs = vi.fn();
 const prepareImprove = vi.fn();
 const publishImprove = vi.fn();
+const preparePrune = vi.fn();
 const track = vi.fn();
 const measure = vi.fn();
 const assessAlerts = vi.fn();
@@ -43,6 +44,7 @@ vi.mock('../src/steps/validate.js', () => ({ validate: (...a) => validate(...a) 
 vi.mock('../src/commands/improve.js', () => ({
   prepareImprove: (...a) => prepareImprove(...a),
   publishImprove: (...a) => publishImprove(...a),
+  preparePrune: (...a) => preparePrune(...a),
 }));
 vi.mock('../src/steps/review.js', () => ({
   reviewPage: (...a) => reviewPage(...a),
@@ -92,7 +94,7 @@ beforeEach(() => {
   saved = {};
   for (const k of REQUIRED) { saved[k] = process.env[k]; process.env[k] = 'x'; }
   reportPath = join(dir, 'report.json');
-  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, track, measure, assessAlerts, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
+  for (const fn of [discover, generatePage, generateCounterpart, validate, createPRs, prepareImprove, publishImprove, preparePrune, track, measure, assessAlerts, commitState, getPR, deleteBranch, reviewPage]) fn.mockReset();
   getLlmStats.mockReset();
   loadCatalog.mockReset();
   loadCatalog.mockResolvedValue(null);
@@ -261,6 +263,36 @@ describe('run-pipeline', () => {
       expect(prepareImprove.mock.calls[1][0]).toMatchObject({ slug: 'firmenfeier', mergeFrom: ['teamevent'], mergeAlert: id, skip: ['muttertag'] });
       expect(report().prs).toEqual(expect.arrayContaining([
         { url: 'https://github.com/o/demo/pull/7', kind: 'merge', slug: 'firmenfeier', from: ['teamevent'], assessed: id },
+      ]));
+    });
+
+    it('proposes removing a page two rewrites did not get indexed, without an LLM call', async () => {
+      CONFIG.base_url = 'https://demo.example';
+      mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+      writeFileSync(join(dir, 'resources/landing/de/teamevent.md'), '---\nslug: teamevent\nrelated_pages:\n  - firmenfeier\n---\nbody');
+      writeFileSync(join(dir, 'resources/landing/de/firmenfeier.md'), '---\nslug: firmenfeier\n---\nbody');
+      const id = 'deindexed:https://demo.example/teamevent';
+      seedState('alerts.json', { open: [{ id, kind: 'deindexed', since: '2026-06-01', diagnosis: { cause: 'clean', urls: [{ url: 'https://demo.example/teamevent' }] } }] });
+      seedState('improvements.json', { version: 1, entries: [
+        { slug: 'teamevent', date: '2026-05-01', merged_at: '2026-05-02T00:00:00Z', queries: [] },
+        { slug: 'teamevent', date: '2026-07-01', merged_at: '2026-07-02T00:00:00Z', queries: [] },
+      ] });
+      seedState('index-status.json', { version: 1, entries: [{ url: 'https://demo.example/firmenfeier', verdict: 'PASS' }] });
+      discover.mockResolvedValue(keywordsData());
+      createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+      prepareImprove.mockResolvedValue(null);
+      preparePrune.mockReturnValue({ slug: 'teamevent', into: 'firmenfeier', pruneAlert: id, files: [{ path: 'resources/landing/de/teamevent.md', delete: true }] });
+      publishImprove.mockResolvedValueOnce('https://github.com/o/demo/pull/9');
+
+      try {
+        await run();
+      } finally {
+        delete CONFIG.base_url;
+      }
+
+      expect(preparePrune).toHaveBeenCalledWith({ slug: 'teamevent', into: 'firmenfeier', alert_id: id }, expect.objectContaining({ cwd: expect.any(String) }));
+      expect(report().prs).toEqual(expect.arrayContaining([
+        { url: 'https://github.com/o/demo/pull/9', kind: 'prune', slug: 'teamevent', into: 'firmenfeier', assessed: id },
       ]));
     });
 

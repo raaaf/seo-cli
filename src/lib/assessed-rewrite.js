@@ -74,7 +74,50 @@ export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date
 
 // A merged rewrite of the page from before the given day.
 function rewrittenBefore(improvements, slug, day) {
-  return (improvements.entries || []).some(e => e.slug === slug && !e.failed && e.merged_at && e.date < day);
+  return (improvements.entries || []).some(e => e.slug === slug && !e.failed && !e.revert && !e.prune && e.merged_at && e.date < day);
+}
+
+export const PRUNE_REWRITES = 2;
+export const PRUNE_WAIT_DAYS = 60;
+
+/**
+ * A page Google still skips although it was rewritten twice, the last rewrite merged at least
+ * PRUNE_WAIT_DAYS ago, is proposed for removal: one PR that deletes it and redirects it to an
+ * indexed sibling (the assessment's `merge_into`, else the first indexed page of its
+ * `related_pages`). Like a merge it opens as a draft and waits for the owner; each alert proposes
+ * at most once (`prune_proposed_at` on the alert). Only `deindexed` alerts with cause `clean`, no
+ * `content_owner` and no merge still to propose; the page and the target must exist, neither may
+ * be in `exclude_slugs` or `skip`, and a page without an indexed target is left alone. Oldest
+ * alert first. Returns `{ slug, into, alert_id }` (slug = the page that goes) or null.
+ */
+export function pickPrunePage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), entries = loadIndexStatus(cwd).entries, skip = [] }) {
+  const pages = readLandingPages(config, cwd, defaultLocale(config));
+  const pairs = counterpartPairs(config, cwd);
+  const bySlug = new Map(pages.map(p => [p.slug, p]));
+  const excluded = new Set([...(config.exclude_slugs || []), ...skip]);
+  const indexed = new Set((entries || []).filter(e => isIndexed(e)).map(e => trimSlash(e.url)));
+  const isIndexedSlug = slug => indexed.has(`${trimSlash(config.base_url)}/${slug}`);
+  const cutoff = format(new Date(today.getTime() - PRUNE_WAIT_DAYS * 24 * 60 * 60 * 1000));
+  const candidates = (alerts.open || [])
+    .filter(a => a.kind === 'deindexed' && a.diagnosis?.cause === 'clean' && !a.prune_proposed_at && !a.assessment?.content_owner)
+    // A merge comes first: it keeps what is worth keeping, a removal does not.
+    .filter(a => !(a.assessment?.merge_into && !a.assessment.merge_proposed_at))
+    .sort((a, b) => String(a.since ?? '').localeCompare(String(b.since ?? '')));
+  for (const alert of candidates) {
+    const slug = alertUrls(alert).map(u => slugForUrl(u, config, pairs)).find(Boolean);
+    if (!slug || excluded.has(slug) || !bySlug.has(slug)) continue;
+    const rewrites = (improvements.entries || []).filter(e => e.slug === slug && !e.failed && !e.revert && !e.prune && e.merged_at);
+    if (rewrites.length < PRUNE_REWRITES) continue;
+    if (rewrites.map(e => e.merged_at).sort().at(-1) > cutoff) continue;
+    const related = parseFrontmatter(bySlug.get(slug).markdown).parsed?.related_pages;
+    const targets = [alert.assessment?.merge_into, ...(Array.isArray(related) ? related : [])]
+      .filter(t => typeof t === 'string')
+      .map(t => trimSlash(t.split(/[?#]/)[0]).split('/').pop());
+    const into = targets.find(t => t && t !== slug && bySlug.has(t) && !excluded.has(t) && isIndexedSlug(t));
+    if (!into) continue;
+    return { slug, into, alert_id: alert.id };
+  }
+  return null;
 }
 
 const ASSESSED_KINDS = new Set(['deindexed', 'site_not_indexed']);
@@ -145,6 +188,8 @@ export function annotateFollowups({ assessments = [], config, cwd = process.cwd(
     // A rewrite this run carried out for the alert itself (also one page of a site-wide alert).
     const proposed = prs.find(p => p.kind === 'merge' && p.assessed === s.alert_id);
     if (proposed) { s.followup = { status: 'merge_proposed', slug: proposed.slug, from: proposed.from, pr_url: proposed.url }; continue; }
+    const pruned = prs.find(p => p.kind === 'prune' && p.assessed === s.alert_id);
+    if (pruned) { s.followup = { status: 'prune_proposed', slug: pruned.slug, into: pruned.into, pr_url: pruned.url }; continue; }
     const carried = prs.find(p => p.kind === 'improve' && p.assessed === s.alert_id);
     if (carried) { s.followup = { status: 'rewritten', slug: carried.slug, pr_url: carried.url }; continue; }
     const url = s.alert_id.includes(':') ? s.alert_id.slice(s.alert_id.indexOf(':') + 1) : '';

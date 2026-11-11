@@ -20,7 +20,7 @@ import { prepareOverlay } from '../steps/overlay.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
 import { pickSeasonPage } from '../lib/seasons.js';
-import { pickAssessedPage, assessmentDiagnosis } from '../lib/assessed-rewrite.js';
+import { pickAssessedPage, assessmentDiagnosis, PRUNE_REWRITES, PRUNE_WAIT_DAYS } from '../lib/assessed-rewrite.js';
 
 /**
  * Selects the one existing page with the strongest case (or takes the one named
@@ -264,7 +264,7 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
   let prUrl;
   try {
     // An automatic merge deletes and redirects live pages: a draft, which the gate never merges.
-    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody, draft: Boolean(prepared.mergeAlert) });
+    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody, draft: Boolean(prepared.mergeAlert || prepared.pruneAlert) });
   } catch (e) {
     // Without a PR the branch is an orphan that would block this page for good.
     await deleteBranch({ repo: config.repo, branch }).catch(err => {
@@ -278,13 +278,56 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
   const improvements = loadImprovements(cwd);
   recordImprovement(improvements, prepared.record);
   improvements.entries.at(-1).pr_url = prUrl;
+  if (prepared.pruneAlert) improvements.entries.at(-1).prune = true;
   saveImprovements(improvements, cwd);
 
   // Each assessment proposes its merge once, whatever the owner decides.
   if (prepared.mergeAlert) markMergeProposed(prepared.mergeAlert, cwd);
+  // Each alert proposes its removal once.
+  if (prepared.pruneAlert) markPruneProposed(prepared.pruneAlert, cwd);
 
   console.log(chalk.green(`  PR opened: ${prUrl}`));
   return prUrl;
+}
+
+function markPruneProposed(alertId, cwd) {
+  const state = loadAlerts(cwd, []);
+  const alert = state.open.find(a => a.id === alertId);
+  if (!alert) return;
+  alert.prune_proposed_at = format(new Date());
+  saveAlerts(state, cwd);
+}
+
+/**
+ * The removal proposal for a page `pickPrunePage` chose: the page (and its counterpart) deleted
+ * and redirected to `into`, `related_pages` repointed, no rewrite and no LLM call. Returns the
+ * shape `publishImprove` takes, on `seo/prune/<slug>`.
+ */
+export function preparePrune({ slug, into, alert_id }, { config, cwd = process.cwd(), rewrites = PRUNE_REWRITES, waitDays = PRUNE_WAIT_DAYS }) {
+  const week = isoWeek();
+  const merge = buildMergeFiles({ survivor: into, mergeFrom: [slug], config, cwd });
+  const manual = merge.counterparts.filter(c => c.manualRedirect)
+    .map(c => `- Weiterleitung von \`/${merge.counterpartPrefix ? `${merge.counterpartPrefix}/` : ''}${c.slug}\` auf \`${c.to}\` von Hand anlegen.`);
+  const body = [
+    `> **Wartet auf dein Okay.** Google zeigt /${slug} nicht in der Suche, obwohl die Seite ${rewrites}-mal überarbeitet wurde und die letzte Überarbeitung mindestens ${waitDays} Tage live ist. Dieser PR nimmt sie heraus: /${slug} wird gelöscht und auf /${into} weitergeleitet, eine indexierte Seite mit verwandtem Thema. Er bleibt als Entwurf offen, bis du zustimmst; schließt du ihn, wird die Seite nicht noch einmal vorgeschlagen.`,
+    '',
+    '## Was sich ändert',
+    '',
+    ...merge.files.map(f => `- ${f.delete ? 'gelöscht' : 'geändert'}: \`${f.path}\``),
+    ...manual,
+    '',
+  ].join('\n');
+  return {
+    slug,
+    branch: `seo/prune/${slug}`,
+    pruneAlert: alert_id,
+    into,
+    files: merge.files,
+    record: { slug, queries: [] },
+    commitMessage: `seo: remove ${slug}, redirect to ${into} (${week})`,
+    prTitle: `SEO: remove ${slug}, redirect to ${into} (${week})`,
+    prBody: body,
+  };
 }
 
 function markMergeProposed(alertId, cwd) {
