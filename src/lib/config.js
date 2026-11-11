@@ -50,6 +50,7 @@ function normalizeShopKeys(config) {
     config.exclude_terms = [];
   }
   if (typeof config.catalog_url !== 'string' || !config.catalog_url.trim()) config.catalog_url = null;
+  if (typeof config.recipe_catalog_url !== 'string' || !config.recipe_catalog_url.trim()) config.recipe_catalog_url = null;
   config.watch = { ...DEFAULTS.watch, ...(isPlainObject(config.watch) ? config.watch : {}) };
 }
 
@@ -137,8 +138,11 @@ export const DEFAULTS = {
   exclude_terms: [],
   // Machine-readable product catalog (the fact source for contract projects). Null: no catalog.
   catalog_url: null,
+  // Machine-readable list of the published recipes of a recipe site (the fact source of recipe overlays). Null: none.
+  recipe_catalog_url: null,
   // Directories of per-product and per-category overlay files, e.g.
-  // { products: 'content/seo/products', categories: 'content/seo/categories' }. Null: no overlays.
+  // { products: 'content/seo/products', categories: 'content/seo/categories' }, and for a recipe site
+  // { recipes: 'backend/content/seo/recipes', recipe_path: '/rezept' } (recipe_path defaults to /rezept). Null: no overlays.
   overlays: null,
   // check_deploy: verify that merged pages and overlays are live (opt-in). ai_crawlers: robots.txt and live access of
   // AI search bots; structured_data: JSON-LD and on-page signals of landing pages (sitemap URLs without landing_path); ai_crawlers_ignore: bot tokens blocked on purpose.

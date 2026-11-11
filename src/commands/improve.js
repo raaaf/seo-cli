@@ -9,7 +9,7 @@ import { commitState } from '../lib/state.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
 import { isoWeek, format } from '../lib/date.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
-import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown } from '../lib/improvements.js';
+import { loadImprovements, saveImprovements, recordImprovement, slugsInCooldown, parseOverlayKey } from '../lib/improvements.js';
 import { fetchPagePerformance, selectPage, improvePage, keywordFor, targetedPage } from '../steps/improve.js';
 import { validate } from '../steps/validate.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
@@ -53,6 +53,18 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   // Next: a page Google skips although it is technically fine, rewritten along its content assessment.
   const assessed = targeted || seasonal ? null : pickAssessedPage({ config, cwd, skip: opts.skip ?? [] });
   if (assessedOnly && !assessed) return null;
+  // A recipe page keeps its text in an overlay file: the assessment becomes the overlay's brief.
+  if (assessed && parseOverlayKey(assessed.slug)) {
+    return prepareOverlay({
+      config, cwd, dryRun,
+      target: {
+        slug: assessed.slug, queries: [], impressions: 0, clicks: 0, bestPosition: null,
+        reason: `Index-Bewertung: Google zeigt die Seite nicht (${assessed.assessment.assessed_at})`,
+        diagnosis: assessmentDiagnosis(assessed.assessment),
+        assessed: assessed.alert_id,
+      },
+    });
+  }
   if (!targeted && !seasonal && !assessed) {
     try {
       rows = await fetchPagePerformance(config);

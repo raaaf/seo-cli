@@ -14,7 +14,7 @@ import { fillTemplate } from '../lib/template.js';
 import { MODELS } from '../lib/models.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
 import { contentOwnerFor } from '../lib/content-owners.js';
-import { counterpartPairs, slugForUrl } from '../lib/assessed-rewrite.js';
+import { counterpartPairs, slugForUrl, recipeKeyForUrl } from '../lib/assessed-rewrite.js';
 
 const ASSESS_PROMPT = readFileSync(new URL('../prompts/assess.md', import.meta.url), 'utf8');
 
@@ -95,8 +95,11 @@ export function mergeTarget(value, pageUrl, config, cwd) {
 // Without an owner a rewrite carries the actions out, so they must be things a rewrite can do.
 const AUTO_SCOPE = `\n\nThe actions are carried out automatically by a rewrite of this page's own text (title, description, body, FAQ) and by links to it from on-topic pages. Name only what that can do: trim what repeats a sibling page, remove or qualify figures without a source, add a part only this page has, sharpen title and description. Do not propose merging, redirecting or deleting pages, editing other pages, anything in Search Console, or waiting: the pipeline already waits for Google to recrawl changed pages before it assesses them.`;
 
-function audienceNote(owner) {
-  if (!owner) return AUTO_SCOPE;
+// A recipe page keeps its recipe; only the overlay around it is rewritten (src/steps/overlay.js).
+const RECIPE_SCOPE = `\n\nThe actions are carried out automatically by rewriting the text around this recipe: title, meta description, the introduction under the title and a "Gut zu wissen" section below the steps. Ingredients, amounts and steps stay as they are. Name only what that text can do: explain what makes this recipe and its steps work, set it apart from similar recipes on the site, sharpen title and description. Do not propose changing the recipe, adding figures it does not state, merging, redirecting or deleting pages, editing other pages, anything in Search Console, or waiting.`;
+
+function audienceNote(owner, recipe = false) {
+  if (!owner) return recipe ? RECIPE_SCOPE : AUTO_SCOPE;
   return `\n\nThe text of this page is written by ${owner}, not by the site owner. ${owner} edits it in the site's admin and cannot change templates, menus, links on other pages or settings. Give every action an \`audience\`: \`"content"\` when ${owner} can do it by editing this page's own text (title, description, details), \`"site"\` for everything else. Write \`content\` actions so they make sense to ${owner} when forwarded on their own, still addressed with "du".`;
 }
 
@@ -127,7 +130,8 @@ function cleanAssessment(parsed, today, owner = null) {
 }
 
 // Only a single page can be folded into a sibling, and only a page the site owner writes.
-const mergeable = (alert, owner) => alert.kind === 'deindexed' && !owner;
+// Recipe pages are never merged: a merge rewrites a landing page, and a recipe has none.
+const mergeable = (alert, owner, recipe = false) => alert.kind === 'deindexed' && !owner && !recipe;
 
 const hasNoText = (alert) => alert.diagnosis.codes?.includes('no_text') || alert.diagnosis.urls.some(u => u.findings.some(f => f.code === 'no_text'));
 
@@ -282,6 +286,7 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
   for (const alert of candidates) {
     try {
       const pageUrl = alert.diagnosis.urls[0].url;
+      const recipe = Boolean(recipeKeyForUrl(pageUrl, config));
       const owner = contentOwnerFor(config, alert.diagnosis.urls.map(u => u.url));
       const page = await fetch(pageUrl, { locale });
       const links = internalLinks(page.html, pageUrl);
@@ -314,14 +319,14 @@ export async function assessAlerts({ config, cwd = process.cwd(), dryRun = false
         url_facts: urlFacts(alert, entries),
         engagement: engagementBlock(pageUrl, engagement),
         page_text: stripHtml(page.html).split(/\s+/).slice(0, PAGE_WORDS).join(' '),
-        audience: audienceNote(owner) + (mergeable(alert, owner) ? MERGE_NOTE : ''),
+        audience: audienceNote(owner, recipe) + (mergeable(alert, owner, recipe) ? MERGE_NOTE : ''),
       });
       const parsed = await complete({
         system: 'You are an SEO analyst. You judge index coverage from data and say only what the data supports.',
-        prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: owner ? OWNER_SCHEMA : mergeable(alert, owner) ? MERGE_SCHEMA : ASSESS_SCHEMA,
+        prompt, model: MODELS.default, maxTokens: 2048, json: true, schema: owner ? OWNER_SCHEMA : mergeable(alert, owner, recipe) ? MERGE_SCHEMA : ASSESS_SCHEMA,
       });
       const assessment = cleanAssessment(parsed, today, owner);
-      if (mergeable(alert, owner)) {
+      if (mergeable(alert, owner, recipe)) {
         const target = mergeTarget(parsed?.merge_into, pageUrl, config, cwd);
         if (target) assessment.merge_into = target;
       }

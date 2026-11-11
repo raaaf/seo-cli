@@ -4,7 +4,8 @@ import { readLandingPages } from './landings.js';
 import { loadImprovements, slugsInCooldown, COOLDOWN_DAYS } from './improvements.js';
 import { loadAlerts } from './watch.js';
 import { loadIndexStatus, isIndexed } from './index-status.js';
-import { addDays } from './measure.js';
+import { addDays, urlToSlug } from './measure.js';
+import { parseOverlayKey } from './improvements.js';
 import { format } from './date.js';
 
 const trimSlash = u => String(u).replace(/\/+$/, '');
@@ -43,6 +44,17 @@ export function slugForUrl(url, config, pairs) {
 }
 
 /**
+ * The overlay key of a recipe page URL (`recipe:<slug>`, only with `overlays.recipes`): its text
+ * lives in an overlay file, so an assessment of it is carried out as an overlay. Shop overlays are
+ * not taken here, their pages belong to a content owner. Null for every other URL.
+ */
+export function recipeKeyForUrl(url, config) {
+  if (!config.overlays?.recipes) return null;
+  const key = urlToSlug(url, config, {})?.slug;
+  return parseOverlayKey(key)?.type === 'recipe' ? key : null;
+}
+
+/**
  * An open `deindexed` or `site_not_indexed` alert whose live fetch was clean and that has a
  * content assessment gets the assessment carried out as a rewrite: no to-do for the owner. A
  * `deindexed` alert names one page; a `site_not_indexed` alert names the URLs it diagnosed, and
@@ -60,7 +72,7 @@ export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date
     .sort((a, b) => String(a.assessment.assessed_at).localeCompare(String(b.assessment.assessed_at)));
   for (const alert of candidates) {
     for (const url of alertUrls(alert)) {
-      const slug = slugForUrl(url, config, pairs);
+      const slug = slugForUrl(url, config, pairs) ?? recipeKeyForUrl(url, config);
       if (!slug || blocked.has(slug)) continue;
       const rewrittenSince = (improvements.entries || []).some(e => e.slug === slug && !e.failed && e.date >= alert.assessment.assessed_at);
       if (rewrittenSince) continue;
@@ -196,7 +208,7 @@ export function annotateFollowups({ assessments = [], config, cwd = process.cwd(
     // A site-wide alert with no page rewritten this run: its pages come up one per run.
     if (!/^https?:\/\//.test(url)) { s.followup = { status: 'site' }; continue; }
     pairs ??= counterpartPairs(config, cwd);
-    const slug = slugForUrl(url, config, pairs);
+    const slug = slugForUrl(url, config, pairs) ?? recipeKeyForUrl(url, config);
     if (!slug) { s.followup = { status: 'unmapped' }; continue; }
     const pr = prs.find(p => p.kind === 'improve' && p.slug === slug);
     if (pr) { s.followup = { status: 'rewritten', slug, pr_url: pr.url }; continue; }

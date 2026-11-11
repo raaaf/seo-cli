@@ -39,6 +39,8 @@ export function getExistingSlugs(config, cwd, locale) {
  * uses it to spot a new page contradicting its own cluster.
  */
 export function getExistingPages(config, cwd = process.cwd(), locale) {
+  // A site without landing pages (only overlays, e.g. a recipe site) has none to list.
+  if (!config.landing_path) return [];
   const dir = join(cwd, localeLandingPath(config, locale ?? defaultLocale(config)));
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -187,6 +189,7 @@ export function buildMergeFiles({ survivor, mergeFrom, config, cwd = process.cwd
 
 /** Slug, title and markdown of every landing page of a locale on disk; empty without the directory. */
 export function readLandingPages(config, cwd = process.cwd(), locale = defaultLocale(config)) {
+  if (!config.landing_path) return [];
   const dir = join(cwd, localeLandingPath(config, locale));
   if (!existsSync(dir)) return [];
   return readdirSync(dir)

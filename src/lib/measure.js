@@ -50,11 +50,23 @@ export function normalizeUrl(url) {
 export function overlayUrl(config, key) {
   const { type, id } = parseOverlayKey(key);
   const base = String(config.base_url || '').replace(/\/+$/, '');
+  if (type === 'recipe') return `${base}${recipePath(config.overlays)}/${id}`;
   return type === 'product' ? `${base}/shop/${id}` : `${base}/shop?category=${id}`;
+}
+
+/** Path prefix of recipe pages (`overlays.recipe_path`, default /rezept), without a trailing slash. */
+export function recipePath(overlays) {
+  const raw = typeof overlays?.recipe_path === 'string' && overlays.recipe_path.trim() ? overlays.recipe_path.trim() : '/rezept';
+  return `/${raw.replace(/^\/+|\/+$/g, '')}`;
 }
 
 // Overlay key of a site path, only for the kinds the project configured.
 function pathToOverlayKey(path, overlays) {
+  if (overlays.recipes) {
+    const prefix = `${recipePath(overlays)}/`;
+    const id = path.startsWith(prefix) ? path.slice(prefix.length) : '';
+    if (id && !/[/?]/.test(id)) return overlayKey('recipe', id);
+  }
   const product = overlays.products && path.match(/^\/shop\/([^/?]+)$/);
   if (product) return overlayKey('product', product[1]);
   const category = overlays.categories && path.match(/^\/shop\?category=([^&]+)$/);

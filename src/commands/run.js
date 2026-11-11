@@ -42,7 +42,8 @@ function pushPrepared(list, prepared) {
 
 // Slugs of every page a prepared rewrite PR writes or deletes (rewrite, counterpart, merge, link edits).
 function touchedSlugs(preparedList) {
-  return preparedList.flatMap(p => (p.files ?? []).map(f => basename(f.path, '.md')));
+  // The overlay key too (recipe:<slug>): an overlay file is named after its page, not its key.
+  return preparedList.flatMap(p => [...(p.files ?? []).map(f => basename(f.path, '.md')), ...(parseOverlayKey(p.slug) ? [p.slug] : [])]);
 }
 
 function pLimit(concurrency) {

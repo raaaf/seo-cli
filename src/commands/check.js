@@ -7,6 +7,7 @@ import { parseFrontmatter } from '../lib/frontmatter.js';
 import { loadConfig, isStrict, defaultLocale, CONFIG_FILE } from '../lib/config.js';
 import { strictValidateOpts } from '../lib/landings.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
+import { loadRecipeCatalog } from '../lib/recipe-catalog.js';
 import { overlayKeyOfFile, parseOverlay, validateOverlay } from '../steps/overlay.js';
 
 function slugFromPath(filePath) {
@@ -60,6 +61,16 @@ export async function checkCommand(files, opts = {}) {
       process.exit(1);
     }
   }
+  // Recipe overlays are checked against the published recipe they describe.
+  let recipes = null;
+  if (config?.recipe_catalog_url) {
+    try {
+      recipes = await loadRecipeCatalog(config);
+    } catch (e) {
+      console.error(chalk.red(`seo check: ${e.message}`));
+      process.exit(1);
+    }
+  }
   const validateOpts = config ? contractOptions(config, catalog, cwd, defaultLocale(config)) : {};
 
   const results = [];
@@ -76,7 +87,7 @@ export async function checkCommand(files, opts = {}) {
       const { fields, error } = parseOverlay(markdown);
       const { errors, warnings } = error
         ? { errors: [error], warnings: [] }
-        : validateOverlay(fields, { key: overlay, contract: config.page_contract, catalog });
+        : validateOverlay(fields, { key: overlay, contract: config.page_contract, catalog, recipes });
       errors.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
       warnings.forEach(w => console.log(chalk.yellow(`    ⚠ ${w}`)));
       results.push({ file, ok: errors.length === 0, errors, warnings });
