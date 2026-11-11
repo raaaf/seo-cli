@@ -8,6 +8,7 @@ import { fillTemplate } from '../lib/template.js';
 import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { getExistingPages } from '../lib/landings.js';
 import { defaultLocale, isStrict } from '../lib/config.js';
+import { loadFacts, factsBlock } from '../lib/facts.js';
 import { loadStyleDoc } from './generate.js';
 
 const REVIEW_PROMPT = readFileSync(new URL('../prompts/review.md', import.meta.url), 'utf8');
@@ -46,6 +47,7 @@ export async function reviewPage(markdown, keyword, config, cwd = process.cwd(),
     today: format(new Date()),
     cluster_context: clusterContext(config, cwd, locale),
     product_facts: productFactsBlock(config, cwd),
+    facts: factsBlock(await loadFacts(config)),
     style_guide: loadStyleDoc(config, cwd),
   };
 

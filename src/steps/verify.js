@@ -4,6 +4,7 @@ import { assertBudget } from '../lib/budget.js';
 import { format } from '../lib/date.js';
 import { fillTemplate } from '../lib/template.js';
 import { defaultLocale } from '../lib/config.js';
+import { loadFacts, factsBlock } from '../lib/facts.js';
 import { runJsonCheck, parseFindings, applyFindings, productFactsBlock } from './review.js';
 
 const VERIFY_PROMPT = readFileSync(new URL('../prompts/verify.md', import.meta.url), 'utf8');
@@ -39,6 +40,7 @@ async function verifyRound(markdown, config, cwd, locale) {
     site_name: config.site_name || config.project || '',
     today: format(new Date()),
     product_facts: productFactsBlock(config, cwd),
+    facts: factsBlock(await loadFacts(config)),
   });
   const parsed = await runJsonCheck({
     system: 'You are an independent fact verifier. You recompute numbers and confirm claims against primary sources. You do not rewrite prose you cannot fault.',
