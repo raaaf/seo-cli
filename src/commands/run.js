@@ -27,13 +27,13 @@ import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { refreshBingQueries } from '../lib/signals/bing.js';
 import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
 import { reviewPage, unresolvedSeverity } from '../steps/review.js';
-import { prepareImprove, publishImprove } from './improve.js';
+import { prepareImprove, publishImprove, preparePrune } from './improve.js';
 import { createPRs } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 import { measure } from '../steps/measure.js';
 import { assessAlerts } from '../steps/assess.js';
 import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
-import { pickAssessedPage, pickMergePage, annotateFollowups } from '../lib/assessed-rewrite.js';
+import { pickAssessedPage, pickMergePage, pickPrunePage, annotateFollowups } from '../lib/assessed-rewrite.js';
 import { revertWorseRewrites } from '../steps/revert.js';
 
 function pushPrepared(list, prepared) {
@@ -326,7 +326,7 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
   }
 
   for (const item of improvements.entries) {
-    if (!item.pr_url || !item.merged_at || skipped.has(item.pr_url)) continue;
+    if (!item.pr_url || !item.merged_at || item.prune || skipped.has(item.pr_url)) continue;
     const entry = known.get(item.pr_url);
     if (entry) {
       if ((entry.kind === 'rewrite' || entry.kind === 'revert') && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
@@ -399,7 +399,8 @@ export async function reconcileState({ config, cwd, warnings }) {
     }
     if (state === 'merged') {
       entry.merged_at = mergedAt ?? format(new Date());
-      if (mergedAt && changes) upsertEntry(changes, rewriteEntry(entry, mergedAt, config, cwd));
+      // A removal deletes the page: nothing to measure.
+      if (mergedAt && changes && !entry.prune) upsertEntry(changes, rewriteEntry(entry, mergedAt, config, cwd));
       improvementsChanged = true;
     }
     kept.push(entry);
@@ -590,9 +591,24 @@ export async function runCommand(opts) {
       }
     }
 
+    // A page two rewrites did not get into the index: one removal proposal per run, a draft PR
+    // (delete and redirect to an indexed sibling) that waits for the owner. No LLM call.
+    if (!dryRun && !catalogDown && config.prune_proposals !== false) {
+      const prune = pickPrunePage({ config, cwd, skip: touchedSlugs(preparedList) });
+      if (prune) {
+        try {
+          pushPrepared(preparedList, preparePrune(prune, { config, cwd }));
+        } catch (e) {
+          const warning = `Removal proposal failed (${prune.slug}): ${e.message}`;
+          console.log(chalk.yellow(`\n${warning}`));
+          report.warnings.push(warning);
+        }
+      }
+    }
+
     // A season holds the rewrite slot for weeks (events: Weihnachtsfeier and Silvester through
     // December), so a page Google skips gets its own slot next to it instead of waiting.
-    if (!dryRun && config.assessed_rewrites !== false && preparedList.some(p => !p.mergeAlert) && !preparedList.some(p => p.assessed)) {
+    if (!dryRun && config.assessed_rewrites !== false && preparedList.some(p => !p.mergeAlert && !p.pruneAlert) && !preparedList.some(p => p.assessed)) {
       const skip = touchedSlugs(preparedList);
       if (pickAssessedPage({ config, cwd, skip })) {
         try {
@@ -630,7 +646,9 @@ export async function runCommand(opts) {
           if (url) {
             report.prs.push(prepared.mergeAlert
               ? { url, kind: 'merge', slug: prepared.slug, from: prepared.mergeFrom, assessed: prepared.mergeAlert }
-              : { url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
+              : prepared.pruneAlert
+                ? { url, kind: 'prune', slug: prepared.slug, into: prepared.into, assessed: prepared.pruneAlert }
+                : { url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
             if (prepared.season) refreshedSlug = prepared.slug;
           }
         } catch (e) {

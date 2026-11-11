@@ -15,7 +15,7 @@ vi.mock('../src/lib/catalog.js', async (orig) => ({ ...(await orig()), loadCatal
 vi.mock('../src/steps/discover.js', () => ({ discover: (...a) => discover(...a) }));
 vi.mock('../src/steps/measure.js', () => ({ measure: async () => ({ entries: 0, due: 0, measured: 0, changed: [] }) }));
 vi.mock('../src/steps/assess.js', () => ({ assessAlerts: async () => [] }));
-vi.mock('../src/commands/improve.js', () => ({ prepareImprove: async () => null, publishImprove: vi.fn() }));
+vi.mock('../src/commands/improve.js', () => ({ prepareImprove: async () => null, publishImprove: vi.fn(), preparePrune: vi.fn() }));
 vi.mock('../src/lib/state.js', () => ({ commitState: async () => [] }));
 vi.mock('../src/lib/github.js', () => ({ getPR: vi.fn(), deleteBranch: vi.fn() }));
 vi.mock('../src/lib/claude.js', () => ({ getLlmStats: () => ({ subscription_calls: 0, api_calls: 0, usd_equivalent: 0, fallbacks: [] }) }));

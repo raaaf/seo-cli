@@ -49,7 +49,7 @@ vi.mock('../src/lib/state.js', () => ({ commitState: (...a) => commitState(...a)
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
 const { BudgetExceededError } = await import('../src/lib/budget.js');
-const { improveCommand, prepareImprove, publishImprove } = await import('../src/commands/improve.js');
+const { improveCommand, prepareImprove, publishImprove, preparePrune } = await import('../src/commands/improve.js');
 const { loadImprovements } = await import('../src/lib/improvements.js');
 const { pickSeasonPage } = await import('../src/lib/seasons.js');
 
@@ -534,6 +534,25 @@ describe('improve --slug', () => {
     expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: true }));
     const alert = JSON.parse(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).open[0];
     expect(alert.assessment.merge_proposed_at).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('proposes a removal as a draft PR that deletes and redirects the page and marks the alert', async () => {
+    writeFileSync(join(dir, 'seo/alerts.json'), JSON.stringify({ version: 1, open: [{ id: 'deindexed:x/alt-a', kind: 'deindexed' }] }));
+    const prepared = preparePrune({ slug: 'alt-a', into: 'preise', alert_id: 'deindexed:x/alt-a' }, { config: CONFIG, cwd: dir });
+    const byPath = Object.fromEntries(prepared.files.map(f => [f.path, f]));
+
+    expect(prepared).toMatchObject({ slug: 'alt-a', into: 'preise', branch: 'seo/prune/alt-a', pruneAlert: 'deindexed:x/alt-a' });
+    expect(prepared.prTitle).toMatch(/^SEO: remove alt-a, redirect to preise/);
+    expect(prepared.prBody).toMatch(/^> \*\*Wartet auf dein Okay\.\*\*/);
+    expect(byPath['content/landing/de/alt-a.md'].delete).toBe(true);
+    expect(byPath['content/landing/de/preise.md']).toBeUndefined();
+    expect(JSON.parse(byPath['seo/redirects.json'].content)).toEqual({ old: 'preise', 'alt-a': 'preise' });
+
+    await publishImprove(prepared, { config: CONFIG, cwd: dir });
+
+    expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: true, branch: 'seo/prune/alt-a' }));
+    expect(JSON.parse(readFileSync(join(dir, 'seo/alerts.json'), 'utf8')).open[0].prune_proposed_at).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(JSON.parse(readFileSync(join(dir, 'seo/improvements.json'), 'utf8')).entries.at(-1)).toMatchObject({ slug: 'alt-a', prune: true });
   });
 
   it('opens a manual merge as a normal PR', async () => {

@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-const { pickAssessedPage, pickMergePage, slugForUrl, counterpartPairs, annotateFollowups, assessmentDiagnosis } = await import('../src/lib/assessed-rewrite.js');
+const { pickAssessedPage, pickMergePage, pickPrunePage, slugForUrl, counterpartPairs, annotateFollowups, assessmentDiagnosis } = await import('../src/lib/assessed-rewrite.js');
 
 const BASE = 'https://events.example.de';
 const config = (extra = {}) => ({ locale: 'de', landing_path: 'content/landing/de/', counterpart_locale: 'en', base_url: BASE, ...extra });
@@ -129,6 +129,56 @@ describe('assessed rewrite', () => {
         prs: [{ kind: 'merge', slug: 'silvesterparty-planen', from: ['teamevent-organisieren'], url: 'https://github.com/x/pull/3', assessed: `deindexed:${BASE}/teamevent-organisieren` }],
       });
       expect(list[0].followup).toEqual({ status: 'merge_proposed', slug: 'silvesterparty-planen', from: ['teamevent-organisieren'], pr_url: 'https://github.com/x/pull/3' });
+    });
+  });
+
+  describe('removal proposals', () => {
+    const rewrite = (date, merged_at) => ({ slug: 'teamevent-organisieren', date, merged_at });
+    const twice = { entries: [rewrite('2026-06-01', '2026-06-03T10:00:00Z'), rewrite('2026-08-20', '2026-08-25T10:00:00Z')] };
+    const indexedEntries = [{ url: `${BASE}/silvesterparty-planen`, verdict: 'PASS' }];
+    const pruneAlert = (extra = {}) => alert('teamevent-organisieren', { since: '2026-06-10', ...extra });
+    const withRelated = () => writeFileSync(join(dir, 'content/landing/de/teamevent-organisieren.md'),
+      '---\nslug: teamevent-organisieren\nalternate: team-event\nrelated_pages:\n  - /gibt-es-nicht\n  - /silvesterparty-planen\n---\nbody');
+    const pickPrune = (open, { improvements = twice, entries = indexedEntries, cfg = config(), skip = [] } = {}) =>
+      pickPrunePage({ config: cfg, cwd: dir, today, improvements, alerts: { open }, entries, skip });
+
+    it('proposes removing a page two rewrites did not get indexed, redirected to an indexed related page', () => {
+      withRelated();
+      expect(pickPrune([pruneAlert()])).toEqual({ slug: 'teamevent-organisieren', into: 'silvesterparty-planen', alert_id: `deindexed:${BASE}/teamevent-organisieren` });
+    });
+
+    it('prefers the sibling the assessment names, once its merge was proposed', () => {
+      expect(pickPrune([pruneAlert({ assessment: assessment({ merge_into: 'silvesterparty-planen', merge_proposed_at: '2026-10-01' }) })]))
+        .toMatchObject({ into: 'silvesterparty-planen' });
+      // A merge still to propose goes first.
+      expect(pickPrune([pruneAlert({ assessment: assessment({ merge_into: 'silvesterparty-planen' }) })])).toBeNull();
+    });
+
+    it('needs two merged rewrites, the last one 60 days old', () => {
+      withRelated();
+      expect(pickPrune([pruneAlert()], { improvements: { entries: [twice.entries[0]] } })).toBeNull();
+      expect(pickPrune([pruneAlert()], { improvements: { entries: [...twice.entries, rewrite('2026-10-01', '2026-10-02T10:00:00Z')] } })).toBeNull();
+      expect(pickPrune([pruneAlert()], { improvements: { entries: [twice.entries[0], { ...twice.entries[1], failed: true }] } })).toBeNull();
+      expect(pickPrune([pruneAlert()], { improvements: { entries: [twice.entries[0], { ...twice.entries[1], revert: true }] } })).toBeNull();
+    });
+
+    it('needs an indexed target and proposes each alert once', () => {
+      withRelated();
+      expect(pickPrune([pruneAlert()], { entries: [] })).toBeNull();
+      expect(pickPrune([pruneAlert({ prune_proposed_at: '2026-11-01' })])).toBeNull();
+      expect(pickPrune([pruneAlert({ diagnosis: { cause: 'technical', urls: [{ url: `${BASE}/teamevent-organisieren` }] } })])).toBeNull();
+      expect(pickPrune([pruneAlert()], { skip: ['silvesterparty-planen'] })).toBeNull();
+      expect(pickPrune([pruneAlert()], { cfg: config({ exclude_slugs: ['teamevent-organisieren'] }) })).toBeNull();
+      expect(pickPrune([pruneAlert({ assessment: assessment({ content_owner: 'Alex' }) })])).toBeNull();
+    });
+
+    it('reports a removal proposal in the follow-up', () => {
+      const list = [{ alert_id: `deindexed:${BASE}/teamevent-organisieren` }];
+      annotateFollowups({
+        assessments: list, config: config(), cwd: dir, today: '2026-11-05', improvements: { entries: [] },
+        prs: [{ kind: 'prune', slug: 'teamevent-organisieren', into: 'silvesterparty-planen', url: 'https://github.com/x/pull/4', assessed: `deindexed:${BASE}/teamevent-organisieren` }],
+      });
+      expect(list[0].followup).toEqual({ status: 'prune_proposed', slug: 'teamevent-organisieren', into: 'silvesterparty-planen', pr_url: 'https://github.com/x/pull/4' });
     });
   });
 
