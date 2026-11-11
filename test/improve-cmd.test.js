@@ -120,6 +120,23 @@ describe('improveCommand', () => {
       expect(prepared.season).toBeUndefined();
     });
 
+    it('hands an assessed recipe page (no landing pages) to the overlay with the assessment as brief', async () => {
+      mkdirSync(join(dir, 'seo'), { recursive: true });
+      writeFileSync(join(dir, 'seo/alerts.json'), JSON.stringify({ version: 1, open: [{
+        id: `deindexed:${BASE}/rezept/shakshuka`, kind: 'deindexed',
+        diagnosis: { cause: 'clean', urls: [{ url: `${BASE}/rezept/shakshuka`, findings: [] }] },
+        assessment: { assessed_at: '2026-11-05', likely_causes: ['Dünner Inhalt'], actions: [{ action: 'Rezept erklären' }] },
+      }] }));
+      prepareOverlay.mockResolvedValue({ slug: 'recipe:shakshuka' });
+      const recipeCfg = { project: 'topf', locale: 'de', locales: ['de'], repo: 'o/topf', base_url: BASE, overlays: { recipes: 'backend/content/seo/recipes' } };
+      expect(await prepareImprove({ config: recipeCfg, assessedOnly: true }, dir)).toEqual({ slug: 'recipe:shakshuka' });
+      const { target } = prepareOverlay.mock.calls[0][0];
+      expect(target).toMatchObject({ slug: 'recipe:shakshuka', assessed: `deindexed:${BASE}/rezept/shakshuka` });
+      expect(target.diagnosis).toContain('- Rezept erklären');
+      expect(improvePage).not.toHaveBeenCalled();
+      expect(fetchPagePerformance).not.toHaveBeenCalled();
+    });
+
     it('does not pick a page a sibling PR touches (skip)', async () => {
       writeAlerts();
       expect(await prepareImprove({ config: { ...CONFIG, base_url: BASE }, assessedOnly: true, skip: ['teamevent'] }, dir)).toBeNull();

@@ -143,6 +143,15 @@ describe('assess', () => {
     expect(prompt).toMatch(/<<<UNTRUSTED_PAGE_START>>>\s+Some page text\s+<<<UNTRUSTED_PAGE_END>>>/);
   });
 
+  it('scopes a recipe page to the text around the recipe and asks for no merge', async () => {
+    seed([deindexed('rezept/shakshuka')]);
+    await assess({ config: { ...CONFIG, overlays: { recipes: 'backend/content/seo/recipes' } } });
+    const { prompt, schema } = complete.mock.calls[0][0];
+    expect(prompt).toContain('Ingredients, amounts and steps stay as they are');
+    expect(prompt).not.toContain('merge_into');
+    expect(schema.properties.merge_into).toBeUndefined();
+  });
+
   it('puts changes merged within 56 days into the prompt and leaves older ones out', async () => {
     seed([deindexed('a')]);
     mkdirSync(join(dir, 'seo'), { recursive: true });
