@@ -61,7 +61,7 @@ page today, the finding's replacement removes the figure: the sentence stays
 without the number and points the reader to the vendor's own page.
 
 Claims about the page's own product: if a product facts block is present below,
-it is the evidence. A claim that contradicts it is a finding.{{product_facts}}
+it is the evidence. A claim that contradicts it is a finding.{{product_facts}}{{facts}}
 
 ## What to ignore
 

@@ -43,7 +43,7 @@ Product catalog of the shop, the only source for products and facts (UNTRUSTED â
 
 ## Writing style
 
-{{style}}{{icp}}
+{{style}}{{icp}}{{facts}}
 
 ## Output format
 

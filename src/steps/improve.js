@@ -10,6 +10,7 @@ import { format } from '../lib/date.js';
 import { defaultLocale, localeLandingPath, isStrict } from '../lib/config.js';
 import { getExistingSlugs, strictValidateOpts } from '../lib/landings.js';
 import { stripCodeFence, loadStyleDoc, icpBlock, SOURCES_RULE, STATISTICS_RULE } from './generate.js';
+import { loadFacts, factsBlock } from '../lib/facts.js';
 import { validate } from './validate.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
@@ -329,6 +330,7 @@ export async function improvePage(page, config, cwd = process.cwd(), validatorFe
     ...(isStrict(config) ? STRICT_RULES : STANDARD_RULES),
     style_guide: loadStyleDoc(config, cwd),
     icp: icpBlock(config, cwd),
+    facts: factsBlock(await loadFacts(config)),
     validator_feedback: validatorFeedback
       ? `The previous attempt failed validation. Fix these issues:\n${validatorFeedback.errors.map(e => `- ${e}`).join('\n')}`
       : '(first attempt — no prior feedback)',

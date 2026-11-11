@@ -89,7 +89,8 @@ describe('icp: prompts stay byte-identical without a file', () => {
     const tpl = readFileSync(new URL(`../src/prompts/${name}.md`, import.meta.url), 'utf8');
     expect(tpl.match(/\{\{icp\}\}/g)).toHaveLength(1);
     // Glued to non-whitespace and followed by a line break: an empty value changes nothing else.
-    expect(tpl).toMatch(/\S\{\{icp\}\}\n/);
+    // ({{facts}} may follow it: it is empty without facts_url as well.)
+    expect(tpl).toMatch(/\S\{\{icp\}\}(\{\{facts\}\})?\n/);
   });
 
   it('generate: the prompt with a file minus the block equals the prompt without a file', async () => {
