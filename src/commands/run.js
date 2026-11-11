@@ -36,6 +36,15 @@ import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
 import { pickAssessedPage, annotateFollowups } from '../lib/assessed-rewrite.js';
 import { revertWorseRewrites } from '../steps/revert.js';
 
+function pushPrepared(list, prepared) {
+  if (prepared) list.push(prepared);
+}
+
+// Slugs of every page a prepared rewrite PR writes or deletes (rewrite, counterpart, merge, link edits).
+function touchedSlugs(preparedList) {
+  return preparedList.flatMap(p => (p.files ?? []).map(f => basename(f.path, '.md')));
+}
+
 function pLimit(concurrency) {
   const queue = [];
   let active = 0;
@@ -511,7 +520,8 @@ export async function runCommand(opts) {
       report.warnings.push(warning);
     }
     const generatedPages = [];
-    let prepared = null;
+    // Rewrites of this run: the seasonal, assessed or GSC pick, plus at most one assessed page next to a season.
+    const preparedList = [];
     let refreshedSlug = null;
 
     if (toGenerate.length === 0) {
@@ -519,7 +529,7 @@ export async function runCommand(opts) {
       // week is better spent on the pages that already rank and get no clicks
       // than on a keyword invented to fill the slot.
       console.log(chalk.gray('\nNo keywords to generate — switching to improving an existing page.'));
-      if (!dryRun) prepared = await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd);
+      if (!dryRun) pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd));
     } else {
       console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
 
@@ -552,11 +562,27 @@ export async function runCommand(opts) {
       // (prepareImprove picks the page itself, season first).
       if (!dryRun && (pickSeasonPage({ config, cwd }) || pickAssessedPage({ config, cwd }))) {
         try {
-          prepared = await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd);
+          pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd));
         } catch (e) {
           // The generated pages must still get their PRs.
           rethrowIfBudget(e);
           const warning = `Seasonal rewrite failed: ${e.message}`;
+          console.log(chalk.yellow(`\n${warning}`));
+          report.warnings.push(warning);
+        }
+      }
+    }
+
+    // A season holds the rewrite slot for weeks (events: Weihnachtsfeier and Silvester through
+    // December), so a page Google skips gets its own slot next to it instead of waiting.
+    if (!dryRun && config.assessed_rewrites !== false && preparedList.length > 0 && !preparedList.some(p => p.assessed)) {
+      const skip = touchedSlugs(preparedList);
+      if (pickAssessedPage({ config, cwd, skip })) {
+        try {
+          pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: true, assessedOnly: true, skip }, cwd));
+        } catch (e) {
+          rethrowIfBudget(e);
+          const warning = `Assessed rewrite failed: ${e.message}`;
           console.log(chalk.yellow(`\n${warning}`));
           report.warnings.push(warning);
         }
@@ -575,18 +601,18 @@ export async function runCommand(opts) {
       // 5. One PR per keyword, one per rewrite
       if (generatedPages.length > 0) {
         // Sibling PRs branch from one checkout: the seasonal PR's files must not be edited by the new pages' inbound-link edits too.
-        const exclude = (prepared?.files ?? []).map(f => basename(f.path, '.md'));
+        const exclude = touchedSlugs(preparedList);
         const created = await createPRs({ generatedPages, keywordsData, config, cwd, exclude });
         report.prs.push(...created.prs.map(p => ({ url: p.url, kind: 'new', slug: p.slug })));
         report.warnings.push(...created.warnings);
         report.errors.push(...created.errors);
       }
-      if (prepared) {
+      for (const prepared of preparedList) {
         try {
           const url = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
           if (url) {
             report.prs.push({ url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
-            refreshedSlug = prepared.slug;
+            if (prepared.season) refreshedSlug = prepared.slug;
           }
         } catch (e) {
           console.error(chalk.red(`\nImprove PR failed: ${e.message}`));
@@ -615,7 +641,7 @@ export async function runCommand(opts) {
         name,
         peak,
         seeded: keywordsData.keywords.filter(k => k.season === name && !had.has(k.keyword) && k.status !== KEYWORD_STATUS.SKIP).length,
-        refreshed: prepared?.season === name ? refreshedSlug : null,
+        refreshed: preparedList.some(p => p.season === name) ? refreshedSlug : null,
       }));
     }
 

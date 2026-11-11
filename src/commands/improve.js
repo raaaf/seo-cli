@@ -25,7 +25,9 @@ import { pickAssessedPage, assessmentDiagnosis } from '../lib/assessed-rewrite.j
  * Selects the one existing page with the strongest case (or takes the one named
  * by `opts.slug`, optionally merging `opts.mergeFrom` into it), rewrites it, validates
  * and fact-checks it. Commits nothing and records no cooldown: that happens in
- * publishImprove, once the PR exists.
+ * publishImprove, once the PR exists. `opts.assessedOnly` takes only an assessed page (the extra
+ * slot of `seo run`), `opts.skip` names pages a sibling PR of the same run touches: neither picked
+ * nor edited for inbound links.
  *
  * Returns `{ slug, files, record, commitMessage, prTitle, prBody }`, or null when
  * nothing qualified, the rewrite was dropped or this is a dry run.
@@ -43,10 +45,13 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   // Overlays also need the performance rows, so they are fetched outside the targeted path.
   let rows = null;
   const targeted = Boolean(opts.slug);
+  // `assessedOnly`: the extra slot of `seo run` for a page Google skips, next to a seasonal rewrite.
+  const assessedOnly = !targeted && Boolean(opts.assessedOnly);
   // A page listed under an active season beats the Search Console pick; it needs no GSC rows.
-  const seasonal = targeted ? null : pickSeasonPage({ config, cwd });
+  const seasonal = targeted || assessedOnly ? null : pickSeasonPage({ config, cwd });
   // Next: a page Google skips although it is technically fine, rewritten along its content assessment.
-  const assessed = targeted || seasonal ? null : pickAssessedPage({ config, cwd });
+  const assessed = targeted || seasonal ? null : pickAssessedPage({ config, cwd, skip: opts.skip ?? [] });
+  if (assessedOnly && !assessed) return null;
   if (!targeted && !seasonal && !assessed) {
     try {
       rows = await fetchPagePerformance(config);
@@ -157,7 +162,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     ...(counterpart?.markdown ? [{ path: counterpart.filePath, content: counterpart.markdown }] : []),
     ...(merge ? merge.files : []),
   ];
-  const inbound = await inboundLinkEdits({ slug: page.slug, markdown: finalMarkdown, files, config, cwd });
+  const inbound = await inboundLinkEdits({ slug: page.slug, markdown: finalMarkdown, files, config, cwd, exclude: opts.skip ?? [] });
   return {
     slug: page.slug,
     ...(page.season ? { season: page.season } : {}),
@@ -188,10 +193,11 @@ function recordSeasonFailure(slug, cwd) {
 // A page with fewer than three inbound links from the other default-locale pages gets some, as
 // `related_pages` entries of on-topic pages. Pages already in the PR (rewrite, counterpart, merge
 // files) are never edited, and pages the merge deletes do not count as links. Never throws.
-async function inboundLinkEdits({ slug, markdown, files, config, cwd }) {
+async function inboundLinkEdits({ slug, markdown, files, config, cwd, exclude = [] }) {
   const none = { files: [], links: [] };
   if (config.inbound_links === false) return none;
-  const inPR = new Set(files.map(f => basename(f.path, '.md')));
+  // Pages of this PR and of a sibling PR of the same run (`exclude`) are never edited.
+  const inPR = new Set([...files.map(f => basename(f.path, '.md')), ...exclude]);
   try {
     const deleted = new Set(files.filter(f => f.delete).map(f => basename(f.path, '.md')));
     const pages = readLandingPages(config, cwd).filter(p => !deleted.has(p.slug));

@@ -52,7 +52,7 @@ describe('assessed rewrite', () => {
     expect(pick([later, alert('teamevent-organisieren')])).toMatchObject({ slug: 'teamevent-organisieren', alert_id: `deindexed:${BASE}/teamevent-organisieren` });
   });
 
-  it('skips alerts that are technical, unassessed, owned by someone else or site-wide', () => {
+  it('skips alerts that are technical, unassessed, owned by someone else, or site-wide without URLs', () => {
     expect(pick([alert('teamevent-organisieren', { diagnosis: { cause: 'technical', urls: [{ url: `${BASE}/teamevent-organisieren`, findings: [] }] } })])).toBeNull();
     expect(pick([alert('teamevent-organisieren', { assessment: undefined })])).toBeNull();
     expect(pick([alert('teamevent-organisieren', { assessment: assessment({ actions: [] }) })])).toBeNull();
@@ -68,6 +68,25 @@ describe('assessed rewrite', () => {
     expect(pick([old], { entries: [{ slug: 'teamevent-organisieren', date: '2026-08-10' }] })).toBeNull();
     // A failed attempt is no rewrite, but its cooldown still holds the page.
     expect(pick([old], { entries: [{ slug: 'teamevent-organisieren', date: '2026-08-10', failed: true }] })).toMatchObject({ slug: 'teamevent-organisieren' });
+  });
+
+  it('takes the first qualifying page of a site-wide alert, one per pick', () => {
+    const site = {
+      id: 'site_not_indexed', kind: 'site_not_indexed',
+      diagnosis: { cause: 'clean', urls: [`${BASE}/gibt-es-nicht`, `${BASE}/team-event`, `${BASE}/silvesterparty-planen`].map(url => ({ url, findings: [] })) },
+      assessment: assessment(),
+    };
+    // The unmapped URL is passed over, the counterpart URL maps to its default-locale page.
+    expect(pick([site])).toEqual({ slug: 'teamevent-organisieren', alert_id: 'site_not_indexed', assessment: site.assessment });
+    // Next time (the first page in its cooldown) the next page comes up.
+    expect(pick([site], { entries: [{ slug: 'teamevent-organisieren', date: '2026-11-12' }] })).toMatchObject({ slug: 'silvesterparty-planen' });
+  });
+
+  it('passes over pages a sibling PR of the same run touches', () => {
+    const later = alert('silvesterparty-planen', { assessment: assessment({ assessed_at: '2026-11-06' }) });
+    const run = (skip) => pickAssessedPage({ config: config(), cwd: dir, today, improvements: { entries: [] }, alerts: { open: [alert('teamevent-organisieren'), later] }, skip });
+    expect(run(['teamevent-organisieren'])).toMatchObject({ slug: 'silvesterparty-planen' });
+    expect(run(['teamevent-organisieren', 'silvesterparty-planen'])).toBeNull();
   });
 
   it('puts causes and actions into the rewrite diagnosis', () => {
@@ -97,5 +116,15 @@ describe('assessed rewrite', () => {
       { status: 'owner' },
       { status: 'unmapped' },
     ]);
+  });
+
+  it('marks a site-wide assessment rewritten when this run carried out one of its pages', () => {
+    const list = [{ alert_id: 'site_not_indexed' }];
+    annotateFollowups({
+      assessments: list, config: config(), cwd: dir, today: '2026-11-05',
+      prs: [{ kind: 'improve', slug: 'teamevent-organisieren', url: 'https://github.com/x/pull/2', assessed: 'site_not_indexed' }],
+      improvements: { entries: [] },
+    });
+    expect(list[0].followup).toEqual({ status: 'rewritten', slug: 'teamevent-organisieren', pr_url: 'https://github.com/x/pull/2' });
   });
 });

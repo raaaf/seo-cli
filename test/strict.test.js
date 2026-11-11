@@ -137,12 +137,12 @@ describe('strict prompts', () => {
     expect(prompt).not.toContain('4–6 entries');
   });
 
-  it('generate: standard keeps the fixed counts and asks for no sources', async () => {
+  it('generate: standard keeps the fixed counts and asks for sources only for statistics', async () => {
     const prompt = await generatePrompt(base);
     expect(prompt).toContain('- Exactly 4–5 H2 sections, each introduced');
-    expect(prompt).toContain('- Include at least 5 concrete numbers/digits (prices, percentages, counts, dates)\n');
+    expect(prompt).toContain('- Include at least 5 concrete numbers/digits (prices, counts, durations, dates). A statistic');
     expect(prompt).toContain('faq:           # 4–6 entries from people_also_ask');
-    expect(prompt).not.toContain('sources:');
+    expect(prompt).not.toContain('Every sentence with a percentage or an amount in euros');
   });
 
   it('improve: strict drops "existing structure" and requires sources', async () => {
@@ -151,10 +151,11 @@ describe('strict prompts', () => {
     expect(prompt).toContain('`sources:`');
   });
 
-  it('improve: standard keeps "existing structure" and asks for no sources', async () => {
+  it('improve: standard keeps "existing structure" and asks for sources only for statistics', async () => {
     const prompt = await improvePrompt(base);
     expect(prompt).toContain('- Keep the slug, the frontmatter schema and the existing structure.\n');
-    expect(prompt).not.toContain('sources:');
+    expect(prompt).toContain('- A statistic (a share or rate of a group');
+    expect(prompt).not.toContain('Every sentence with a percentage or an amount in euros');
   });
 });
 

@@ -106,6 +106,38 @@ function unsourcedNumberSentences(text) {
   return text.split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).filter(sentence => UNIT_NUMBER.test(sentence));
 }
 
+// A statistical claim: a share or rate of a group ("70 Prozent der Gäste", "jeder dritte"), a
+// ratio ("8 von 10") or a cited study. Google skipped events and topf-secret pages whose
+// assessments named exactly these invented figures, so they need a source on every project.
+// Advice and terms ("Puffer von 10 Prozent", "50 Prozent bei Start") are no statistic.
+const STATISTIC = new RegExp([
+  String.raw`\d\s*(?:%|Prozent\b)\s+(?:der|des|aller|deiner|eurer|ihrer|unserer|meiner|von)\b`,
+  String.raw`\d\s*(?:%|percent\b)\s+of\b`,
+  String.raw`\b\d+\s+von\s+\d+\b`,
+  String.raw`\b\d+\s+(?:in|out of)\s+\d+\b`,
+  String.raw`\bjede[rs]\s+(?:zweite|dritte|vierte|fünfte|zehnte)[rns]?\b`,
+  String.raw`\b(?:one|every)\s+in\s+(?:two|three|four|five|ten)\b`,
+  String.raw`\blaut\s+(?:einer\s+|der\s+|neuer\s+)?(?:Studie|Umfrage|Erhebung|Statistik|Untersuchung)\b`,
+  String.raw`\b(?:Studien|Umfragen|Untersuchungen)\s+(?:zeigen|belegen|ergeben)\b`,
+  String.raw`\baccording to (?:a |one |recent )?(?:study|survey|statistics)\b`,
+  String.raw`\b(?:studies|surveys) (?:show|suggest|find)\b`,
+].join('|'), 'i');
+
+/** Sentences of `text` that state a statistic, when `text` links nowhere. */
+export function unsourcedStatisticSentences(text) {
+  if (HAS_LINK.test(text)) return [];
+  return text.split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).filter(sentence => STATISTIC.test(sentence));
+}
+
+/** Body paragraphs, tldr and FAQ answers: the text a figure can hide in. */
+function figureParagraphs(parsed, body) {
+  return [
+    ...body.split(/\n\s*\n/),
+    ...(parsed.tldr ? [String(parsed.tldr)] : []),
+    ...(Array.isArray(parsed.faq) ? parsed.faq.map(f => String(f?.a ?? '')) : []),
+  ];
+}
+
 /**
  * Strict-mode rules (`quality: strict`). Pure: the other pages' bodies come in
  * through `otherPages` ([{ slug, body }]), already without the page's own slug
@@ -123,12 +155,7 @@ function strictErrors({ parsed, body, otherPages }) {
 
   const hasSources = Array.isArray(parsed.sources) && parsed.sources.length > 0;
   if (!hasSources) {
-    const paragraphsToCheck = [
-      ...body.split(/\n\s*\n/),
-      ...(parsed.tldr ? [String(parsed.tldr)] : []),
-      ...(Array.isArray(parsed.faq) ? parsed.faq.map(f => String(f?.a ?? '')) : []),
-    ];
-    for (const sentence of paragraphsToCheck.flatMap(unsourcedNumberSentences)) {
+    for (const sentence of figureParagraphs(parsed, body).flatMap(unsourcedNumberSentences)) {
       errors.push(`Unsourced number: add a link or a sources: entry for "${sentence.replace(/\s+/g, ' ').slice(0, 80)}"`);
     }
   }
@@ -260,6 +287,15 @@ export function validate(markdown, keyword, opts = {}) {
   if (!strict && !service && digitCount < 5) errors.push(`Too few digits in body: ${digitCount} (min 5 — include concrete numbers)`);
 
   if (strict) errors.push(...strictErrors({ parsed, body, otherPages }));
+
+  // Every project: a statistic needs a link in its paragraph or a `sources:` entry. Strict
+  // already reports the percent sentences as "Unsourced number", so those are not repeated.
+  if (!(Array.isArray(parsed.sources) && parsed.sources.length > 0)) {
+    for (const sentence of figureParagraphs(parsed, body).flatMap(unsourcedStatisticSentences)) {
+      if (strict && UNIT_NUMBER.test(sentence)) continue;
+      errors.push(`Unsourced statistic: add a source link or a sources: entry, or say it without the figure: "${sentence.replace(/\s+/g, ' ').slice(0, 80)}"`);
+    }
+  }
 
   errors.push(...tonalityErrors(markdown));
 

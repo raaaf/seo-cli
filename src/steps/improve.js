@@ -9,14 +9,14 @@ import { MODELS, GENERATE_MAX_TOKENS } from '../lib/models.js';
 import { format } from '../lib/date.js';
 import { defaultLocale, localeLandingPath, isStrict } from '../lib/config.js';
 import { getExistingSlugs, strictValidateOpts } from '../lib/landings.js';
-import { stripCodeFence, loadStyleDoc, icpBlock, SOURCES_RULE } from './generate.js';
+import { stripCodeFence, loadStyleDoc, icpBlock, SOURCES_RULE, STATISTICS_RULE } from './generate.js';
 import { validate } from './validate.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
 const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
 
-// What a standard project's prompt says today, so its rendered prompt does not change.
-const STANDARD_RULES = { structure_rule: ' and the existing structure', sources_rule: '' };
+// Standard: the existing structure stays, statistics need a source.
+const STANDARD_RULES = { structure_rule: ' and the existing structure', sources_rule: `\n- ${STATISTICS_RULE}` };
 // Strict: the structure may change (duplicate blocks have to go), figures need sources.
 const STRICT_RULES = { structure_rule: '', sources_rule: `\n- ${SOURCES_RULE} Add or extend \`sources:\` in the frontmatter.` };
 
