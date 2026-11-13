@@ -22,8 +22,8 @@ const safeKeyword = (kw) => String(kw ?? '').replace(/\r?\n/g, ' ').slice(0, 200
 /**
  * One PR per keyword, on seo/new/<slug of the default-locale page>, carrying all
  * locale files and the counterpart of that keyword. No state files: they go to
- * main through commitState. Each PR's url and the sitemap slugs to queue once it
- * merges are stored on the keyword entry.
+ * main through commitState. Each PR's url and its sitemap slugs (the URL paths of its
+ * change-ledger entry once it merges) are stored on the keyword entry.
  *
  * A failing PR never stops the others: its keyword goes back to `proposed`. An
  * existing branch (open PR for the same keyword) is a warning, any other
@@ -186,7 +186,7 @@ function buildPRBody(pages, sitemapSlugs, config, inboundLinks = []) {
   const seoRows = pages.map(p => `### \`${p.slug}\`\n| Check | Status |\n|---|---|\n${seoCheck(p, config)}`).join('\n\n');
 
   const sitemapNote = sitemapSlugs.length
-    ? `\n## Sitemap\n\nGoogle picks these up via the sitemap after deploy (the gate resubmits it):\n${sitemapSlugs.map(s => `- \`${s}\``).join('\n')}`
+    ? `\n## Sitemap\n\nGoogle picks these up via the sitemap after deploy:\n${sitemapSlugs.map(s => `- \`${s}\``).join('\n')}`
     : '';
 
   return `## New landing pages

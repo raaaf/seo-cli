@@ -341,8 +341,9 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
 /**
  * Brings keyword and improvement status in line with the real PR state before
  * anything new is proposed. Merged keyword PR: `published`. Closed without
- * merge: `rejected` (never proposed again). Open: unchanged. A merged improvement keeps its cooldown, a closed one
- * loses its entry so the page can be picked again.
+ * merge: `rejected` (never proposed again). Open: unchanged. A merged
+ * improvement keeps its cooldown, a closed one loses its entry so the page can
+ * be picked again.
  */
 export async function reconcileState({ config, cwd, warnings }) {
   const keywords = loadKeywords(cwd);
