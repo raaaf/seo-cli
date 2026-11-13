@@ -249,7 +249,7 @@ The machine state goes straight to `main` (commit message `seo: state (<reason>)
 | File | Description | Way |
 |---|---|---|
 | `seo/keywords.json` | Keyword backlog and status | state commit to `main` |
-| `seo/sitemap-pending.json` | Slugs queued for sitemap submission, added when a keyword's PR is merged | state commit to `main` |
+| `seo/sitemap-pending.json` | Retired, no longer written; deleted from the default branch on the next state commit | state commit to `main` |
 | `seo/improvements.json` | Which page was rewritten when, the queries behind it, its PR url and merge date | state commit to `main` |
 | `seo/changes.json` | Change ledger: every merged seo PR (new page or rewrite) with its merge date, baseline and the 28 and 56 day readings | state commit to `main` |
 | `seo/index-status.json` | Google index coverage per sitemap URL, rewritten daily by `seo watch`; `updated` moves only when an entry does, and an `unknown` entry (quota) never replaces the previous one | state commit to `main` |
@@ -276,7 +276,7 @@ Every keyword is its own PR on `seo/new/<slug>` (all locale files and the counte
 |---|---|
 | `proposed` | Scored, waiting for a PR (also after a failed PR) |
 | `pr_opened` | PR open, `pr_url` stored on the entry |
-| `published` | PR merged, its slugs are queued in `sitemap-pending.json` |
+| `published` | PR merged; the sitemap is resubmitted by the gate (`sitemap-pending.json` is retired) |
 | `rejected` | PR closed without merge, the keyword is not proposed again |
 
 A rewrite's cooldown entry is only written once its PR exists. A closed rewrite PR removes the entry, a merged one keeps it.

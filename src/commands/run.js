@@ -7,7 +7,6 @@ import {
 import { parseFrontmatter } from '../lib/frontmatter.js';
 import {
   loadKeywords, saveKeywords, getPending, newPagesThisMonth, KEYWORD_STATUS, releasePending,
-  loadSitemapPending, saveSitemapPending,
 } from '../lib/keywords.js';
 import { loadImprovements, saveImprovements, parseOverlayKey } from '../lib/improvements.js';
 import { overlayUrl } from '../lib/measure.js';
@@ -341,16 +340,13 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
 
 /**
  * Brings keyword and improvement status in line with the real PR state before
- * anything new is proposed. Merged keyword PR: `published`, its slugs go to
- * sitemap-pending.json. Closed without merge: `rejected` (never proposed
- * again). Open: unchanged. A merged improvement keeps its cooldown, a closed one
+ * anything new is proposed. Merged keyword PR: `published`. Closed without
+ * merge: `rejected` (never proposed again). Open: unchanged. A merged improvement keeps its cooldown, a closed one
  * loses its entry so the page can be picked again.
  */
 export async function reconcileState({ config, cwd, warnings }) {
   const keywords = loadKeywords(cwd);
-  const sitemap = loadSitemapPending(cwd);
   let keywordsChanged = false;
-  let sitemapChanged = false;
   let changes = null;
   try {
     changes = loadChanges(cwd);
@@ -371,9 +367,6 @@ export async function reconcileState({ config, cwd, warnings }) {
     if (kw.status !== KEYWORD_STATUS.PR_OPENED) continue;
     if (state === 'merged') {
       kw.status = KEYWORD_STATUS.PUBLISHED;
-      for (const slug of kw.sitemap_slugs ?? []) {
-        if (!sitemap.slugs.includes(slug)) { sitemap.slugs.push(slug); sitemapChanged = true; }
-      }
       // Only a real merge date makes a ledger entry; a merged PR without one goes through the backfill, which records it as skipped.
       if (mergedAt) {
         kw.published_at = mergedAt.slice(0, 10);
@@ -411,7 +404,6 @@ export async function reconcileState({ config, cwd, warnings }) {
   if (changes && await backfillLedger({ config, cwd, changes, keywords, improvements, warnings })) keywordsChanged = true;
 
   if (keywordsChanged) saveKeywords(keywords, cwd);
-  if (sitemapChanged) saveSitemapPending({ ...sitemap, updated: format(new Date()) }, cwd);
   if (improvementsChanged) saveImprovements(improvements, cwd);
   if (changes && JSON.stringify(changes) !== changesBefore) saveChanges(changes, cwd);
 }

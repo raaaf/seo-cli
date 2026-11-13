@@ -60,7 +60,7 @@ vi.mock('../src/steps/assess.js', () => ({ assessAlerts: (...a) => assessAlerts(
 vi.mock('../src/lib/config.js', async (orig) => ({ ...(await orig()), loadConfig: () => CONFIG }));
 
 const { runCommand } = await import('../src/commands/run.js');
-const { loadKeywords, loadSitemapPending } = await import('../src/lib/keywords.js');
+const { loadKeywords } = await import('../src/lib/keywords.js');
 const { loadImprovements } = await import('../src/lib/improvements.js');
 const { loadChanges } = await import('../src/lib/changes.js');
 const { makeCatalog } = await import('./helpers/catalog.js');
@@ -768,7 +768,7 @@ describe('run-reconcile', () => {
     prepareImprove.mockResolvedValue(null);
   });
 
-  it('publishes a merged keyword, rejects a closed one, leaves an open one, and queues sitemap slugs only for the merged one', async () => {
+  it('publishes a merged keyword, rejects a closed one, and leaves an open one', async () => {
     seedState('keywords.json', { version: 1, keywords: [kw('merged', 1), kw('closed', 2), kw('open', 3)] });
     getPR.mockImplementation(async ({ url }) => ({ state: { [PR(1)]: 'merged', [PR(2)]: 'closed', [PR(3)]: 'open' }[url], mergedAt: null }));
 
@@ -776,7 +776,6 @@ describe('run-reconcile', () => {
 
     const status = Object.fromEntries(loadKeywords(dir).keywords.map(k => [k.keyword, k.status]));
     expect(status).toEqual({ merged: 'published', closed: 'rejected', open: 'pr_opened' });
-    expect(loadSitemapPending(dir).slugs).toEqual(['/merged']);
   });
 
   it('deletes the branch of a keyword PR that was closed without merge, and only that one', async () => {

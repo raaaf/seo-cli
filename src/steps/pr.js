@@ -186,7 +186,7 @@ function buildPRBody(pages, sitemapSlugs, config, inboundLinks = []) {
   const seoRows = pages.map(p => `### \`${p.slug}\`\n| Check | Status |\n|---|---|\n${seoCheck(p, config)}`).join('\n\n');
 
   const sitemapNote = sitemapSlugs.length
-    ? `\n## Sitemap\n\nQueued in \`seo/sitemap-pending.json\` once this PR is merged, Google picks them up via the sitemap after deploy:\n${sitemapSlugs.map(s => `- \`${s}\``).join('\n')}`
+    ? `\n## Sitemap\n\nGoogle picks these up via the sitemap after deploy (the gate resubmits it):\n${sitemapSlugs.map(s => `- \`${s}\``).join('\n')}`
     : '';
 
   return `## New landing pages

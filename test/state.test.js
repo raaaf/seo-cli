@@ -119,4 +119,34 @@ describe('state: commitState', () => {
     expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'watch', files: ['seo/alerts.json'] })).toEqual(['seo/alerts.json']);
     expect((await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).sort()).toEqual(['seo/alerts.json', 'seo/keywords.json', 'seo/runs.jsonl']);
   });
+
+  it('deletes retired state files still on the default branch in a full commit', async () => {
+    write('seo/budget.json', '{}\n');
+    remoteTree({ 'seo/budget.json': gitBlobSha('{}\n'), 'seo/sitemap-pending.json': 'abc' });
+
+    const committed = await commitState({ cwd: dir, repo: 'o/r', reason: 'run' });
+
+    expect(committed).toEqual(['seo/sitemap-pending.json']);
+    expect(git.createTree).toHaveBeenCalledWith(expect.objectContaining({
+      tree: [expect.objectContaining({ path: 'seo/sitemap-pending.json', sha: null })],
+    }));
+    expect(git.updateRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds no delete when the retired file is absent remotely, and makes no commit when nothing else changed', async () => {
+    write('seo/budget.json', '{}\n');
+    remoteTree({ 'seo/budget.json': gitBlobSha('{}\n') });
+    expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual([]);
+    expect(git.createCommit).not.toHaveBeenCalled();
+
+    write('seo/budget.json', '{"a":1}\n');
+    expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'run' })).toEqual(['seo/budget.json']);
+  });
+
+  it('never deletes retired files in a `files` subset commit', async () => {
+    write('seo/alerts.json', '{}\n');
+    remoteTree({ 'seo/sitemap-pending.json': 'abc' });
+    expect(await commitState({ cwd: dir, repo: 'o/r', reason: 'watch', files: ['seo/alerts.json'] })).toEqual(['seo/alerts.json']);
+    expect(git.createTree.mock.calls[0][0].tree.map(t => t.path)).toEqual(['seo/alerts.json']);
+  });
 });

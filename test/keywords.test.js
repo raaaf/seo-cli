@@ -5,7 +5,6 @@ import { tmpdir } from 'os';
 import {
   KEYWORD_STATUS, SLUG_REGEX, isValidSlug,
   loadKeywords, saveKeywords, upsertKeyword, getPending, releasePending, newPagesThisMonth,
-  loadSitemapPending, saveSitemapPending,
   KEYWORDS_FILE,
 } from '../src/lib/keywords.js';
 
@@ -90,12 +89,6 @@ describe('keywords-store', () => {
     ];
     releasePending(kws);
     expect(kws.map(k => k.status)).toEqual(['proposed', 'pr_opened', 'validation_failed']);
-  });
-
-  it('sitemap-pending round-trips and is empty when absent', () => {
-    expect(loadSitemapPending(dir)).toEqual({ updated: null, slugs: [] });
-    saveSitemapPending({ updated: null, slugs: ['/a'] }, dir);
-    expect(loadSitemapPending(dir).slugs).toEqual(['/a']);
   });
 });
 

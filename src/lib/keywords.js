@@ -3,7 +3,6 @@ import { join, dirname } from 'path';
 import { format } from './date.js';
 
 export const KEYWORDS_FILE = 'seo/keywords.json';
-export const SITEMAP_PENDING_FILE = 'seo/sitemap-pending.json';
 
 export const KEYWORD_STATUS = {
   PROPOSED: 'proposed',
@@ -89,16 +88,4 @@ export function releasePending(keywords) {
   for (const kw of keywords) {
     if (kw.status === KEYWORD_STATUS.PR_OPENED && !kw.pr_url) kw.status = KEYWORD_STATUS.PROPOSED;
   }
-}
-
-export function loadSitemapPending(cwd = process.cwd()) {
-  const path = join(cwd, SITEMAP_PENDING_FILE);
-  if (!existsSync(path)) return { updated: null, slugs: [] };
-  try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return { updated: null, slugs: [] }; }
-}
-
-export function saveSitemapPending(data, cwd = process.cwd()) {
-  const path = join(cwd, SITEMAP_PENDING_FILE);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
