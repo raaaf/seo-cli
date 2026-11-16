@@ -9,10 +9,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // GSC data lags by about three days, a window is only complete after that.
 const GSC_LAG_DAYS = 3;
 export const MIN_TARGET_IMPRESSIONS = 100;
-const MIN_CONTROLS = 12;
+export const MIN_CONTROLS = 12;
 const MIN_CONTROL_IMPRESSIONS = 50;
 const CLICKS_METRIC_FROM = 20;
 const MAX_DISPERSION = 4;
+// Controls from outside the landing pages (blog, home, tools) are a looser comparison: the spread may be half as wide.
+const SITE_CONTROLS_MAX_DISPERSION = MAX_DISPERSION / 2;
 const MIN_EFFECT_POSITIVE = 1.3;
 const MAX_EFFECT_NEGATIVE = 0.7;
 const MAX_REVERT_EFFECT = 0.7;
@@ -160,7 +162,7 @@ export function selectControls(targetImpressions, candidates) {
  * mean, hence the strict limits. `target` and every control carry
  * `{ before, after }` with clicks and impressions.
  */
-export function verdictFor({ target, controls }) {
+export function verdictFor({ target, controls, siteControls = false }) {
   const insufficient = (reason) => ({ verdict: 'insufficient_data', reason });
   // Only the baseline gates: a page that collapses after the rewrite has to stay measurable.
   if (target.before.impressions < MIN_TARGET_IMPRESSIONS) return insufficient('volume');
@@ -171,7 +173,7 @@ export function verdictFor({ target, controls }) {
   const ratios = controls.map(ratio);
   const p10 = quantile(ratios, 0.1);
   const p90 = quantile(ratios, 0.9);
-  if (p90 / p10 > MAX_DISPERSION) return insufficient('dispersion');
+  if (p90 / p10 > (siteControls ? SITE_CONTROLS_MAX_DISPERSION : MAX_DISPERSION)) return insufficient('dispersion');
 
   const r = ratio(target);
   const median = quantile(ratios, 0.5);
@@ -193,8 +195,12 @@ export function isOverlap(entry, entries, window) {
     && other.urls.some(u => mine.has(normalizeUrl(u))));
 }
 
-/** Two negative readings and a strong effect in the second. Etappe C acts on it. */
+/**
+ * Two negative readings and a strong effect in the second. Etappe C acts on it. A reading measured
+ * against site controls (not landing pages) is a hint only and never makes a candidate.
+ */
 export function isRevertCandidate(entry) {
   const { d28, d56 } = entry.readings;
+  if (d28?.controls_source === 'site' || d56?.controls_source === 'site') return false;
   return d28?.verdict === 'negative' && d56?.verdict === 'negative' && d56.effect <= MAX_REVERT_EFFECT;
 }
