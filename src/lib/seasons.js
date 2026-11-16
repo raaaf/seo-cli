@@ -3,6 +3,7 @@ import { format } from './date.js';
 import { getExistingSlugs } from './landings.js';
 import { defaultLocale } from './config.js';
 import { loadImprovements, slugsInCooldown } from './improvements.js';
+import { takePicks } from './queue.js';
 
 export const DEFAULT_LEAD_WEEKS = 10;
 
@@ -67,22 +68,31 @@ export function activeSeasons(seasons, today = new Date()) {
 }
 
 /**
- * The page the improve step rewrites ahead of a season, or null. Pages listed under
- * active seasons that exist, are not excluded, are outside the normal cooldown and
- * were not rewritten in the last SEASON_REFRESH_DAYS days. Nearest peak first,
- * listed order within a season.
+ * Slugs a refresh (seasonal or stale) must not take: inside the normal cooldown, in `exclude_slugs`, or
+ * successfully rewritten in the last SEASON_REFRESH_DAYS days.
  */
-export function pickSeasonPage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd) }) {
-  const known = new Set(getExistingSlugs(config, cwd, defaultLocale(config)));
-  const blocked = new Set([
+export function refreshBlocked({ config, improvements, today = new Date() }) {
+  return new Set([
     ...slugsInCooldown(improvements, today),
     // A failed attempt (no PR) or a revert holds the page off for the normal cooldown only, it was never refreshed.
     ...slugsInCooldown({ entries: (improvements.entries || []).filter(e => !e.failed && !e.revert) }, today, SEASON_REFRESH_DAYS),
     ...(config.exclude_slugs || []),
   ]);
+}
+
+/**
+ * The page the improve step rewrites ahead of a season, or null. Pages listed under
+ * active seasons that exist, are not excluded, are outside the normal cooldown and
+ * were not rewritten in the last SEASON_REFRESH_DAYS days. Nearest peak first,
+ * listed order within a season. `skip` names pages another PR of the run touches;
+ * `limit` as in `takePicks`.
+ */
+export function pickSeasonPage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), skip = [], limit }) {
+  const known = new Set(getExistingSlugs(config, cwd, defaultLocale(config)));
+  const blocked = new Set([...refreshBlocked({ config, improvements, today }), ...skip]);
+  const picks = [];
   for (const season of activeSeasons(config.seasons, today)) {
-    const slug = season.pages.find(s => known.has(s) && !blocked.has(s));
-    if (slug) return { slug, season: season.name, peak: season.peak };
+    for (const slug of season.pages.filter(s => known.has(s) && !blocked.has(s))) picks.push({ slug, season: season.name, peak: season.peak });
   }
-  return null;
+  return takePicks(picks, limit);
 }
