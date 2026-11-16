@@ -75,7 +75,7 @@ export function refreshBlocked({ config, improvements, today = new Date() }) {
   return new Set([
     ...slugsInCooldown(improvements, today),
     // A failed attempt (no PR) or a revert holds the page off for the normal cooldown only, it was never refreshed.
-    ...slugsInCooldown({ entries: (improvements.entries || []).filter(e => !e.failed && !e.revert) }, today, SEASON_REFRESH_DAYS),
+    ...slugsInCooldown({ entries: (improvements.entries || []).filter(e => !e.failed && !e.revert && !e.closed_at) }, today, SEASON_REFRESH_DAYS),
     ...(config.exclude_slugs || []),
   ]);
 }

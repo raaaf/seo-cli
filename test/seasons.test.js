@@ -134,6 +134,13 @@ describe('pickSeasonPage', () => {
     expect(pick(config(), failed(60)).slug).toBe('weihnachten');
   });
 
+  it('holds a closed held draft off for 56 days from the closing day, not 300', () => {
+    page('weihnachten');
+    const closed = (ago) => ({ entries: [{ slug: 'weihnachten', date: daysAgo(100), held: true, pr_url: 'x', closed_at: daysAgo(ago) }] });
+    expect(pick(config(), closed(10))).toBeNull();
+    expect(pick(config(), closed(60)).slug).toBe('weihnachten');
+  });
+
   it('returns null when every listed page was rewritten recently', () => {
     page('weihnachten');
     expect(pick(config(), history(['weihnachten', 100]))).toBeNull();
