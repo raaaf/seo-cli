@@ -821,6 +821,34 @@ describe('the action queue', () => {
     ]));
   });
 
+  it('never runs an unplanned rewrite for a revert the cap deferred', async () => {
+    CONFIG.max_prs_per_run = 4;
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    revertWorseRewrites.mockResolvedValue([{ slug: 'a', type: 'revert', status: 'deferred', reason: 'cap' }]);
+
+    await run();
+
+    expect(prepareImprove).not.toHaveBeenCalled();
+  });
+
+  it('keeps a held draft the owner closed, with the closing day, and never re-reads it', async () => {
+    const PR = (n) => `https://github.com/o/demo/pull/${n}`;
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue(null);
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'p', date: '2026-10-01', pr_url: PR(5), held: true }, { slug: 'q', date: '2026-10-01', pr_url: PR(6) }] });
+    getPR.mockResolvedValue({ state: 'closed', mergedAt: null });
+
+    await run();
+    const entries = JSON.parse(readFileSync(join(dir, 'seo/improvements.json'), 'utf8')).entries;
+
+    expect(entries.map(e => e.slug)).toEqual(['p']);
+    expect(entries[0].closed_at).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(loadChanges(dir).entries).toEqual([]);
+    getPR.mockClear();
+    await run();
+    expect(getPR.mock.calls.filter(c => c[0].url === PR(5))).toHaveLength(0);
+  });
+
   it('lets the next entry the cap deferred move up when the one before yields nothing', async () => {
     CONFIG.max_prs_per_run = 1;
     CONFIG.seasons = SEASON();

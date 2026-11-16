@@ -50,7 +50,7 @@ export function revertCandidates({ changes, improvements }) {
     if (!REVERTIBLE.has(entry.kind) || !entry.revert_candidate || entry.revert) continue;
     const later = (improvements.entries || []).filter(e => e.slug === entry.slug && !e.failed && e.pr_url !== entry.pr_url && e.date > entry.merged_at);
     if (later.some(e => e.merged_at)) out.push({ entry, skip: 'superseded' });
-    else if (later.some(e => e.pr_url && !e.merged_at)) out.push({ entry, wait: 'open_rewrite' });
+    else if (later.some(e => e.pr_url && !e.merged_at && !e.closed_at)) out.push({ entry, wait: 'open_rewrite' });
     else out.push({ entry });
   }
   return out;

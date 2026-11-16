@@ -207,6 +207,8 @@ function engagementBlock(pageUrl, pages) {
   return `\n\nVisitor behaviour on the first URL (Rybbit, last 4 weeks): ${page.entries} entries (sessions starting on the page), bounce rate ${page.bounce_rate ?? 'n/a'}%, time on page ${page.time_on_page ?? 'n/a'} s. Visitors do arrive, so judge the content, not only the index state.`;
 }
 
+const KIND_LABEL = { new: 'new page', rewrite: 'rewrite', snippet: 'snippet test', revert: 'revert' };
+
 function recentChanges(cwd, today, warnings) {
   try {
     const since = addDays(today, -CHANGES_WINDOW_DAYS);
@@ -214,7 +216,7 @@ function recentChanges(cwd, today, warnings) {
       .filter(e => e.merged_at >= since && e.merged_at <= today)
       .sort((a, b) => b.merged_at.localeCompare(a.merged_at))
       .slice(0, MAX_CHANGES)
-      .map(e => `- ${e.merged_at}: ${e.kind === 'new' ? 'new page' : 'rewrite'} ${e.slug}${e.revert_candidate ? ' (performs worse than before, may need reverting)' : ''}`);
+      .map(e => `- ${e.merged_at}: ${KIND_LABEL[e.kind] ?? 'rewrite'} ${e.slug}${e.revert_candidate ? ' (performs worse than before, may need reverting)' : ''}`);
     return lines.join('\n') || 'none';
   } catch {
     warnings.push('Assessment: changes.json unreadable');

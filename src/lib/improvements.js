@@ -41,7 +41,7 @@ export function slugsInCooldown(data, today = new Date(), days = COOLDOWN_DAYS) 
   const cutoff = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
   return new Set(
     (data.entries || [])
-      .filter(e => e.date && new Date(e.date) >= cutoff)
+      .filter(e => (e.closed_at || e.date) && new Date(e.closed_at || e.date) >= cutoff)
       .map(e => e.slug),
   );
 }

@@ -456,11 +456,13 @@ export async function reconcileState({ config, cwd, warnings, submit = submitFix
   const handMerged = [];
   let improvementsChanged = false;
   for (const entry of improvements.entries) {
-    if (!entry.pr_url || entry.merged_at) { kept.push(entry); continue; }
+    if (!entry.pr_url || entry.merged_at || entry.closed_at) { kept.push(entry); continue; }
     const { state, mergedAt, headRef } = await readPR(config.repo, entry.pr_url, warnings);
     if (state === 'closed') {
       await dropClosedBranch(config.repo, headRef, warnings);
       improvementsChanged = true;
+      // A draft the owner closed stays, so the page keeps its cooldown and the same draft is not proposed again next week.
+      if (entry.held) { entry.closed_at = format(new Date()); kept.push(entry); }
       continue;
     }
     if (state === 'merged') {

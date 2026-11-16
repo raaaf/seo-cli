@@ -43,9 +43,14 @@ describe('cap', () => {
   });
 
   it('moves the next cap-deferred entry up when asked, in rank order', () => {
-    const result = build([c('refresh', 'r'), c('rewrite', 'w1'), c('rewrite', 'w2')], { config: { max_prs_per_run: 1 } });
+    const result = build([c('refresh', 'r'), c('rewrite', 'w1', { pick: {} }), c('rewrite', 'w2', { pick: {} })], { config: { max_prs_per_run: 1 } });
     expect(nextInLine(result.queue, 2).map(e => e.slug)).toEqual(['w1', 'w2']);
     expect(nextInLine(result.queue, 0)).toEqual([]);
+  });
+
+  it('never moves up a cap-deferred revert, which has no pick to run', () => {
+    const queue = [{ type: 'revert', slug: 'x', status: 'deferred', reason: 'cap' }, { ...c('rewrite', 'w', { pick: { kind: 'gsc' } }), status: 'deferred', reason: 'cap' }];
+    expect(nextInLine(queue, 5).map(e => e.slug)).toEqual(['w']);
   });
 });
 
@@ -130,6 +135,19 @@ describe('locks and brake', () => {
       expect(statusOf(result, 'w')).toMatchObject({ status: 'deferred', reason: 'drafts_waiting' });
       expect(statusOf(result, 'n').status).toBe('selected');
       expect(build([c('rewrite', 'w')], { improvements: { entries: heldEntries(2) } }).queue[0].status).toBe('selected');
+    });
+
+    it('counts the non-auto entries selected in this run towards the draft limit', () => {
+      const result = build([c('rewrite', 'w1'), c('rewrite', 'w2')], { improvements: { entries: heldEntries(2) } });
+      expect(statusOf(result, 'w1').status).toBe('selected');
+      expect(statusOf(result, 'w2')).toMatchObject({ status: 'deferred', reason: 'drafts_waiting' });
+    });
+
+    it('ignores a closed held draft when counting open and held drafts', () => {
+      const closed = heldEntries(3).map(e => ({ ...e, closed_at: days(-1) }));
+      const result = build([c('rewrite', 'h0'), c('rewrite', 'w')], { improvements: { entries: closed } });
+      expect(statusOf(result, 'h0').status).toBe('selected');
+      expect(statusOf(result, 'w').status).toBe('selected');
     });
 
     it('warns about a held draft older than 14 days', () => {

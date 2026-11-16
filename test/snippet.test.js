@@ -71,6 +71,16 @@ describe('snippetPage', () => {
     expect(complete.mock.calls[1][0].prompt).toMatch(/failed validation[\s\S]*meta_title too long/);
   });
 
+  it('rejects an em-dash or a transliterated umlaut in a new field even when the body already has the same defect', async () => {
+    writeFileSync(join(dir, 'content/de/hochzeit-planen.md'), PAGE.replace('absichtlich kurz', 'absichtlich — kurz fuer'));
+    complete.mockResolvedValue({ meta_title: 'Hochzeit planen — die Checkliste für Paare', meta_description: GOOD_DESC.replace('Mit', 'Alles fuer Paare. Mit') });
+
+    const result = await snippetPage(PAGE_ROW, CONFIG, dir);
+
+    expect(result.failure.join(' ')).toMatch(/meta_title: Em-dash/);
+    expect(result.failure.join(' ')).toMatch(/meta_description: Umlauts written as ae\/oe\/ue/);
+  });
+
   it('fails after two attempts that both break a rule of the two fields', async () => {
     complete.mockResolvedValue({ meta_title: GOOD_TITLE, meta_description: 'z'.repeat(200) });
 

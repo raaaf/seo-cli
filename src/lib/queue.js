@@ -1,4 +1,5 @@
 import { addDays } from './measure.js';
+import { defaultLocale, localeUrlPath } from './config.js';
 import { isWaiting, trimSlash, REASSESS_AFTER_DAYS } from './recrawl.js';
 
 // Pure rules of the action queue of `seo run`: rank, dedup, locks, brake, cap. The candidates come from
@@ -82,7 +83,7 @@ export function whyBlock({ type, source, why, score }) {
  */
 export function buildQueue({ candidates, executed = [], config = {}, today, alerts = [], changes = [], improvements = { entries: [] }, indexEntries = [] }) {
   const warnings = [];
-  const open = improvements.entries?.filter(e => e.pr_url && !e.merged_at) ?? [];
+  const open = improvements.entries?.filter(e => e.pr_url && !e.merged_at && !e.closed_at) ?? [];
   const held = open.filter(e => e.held);
   const brake = trafficBrake({ alerts, changes, today });
   if (brake?.expired) warnings.push(`Traffic brake released: traffic_drop open since ${brake.since}, more than ${BRAKE_MAX_AGE_DAYS} days`);
@@ -99,8 +100,9 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
   const openSlugs = new Set(open.map(e => e.slug));
   const targets = recentTargets(improvements, today);
   const base = trimSlash(config.base_url || '');
+  const locale = defaultLocale(config);
   const waitingForCrawl = (slug) => targets.some(t => t.slug === slug
-    && isWaiting({ diagnosis: { urls: [{ url: `${base}/${slug}` }] } }, t.day, indexEntries, today));
+    && isWaiting({ diagnosis: { urls: [{ url: `${base}${localeUrlPath(config, slug, locale)}` }] } }, t.day, indexEntries, today));
 
   const blockedReason = (c) => {
     if (config.paused) return 'paused';
@@ -119,11 +121,14 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
   const taken = new Set();
   const results = [];
   const eligible = [];
+  let draftsSelected = 0;
   for (const c of ordered) {
     const blocked = blockedReason(c);
     if (blocked) { results.push({ ...c, status: 'blocked', reason: blocked }); continue; }
-    if (!AUTO_TYPES.has(c.type) && held.length >= MAX_HELD_DRAFTS) { results.push({ ...c, status: 'deferred', reason: 'drafts_waiting' }); continue; }
+    const draft = !AUTO_TYPES.has(c.type) && c.type !== 'revert';
+    if (draft && held.length + draftsSelected >= MAX_HELD_DRAFTS) { results.push({ ...c, status: 'deferred', reason: 'drafts_waiting' }); continue; }
     if (c.touches.some(t => taken.has(t))) { results.push({ ...c, status: 'deferred', reason: 'overlap' }); continue; }
+    if (draft) draftsSelected++;
     c.touches.forEach(t => taken.add(t));
     const entry = { ...c, status: 'selected', reason: null };
     results.push(entry);
@@ -145,7 +150,7 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
  * order. `room` is what is still free below the cap.
  */
 export function nextInLine(queue, room) {
-  return room > 0 ? queue.filter(e => e.status === 'deferred' && e.reason === 'cap').slice(0, room) : [];
+  return room > 0 ? queue.filter(e => e.status === 'deferred' && e.reason === 'cap' && e.type !== 'revert' && (e.pick || e.keyword)).slice(0, room) : [];
 }
 
 /** What a ledger entry remembers about the decision, for the later look back (Etappe F). */

@@ -9,7 +9,7 @@ import { format } from '../lib/date.js';
 import { SEO_THRESHOLDS } from '../lib/seo-thresholds.js';
 import { defaultLocale, localeLandingPath } from '../lib/config.js';
 import { parseFrontmatter, splitFrontmatter } from '../lib/frontmatter.js';
-import { validate } from './validate.js';
+import { validate, tonalityErrors, findTransliteratedUmlauts } from './validate.js';
 import { keywordFor } from './improve.js';
 
 const SNIPPET_PROMPT = readFileSync(new URL('../prompts/snippet.md', import.meta.url), 'utf8');
@@ -55,7 +55,15 @@ export function setMetaFields(markdown, fields) {
 // A page that already carries an old defect in its body is not blocked by it.
 function snippetErrors(current, next, keyword, opts) {
   const before = new Set(validate(current, keyword, opts).errors);
-  return validate(next, keyword, opts).errors.filter(e => !before.has(e) || FIELDS.some(f => e.startsWith(f)));
+  const errors = validate(next, keyword, opts).errors.filter(e => !before.has(e) || FIELDS.some(f => e.startsWith(f)));
+  // The page-wide diff above hides a defect the body already carries, so the two new values are also checked on their own.
+  const { parsed } = parseFrontmatter(next);
+  for (const f of FIELDS) {
+    const text = String(parsed[f] ?? '');
+    const own = [...tonalityErrors(text), ...findTransliteratedUmlauts(text).map(w => `Umlauts written as ae/oe/ue: "${w}"`)];
+    for (const e of own) errors.push(`${f}: ${e}`);
+  }
+  return errors;
 }
 
 /**
