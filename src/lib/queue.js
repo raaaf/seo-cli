@@ -19,7 +19,8 @@ const BRAKE_MAX_AGE_DAYS = 56;
 const BRAKED_TYPES = new Set(['new_page', 'snippet_test', 'refresh']);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
+/** Whole days from one YYYY-MM-DD day to another. */
+export const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 const rankOf = (c) => TYPE_RANK[c.type] ?? 99;
 
 /**

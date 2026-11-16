@@ -35,7 +35,7 @@ import { activeSeasons } from '../lib/seasons.js';
 import { annotateFollowups } from '../lib/assessed-rewrite.js';
 import { loadAlerts } from '../lib/watch.js';
 import { loadIndexStatus } from '../lib/index-status.js';
-import { buildQueue, nextInLine, AUTO_TYPES, predictedOf } from '../lib/queue.js';
+import { buildQueue, nextInLine, daysBetween, AUTO_TYPES, predictedOf } from '../lib/queue.js';
 import { revertWorseRewrites } from '../steps/revert.js';
 import { collectCandidates, engagementOf, saveQueue, reportQueue } from '../steps/queue.js';
 import { submitFixes } from '../steps/diagnose.js';
@@ -87,7 +87,7 @@ function failureWarning(entry, e) {
 const PEAK_WARN_DAYS = 14;
 function seasonDraftWarning(prepared) {
   if (!prepared.season || !prepared.peak) return null;
-  const days = Math.round((Date.parse(`${prepared.peak}T00:00:00Z`) - Date.parse(`${format(new Date())}T00:00:00Z`)) / (24 * 60 * 60 * 1000));
+  const days = daysBetween(format(new Date()), prepared.peak);
   return days < PEAK_WARN_DAYS ? `Season refresh of ${prepared.slug} waits for approval as a draft, the peak of ${prepared.season} is in ${days} day(s)` : null;
 }
 
