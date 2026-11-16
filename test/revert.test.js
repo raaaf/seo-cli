@@ -145,6 +145,12 @@ describe('revert of rewrites that measured worse', () => {
     expect(await revertWorseRewrites({ config: { ...config, auto_revert: false }, cwd: dir, gh })).toEqual([]);
   });
 
+  it('does not wait on a closed held draft of the same page', () => {
+    const e = entry();
+    const improvements = { entries: [{ slug: e.slug, date: '2026-08-10', pr_url: 'https://github.com/o/r/pull/9', held: true, closed_at: '2026-08-12' }] };
+    expect(revertCandidates({ changes: { entries: [e] }, improvements })).toEqual([{ entry: e }]);
+  });
+
   it('pure helpers', () => {
     expect(filesToRestore(entry(), [{ path: 'content/landing/de/other.md', status: 'modified' }])).toEqual({ skip: 'no_page_files' });
     expect(revertCandidates({ changes: { entries: [entry({ kind: 'revert' })] }, improvements: { entries: [] } })).toEqual([]);

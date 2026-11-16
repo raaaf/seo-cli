@@ -218,7 +218,7 @@ export function annotateFollowups({ assessments = [], config, cwd = process.cwd(
     if (!slug) { s.followup = { status: 'unmapped' }; continue; }
     const pr = prs.find(p => p.kind === 'improve' && p.slug === slug);
     if (pr) { s.followup = { status: 'rewritten', slug, pr_url: pr.url }; continue; }
-    const last = (improvements.entries || []).filter(e => e.slug === slug).map(e => e.date).sort().at(-1);
+    const last = (improvements.entries || []).filter(e => e.slug === slug).map(e => e.closed_at || e.date).sort().at(-1);
     const notBefore = last ? addDays(last, COOLDOWN_DAYS) : today;
     s.followup = { status: 'scheduled', slug, not_before: notBefore > today ? notBefore : today };
   }

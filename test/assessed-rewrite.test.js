@@ -211,6 +211,15 @@ describe('assessed rewrite', () => {
     ]);
   });
 
+  it('counts the cooldown of a closed held draft from closed_at', () => {
+    const list = [{ alert_id: `deindexed:${BASE}/silvesterparty-planen` }];
+    annotateFollowups({
+      assessments: list, config: config(), cwd: dir, today: '2026-11-05', prs: [],
+      improvements: { entries: [{ slug: 'silvesterparty-planen', date: '2026-10-01', held: true, pr_url: 'x', closed_at: '2026-11-01' }] },
+    });
+    expect(list[0].followup).toEqual({ status: 'scheduled', slug: 'silvesterparty-planen', not_before: '2026-12-27' });
+  });
+
   it('marks a site-wide assessment rewritten when this run carried out one of its pages', () => {
     const list = [{ alert_id: 'site_not_indexed' }];
     annotateFollowups({

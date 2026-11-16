@@ -150,7 +150,7 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
  * order. `room` is what is still free below the cap.
  */
 export function nextInLine(queue, room) {
-  return room > 0 ? queue.filter(e => e.status === 'deferred' && e.reason === 'cap' && e.type !== 'revert' && (e.pick || e.keyword)).slice(0, room) : [];
+  return room > 0 ? queue.filter(e => e.status === 'deferred' && e.reason === 'cap' && e.type !== 'revert').slice(0, room) : [];
 }
 
 /** What a ledger entry remembers about the decision, for the later look back (Etappe F). */
