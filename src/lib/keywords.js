@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { format } from './date.js';
 
 export const KEYWORDS_FILE = 'seo/keywords.json';
+export const QUEUE_FILE = 'seo/queue.json';
 
 export const KEYWORD_STATUS = {
   PROPOSED: 'proposed',

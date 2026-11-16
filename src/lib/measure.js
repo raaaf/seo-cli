@@ -8,7 +8,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // GSC data lags by about three days, a window is only complete after that.
 const GSC_LAG_DAYS = 3;
-const MIN_TARGET_IMPRESSIONS = 100;
+export const MIN_TARGET_IMPRESSIONS = 100;
 const MIN_CONTROLS = 12;
 const MIN_CONTROL_IMPRESSIONS = 50;
 const CLICKS_METRIC_FROM = 20;

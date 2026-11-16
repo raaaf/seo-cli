@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { join } from 'path';
-import { KEYWORDS_FILE } from './keywords.js';
+import { KEYWORDS_FILE, QUEUE_FILE } from './keywords.js';
 import { IMPROVEMENTS_FILE } from './improvements.js';
 import { INDEX_STATUS_FILE } from './index-status.js';
 import { BUDGET_FILE } from './budget.js';
@@ -12,7 +12,7 @@ import { SERP_SIGNALS_FILE, BING_SIGNALS_FILE, RYBBIT_SIGNALS_FILE } from './sig
 import { commitToBranch, getBlobShas, getDefaultBranch } from './github.js';
 
 // Machine state that goes straight to the default branch, never into a content PR.
-export const STATE_FILES = [KEYWORDS_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE, LAST_RUN_FILE, RUNS_LOG_FILE, ALERTS_FILE, SERP_SIGNALS_FILE, BING_SIGNALS_FILE, RYBBIT_SIGNALS_FILE];
+export const STATE_FILES = [KEYWORDS_FILE, QUEUE_FILE, IMPROVEMENTS_FILE, INDEX_STATUS_FILE, BUDGET_FILE, CHANGES_FILE, LAST_RUN_FILE, RUNS_LOG_FILE, ALERTS_FILE, SERP_SIGNALS_FILE, BING_SIGNALS_FILE, RYBBIT_SIGNALS_FILE];
 
 // State files no longer written; commitState deletes them from the default branch.
 export const RETIRED_STATE_FILES = ['seo/sitemap-pending.json'];

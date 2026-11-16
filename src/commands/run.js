@@ -31,13 +31,13 @@ import { createPRs } from '../steps/pr.js';
 import { track } from '../steps/track.js';
 import { measure } from '../steps/measure.js';
 import { assessAlerts } from '../steps/assess.js';
-import { activeSeasons, pickSeasonPage } from '../lib/seasons.js';
-import { pickAssessedPage, pickMergePage, pickPrunePage, annotateFollowups } from '../lib/assessed-rewrite.js';
+import { activeSeasons } from '../lib/seasons.js';
+import { annotateFollowups } from '../lib/assessed-rewrite.js';
+import { loadAlerts } from '../lib/watch.js';
+import { loadIndexStatus } from '../lib/index-status.js';
+import { buildQueue, nextInLine, AUTO_TYPES, predictedOf } from '../lib/queue.js';
 import { revertWorseRewrites } from '../steps/revert.js';
-
-function pushPrepared(list, prepared) {
-  if (prepared) list.push(prepared);
-}
+import { collectCandidates, engagementOf, saveQueue, reportQueue } from '../steps/queue.js';
 
 // Slugs of every page a prepared rewrite PR writes or deletes (rewrite, counterpart, merge, link edits).
 function touchedSlugs(preparedList) {
@@ -61,6 +61,52 @@ function pLimit(concurrency) {
 }
 
 const MAX_COUNTERPART_FAILURES = 2;
+
+// What a queue entry tells the PR and the ledger: type, source, reason, score (none for picks without one).
+const whyOf = (entry) => ({ type: entry.type, source: entry.source, why: entry.why, score: entry.score || null });
+
+// Report `kind` and, for the proposals that name an alert, what the mail needs to follow it up.
+function prKind(prepared) {
+  if (prepared.mergeAlert) return { kind: 'merge', from: prepared.mergeFrom, assessed: prepared.mergeAlert };
+  if (prepared.pruneAlert) return { kind: 'prune', into: prepared.into, assessed: prepared.pruneAlert };
+  return { kind: prepared.snippet ? 'snippet' : 'improve', ...(prepared.assessed ? { assessed: prepared.assessed } : {}) };
+}
+
+// Warning text of an entry whose preparation threw, in the words the earlier slots used.
+function failureWarning(entry, e) {
+  if (entry.type === 'merge') return `Merge proposal failed (${entry.pick.from} into ${entry.slug}): ${e.message}`;
+  if (entry.type === 'prune') return `Removal proposal failed (${entry.slug}): ${e.message}`;
+  if (entry.source === 'season') return `Seasonal rewrite failed: ${e.message}`;
+  if (entry.source === 'alert') return `Assessed rewrite failed: ${e.message}`;
+  return `${entry.type} failed (${entry.slug ?? 'no page'}): ${e.message}`;
+}
+
+// A seasonal refresh waits for approval as a draft: close to the peak that is easy to overlook.
+const PEAK_WARN_DAYS = 14;
+function seasonDraftWarning(prepared) {
+  if (!prepared.season || !prepared.peak) return null;
+  const days = Math.round((Date.parse(`${prepared.peak}T00:00:00Z`) - Date.parse(`${format(new Date())}T00:00:00Z`)) / (24 * 60 * 60 * 1000));
+  return days < PEAK_WARN_DAYS ? `Season refresh of ${prepared.slug} waits for approval as a draft, the peak of ${prepared.season} is in ${days} day(s)` : null;
+}
+
+// Ledger entries for the queue's brake; an unreadable ledger is a warning and no brake.
+function ledgerEntries(cwd, warnings) {
+  try {
+    return loadChanges(cwd).entries;
+  } catch (e) {
+    warnings.push(`Change ledger unreadable for the queue: ${e.message}`);
+    return [];
+  }
+}
+
+// A revert decision as a queue entry. Only an opened PR counts against the cap.
+function revertEntry(r) {
+  const status = r.status === 'opened' ? 'opened' : r.status === 'deferred' ? 'deferred' : 'blocked';
+  return {
+    type: 'revert', slug: r.slug, source: 'ledger', why: 'rewrite measured worse than its control pages after 28 and 56 days',
+    status, reason: status === 'opened' ? null : r.reason ?? r.status, touches: [r.slug],
+  };
+}
 
 const REQUIRED_ENV = [
   'ANTHROPIC_API_KEY',
@@ -436,6 +482,8 @@ export async function runCommand(opts) {
   const report = { status: 'idle', prs: [], site: siteInfo(config), budget: null, warnings: [], errors: [] };
   const awaiting = new Set(); // keywords marked pr_opened before their PR exists
   let keywordsData;
+  let queue = null;
+  const maxPrs = config.max_prs_per_run ?? 4;
   report.warnings.push(...(config.config_warnings ?? []));
 
   // Machine state goes to main in the finally block too, so a run that fails
@@ -451,13 +499,17 @@ export async function runCommand(opts) {
       report.warnings.push(`Measurement failed: ${e.message}`);
     }
 
-    // 1b1. Take back rewrites that measured worse twice (a PR the gate merges). Before the
-    // improve pick, so the page is in its cooldown and not rewritten again in this run.
+    // 1b1. Take back rewrites that measured worse twice (a draft PR). Before the queue, so the page is in its
+    // cooldown and not rewritten again in this run. One slot of the cap stays free for page work.
+    const executed = [];
     if (!dryRun) {
       try {
-        const reverts = await revertWorseRewrites({ config, cwd, warnings: report.warnings });
+        const reverts = await revertWorseRewrites({ config, cwd, warnings: report.warnings, max: Math.max(0, maxPrs - 1) });
         if (reverts.length) report.reverts = reverts;
-        for (const r of reverts) if (r.status === 'opened') report.prs.push({ url: r.pr_url, kind: 'revert', slug: r.slug });
+        for (const r of reverts) {
+          if (r.status === 'opened') report.prs.push({ url: r.pr_url, kind: 'revert', slug: r.slug, held: true });
+          executed.push(revertEntry(r));
+        }
       } catch (e) {
         report.warnings.push(`Revert step failed: ${e.message}`);
       }
@@ -509,27 +561,41 @@ export async function runCommand(opts) {
     if (discovering) await refreshBingQueries({ config, cwd, warnings: report.warnings });
     keywordsData = discovering ? await discover(config, cwd, { catalog }) : loadKeywords(cwd);
 
-    // 3. Generate
+    // 3. The queue: every candidate from every source, ranked, then locks, brake and the cap on PRs.
     const pending = getPending(keywordsData, config.score_cutoff);
-    const toGenerate = catalogDown ? [] : pending.slice(0, Math.min(config.weekly_cap, remaining));
+    const due = catalogDown ? [] : pending.slice(0, Math.min(config.weekly_cap, remaining));
     if (remaining < Math.min(config.weekly_cap, pending.length)) {
-      const waiting = pending.length - toGenerate.length;
+      const waiting = pending.length - due.length;
       const warning = `Monthly new-page cap reached (${newPagesUsed} of ${config.max_new_pages_per_month}), ${waiting} keyword(s) wait for next month`;
       console.log(chalk.yellow(`\n${warning}`));
       report.warnings.push(warning);
     }
     const generatedPages = [];
-    // Rewrites of this run: the seasonal, assessed or GSC pick, plus at most one assessed page next to a season.
+    // Rewrites of this run, each with the queue entry it came from.
     const preparedList = [];
+    const entryOf = new Map();
     let refreshedSlug = null;
 
-    if (toGenerate.length === 0) {
+    const candidates = await collectCandidates({ config, cwd, catalogDown, toGenerate: due, engagement: engagementOf(rybbit?.pages, config), warnings: report.warnings });
+    const built = buildQueue({
+      candidates, executed, config, today: format(new Date()),
+      alerts: loadAlerts(cwd, []).open, changes: ledgerEntries(cwd, report.warnings),
+      improvements: loadImprovements(cwd), indexEntries: loadIndexStatus(cwd).entries,
+    });
+    queue = built.queue;
+    report.warnings.push(...built.warnings);
+    const selectedAtStart = queue.filter(e => e.status === 'selected').length;
+
+    // 3a. New pages, generated as one batch.
+    const keywordEntries = new Map(queue.filter(e => e.type === 'new_page' && e.status === 'selected').map(e => [e.keyword, e]));
+    const toGenerate = [...keywordEntries.keys()];
+    if (due.length === 0) {
       // An empty backlog is the normal state once a topic space is covered. The
       // week is better spent on the pages that already rank and get no clicks
       // than on a keyword invented to fill the slot.
       console.log(chalk.gray('\nNo keywords to generate — switching to improving an existing page.'));
-      if (!dryRun) pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd));
-    } else {
+    }
+    if (toGenerate.length > 0) {
       console.log(chalk.bold(`\nGenerating ${toGenerate.length} page(s):\n`));
 
       const GENERATE_CONCURRENCY = 2;
@@ -545,6 +611,7 @@ export async function runCommand(opts) {
               generatedKeysAtomic.add(`${page.slug}::${page.locale}`);
               generatedPages.push(page);
               kw.status = KEYWORD_STATUS.PR_OPENED;
+              kw.queue = predictedOf(whyOf(keywordEntries.get(kw)));
               awaiting.add(kw);
             }
             return pages;
@@ -556,67 +623,44 @@ export async function runCommand(opts) {
       const settled = await Promise.allSettled(tasks);
       const rejected = settled.filter(s => s.status === 'rejected').map(s => s.reason);
       if (rejected.length) throw rejected.find(r => r instanceof BudgetExceededError) ?? rejected[0];
-
-      // Peaks are fixed dates, and a page Google skips should not wait for an empty backlog either
-      // (prepareImprove picks the page itself, season first).
-      if (!dryRun && (pickSeasonPage({ config, cwd }) || pickAssessedPage({ config, cwd }))) {
-        try {
-          pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: catalogDown }, cwd));
-        } catch (e) {
-          // The generated pages must still get their PRs.
-          rethrowIfBudget(e);
-          const warning = `Seasonal rewrite failed: ${e.message}`;
-          console.log(chalk.yellow(`\n${warning}`));
-          report.warnings.push(warning);
-        }
-      }
     }
 
-    // A page a rewrite did not get into the index, whose assessment names the indexed sibling it
-    // duplicates: one merge proposal per run, a draft PR that waits for the owner.
-    if (!dryRun && !catalogDown && config.merge_proposals !== false) {
-      const skip = touchedSlugs(preparedList);
-      const merge = pickMergePage({ config, cwd, skip });
-      if (merge) {
-        try {
-          pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: true, slug: merge.slug, mergeFrom: [merge.from], mergeAlert: merge.alert_id, skip }, cwd));
-        } catch (e) {
-          rethrowIfBudget(e);
-          const warning = `Merge proposal failed (${merge.from} into ${merge.slug}): ${e.message}`;
-          console.log(chalk.yellow(`\n${warning}`));
-          report.warnings.push(warning);
-        }
+    // 3b. Everything else, one entry after the other in rank order. Before each one its pages are checked
+    // against the files already prepared (inbound-link edits included): a sibling PR branches from the same
+    // checkout. An entry that yields nothing lets the next one the cap deferred move up.
+    const generatedCount = () => new Set(generatedPages.map(p => p.keyword)).size;
+    const openedBefore = executed.filter(e => e.status === 'opened').length;
+    const used = () => openedBefore + generatedCount() + preparedList.length;
+    const prepareEntry = async (entry, skip) => {
+      const common = { config, dryRun, catalog, skipOverlays: catalogDown, skip };
+      if (entry.type === 'merge') return prepareImprove({ ...common, skipOverlays: true, slug: entry.pick.slug, mergeFrom: [entry.pick.from], mergeAlert: entry.pick.alert_id }, cwd);
+      if (entry.type === 'prune') return preparePrune(entry.pick, { config, cwd });
+      return prepareImprove({ ...common, pick: entry.pick }, cwd);
+    };
+    const runEntry = async (entry) => {
+      const taken = touchedSlugs(preparedList);
+      if (entry.touches.some(t => taken.includes(t))) { Object.assign(entry, { status: 'deferred', reason: 'overlap' }); return; }
+      Object.assign(entry, { status: 'selected', reason: null });
+      try {
+        const prepared = await prepareEntry(entry, taken);
+        if (!prepared) { Object.assign(entry, { status: 'deferred', reason: 'not_prepared' }); return; }
+        Object.assign(prepared, { auto: AUTO_TYPES.has(entry.type), why: whyOf(entry), queue: predictedOf(whyOf(entry)) });
+        preparedList.push(prepared);
+        entryOf.set(prepared, entry);
+      } catch (e) {
+        // The generated pages must still get their PRs.
+        rethrowIfBudget(e);
+        const warning = failureWarning(entry, e);
+        console.log(chalk.yellow(`\n${warning}`));
+        report.warnings.push(warning);
+        Object.assign(entry, { status: 'deferred', reason: 'failed' });
       }
-    }
-
-    // A page two rewrites did not get into the index: one removal proposal per run, a draft PR
-    // (delete and redirect to an indexed sibling) that waits for the owner. No LLM call.
-    if (!dryRun && !catalogDown && config.prune_proposals !== false) {
-      const prune = pickPrunePage({ config, cwd, skip: touchedSlugs(preparedList) });
-      if (prune) {
-        try {
-          pushPrepared(preparedList, preparePrune(prune, { config, cwd }));
-        } catch (e) {
-          const warning = `Removal proposal failed (${prune.slug}): ${e.message}`;
-          console.log(chalk.yellow(`\n${warning}`));
-          report.warnings.push(warning);
-        }
-      }
-    }
-
-    // A season holds the rewrite slot for weeks (events: Weihnachtsfeier and Silvester through
-    // December), so a page Google skips gets its own slot next to it instead of waiting.
-    if (!dryRun && config.assessed_rewrites !== false && preparedList.some(p => !p.mergeAlert && !p.pruneAlert) && !preparedList.some(p => p.assessed)) {
-      const skip = touchedSlugs(preparedList);
-      if (pickAssessedPage({ config, cwd, skip })) {
-        try {
-          pushPrepared(preparedList, await prepareImprove({ config, dryRun, catalog, skipOverlays: true, assessedOnly: true, skip }, cwd));
-        } catch (e) {
-          rethrowIfBudget(e);
-          const warning = `Assessed rewrite failed: ${e.message}`;
-          console.log(chalk.yellow(`\n${warning}`));
-          report.warnings.push(warning);
-        }
+    };
+    if (!dryRun) {
+      for (const entry of queue.filter(e => e.status === 'selected' && e.type !== 'new_page')) await runEntry(entry);
+      for (const entry of nextInLine(queue.filter(e => e.type !== 'new_page'), Infinity)) {
+        if (used() >= maxPrs) break;
+        await runEntry(entry);
       }
     }
 
@@ -637,22 +681,30 @@ export async function runCommand(opts) {
         report.prs.push(...created.prs.map(p => ({ url: p.url, kind: 'new', slug: p.slug })));
         report.warnings.push(...created.warnings);
         report.errors.push(...created.errors);
+        for (const p of created.prs) {
+          const entry = queue.find(e => e.type === 'new_page' && e.slug === p.slug);
+          if (entry) entry.status = 'opened';
+        }
       }
       for (const prepared of preparedList) {
         try {
           const url = await publishImprove(prepared, { config, cwd, warnings: report.warnings });
           if (url) {
-            report.prs.push(prepared.mergeAlert
-              ? { url, kind: 'merge', slug: prepared.slug, from: prepared.mergeFrom, assessed: prepared.mergeAlert }
-              : prepared.pruneAlert
-                ? { url, kind: 'prune', slug: prepared.slug, into: prepared.into, assessed: prepared.pruneAlert }
-                : { url, kind: 'improve', slug: prepared.slug, ...(prepared.assessed ? { assessed: prepared.assessed } : {}) });
+            entryOf.get(prepared).status = 'opened';
+            report.prs.push({ url, slug: prepared.slug, ...prKind(prepared), ...(prepared.auto === false ? { held: true } : {}) });
             if (prepared.season) refreshedSlug = prepared.slug;
+            const warning = prepared.auto === false ? seasonDraftWarning(prepared) : null;
+            if (warning) report.warnings.push(warning);
           }
         } catch (e) {
           console.error(chalk.red(`\nImprove PR failed: ${e.message}`));
           report.errors.push(`Improve PR failed for ${prepared.slug}: ${e.message}`);
         }
+      }
+      // What was selected but did not end in a PR is left for the next run.
+      for (const entry of queue.filter(e => e.status === 'selected')) Object.assign(entry, { status: 'deferred', reason: 'not_opened' });
+      if (selectedAtStart > 0 && report.prs.length === 0) {
+        report.warnings.push(`The queue selected ${selectedAtStart} action(s), but no PR was opened`);
       }
 
       // 6. Track
@@ -695,7 +747,11 @@ export async function runCommand(opts) {
   } finally {
     try { report.budget = budgetSummary(cwd); } catch (e) { report.warnings.push(`Budget unreadable: ${e.message}`); }
     report.llm = llmSummary(report.warnings);
+    if (queue) report.queue = reportQueue(queue);
     if (!dryRun) {
+      if (queue) {
+        try { saveQueue(queue, cwd); } catch (e) { report.warnings.push(`Queue not written: ${e.message}`); }
+      }
       try { writeRunLog({ cwd, report, mode: 'run' }); } catch (e) { report.warnings.push(`Run log not written: ${e.message}`); }
       try {
         releasePending([...awaiting]);
