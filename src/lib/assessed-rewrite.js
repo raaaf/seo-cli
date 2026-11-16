@@ -7,6 +7,7 @@ import { loadIndexStatus, isIndexed } from './index-status.js';
 import { addDays, urlToSlug } from './measure.js';
 import { parseOverlayKey } from './improvements.js';
 import { format } from './date.js';
+import { takePicks } from './queue.js';
 
 const trimSlash = u => String(u).replace(/\/+$/, '');
 
@@ -62,14 +63,15 @@ export function recipeKeyForUrl(url, config) {
  * The page must exist, sit outside the improve cooldown, `exclude_slugs` and `skip` (pages
  * another PR of the same run touches), and must not have been rewritten since the assessment.
  * Pages someone else writes (`content_owner`) are left to them. Oldest assessment first.
- * Returns `{ slug, alert_id, assessment }` or null.
+ * Returns `{ slug, alert_id, assessment }` or null (`limit` as in `takePicks`).
  */
-export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), skip = [] }) {
+export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), skip = [], limit }) {
   const pairs = counterpartPairs(config, cwd);
   const blocked = new Set([...slugsInCooldown(improvements, today), ...(config.exclude_slugs || []), ...skip]);
   const candidates = (alerts.open || [])
     .filter(a => ASSESSED_KINDS.has(a.kind) && a.diagnosis?.cause === 'clean' && a.assessment?.actions?.length && !a.assessment.content_owner)
     .sort((a, b) => String(a.assessment.assessed_at).localeCompare(String(b.assessment.assessed_at)));
+  const picks = [];
   for (const alert of candidates) {
     for (const url of alertUrls(alert)) {
       const slug = slugForUrl(url, config, pairs) ?? recipeKeyForUrl(url, config);
@@ -78,10 +80,12 @@ export function pickAssessedPage({ config, cwd = process.cwd(), today = new Date
       if (rewrittenSince) continue;
       // A rewrite already did not help and the assessment names the sibling it duplicates: that is a merge (pickMergePage).
       if (alert.assessment.merge_into && (alert.assessment.merge_proposed_at || rewrittenBefore(improvements, slug, alert.assessment.assessed_at))) continue;
-      return { slug, alert_id: alert.id, assessment: alert.assessment };
+      // One page per alert: a site-wide alert offers its next page on a later run.
+      picks.push({ slug, alert_id: alert.id, assessment: alert.assessment });
+      break;
     }
   }
-  return null;
+  return takePicks(picks.filter((p, i) => picks.findIndex(q => q.slug === p.slug) === i), limit);
 }
 
 // A merged rewrite of the page from before the given day.
@@ -100,9 +104,9 @@ export const PRUNE_WAIT_DAYS = 60;
  * at most once (`prune_proposed_at` on the alert). Only `deindexed` alerts with cause `clean`, no
  * `content_owner` and no merge still to propose; the page and the target must exist, neither may
  * be in `exclude_slugs` or `skip`, and a page without an indexed target is left alone. Oldest
- * alert first. Returns `{ slug, into, alert_id }` (slug = the page that goes) or null.
+ * alert first. Returns `{ slug, into, alert_id }` (slug = the page that goes) or null (`limit` as in `takePicks`).
  */
-export function pickPrunePage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), entries = loadIndexStatus(cwd).entries, skip = [] }) {
+export function pickPrunePage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), entries = loadIndexStatus(cwd).entries, skip = [], limit }) {
   const pages = readLandingPages(config, cwd, defaultLocale(config));
   const pairs = counterpartPairs(config, cwd);
   const bySlug = new Map(pages.map(p => [p.slug, p]));
@@ -115,6 +119,7 @@ export function pickPrunePage({ config, cwd = process.cwd(), today = new Date(),
     // A merge comes first: it keeps what is worth keeping, a removal does not.
     .filter(a => !(a.assessment?.merge_into && !a.assessment.merge_proposed_at))
     .sort((a, b) => String(a.since ?? '').localeCompare(String(b.since ?? '')));
+  const picks = [];
   for (const alert of candidates) {
     const slug = alertUrls(alert).map(u => slugForUrl(u, config, pairs)).find(Boolean);
     if (!slug || excluded.has(slug) || !bySlug.has(slug)) continue;
@@ -127,9 +132,9 @@ export function pickPrunePage({ config, cwd = process.cwd(), today = new Date(),
       .map(t => trimSlash(t.split(/[?#]/)[0]).split('/').pop());
     const into = targets.find(t => t && t !== slug && bySlug.has(t) && !excluded.has(t) && isIndexedSlug(t));
     if (!into) continue;
-    return { slug, into, alert_id: alert.id };
+    picks.push({ slug, into, alert_id: alert.id });
   }
-  return null;
+  return takePicks(picks, limit);
 }
 
 const ASSESSED_KINDS = new Set(['deindexed', 'site_not_indexed']);
@@ -150,9 +155,9 @@ function alertUrls(alert) {
  * assessment proposes at most once (`merge_proposed_at`). Both pages must exist, neither may be
  * in `exclude_slugs` or `skip`, the sibling must be indexed and outside the improve cooldown, and
  * the page must have had a merged rewrite before the assessment. Oldest assessment first.
- * Returns `{ slug, from, alert_id }` (slug = the page that stays) or null.
+ * Returns `{ slug, from, alert_id }` (slug = the page that stays) or null (`limit` as in `takePicks`).
  */
-export function pickMergePage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), entries = loadIndexStatus(cwd).entries, skip = [] }) {
+export function pickMergePage({ config, cwd = process.cwd(), today = new Date(), improvements = loadImprovements(cwd), alerts = loadAlerts(cwd, []), entries = loadIndexStatus(cwd).entries, skip = [], limit }) {
   const pairs = counterpartPairs(config, cwd);
   const excluded = new Set([...(config.exclude_slugs || []), ...skip]);
   const cooldown = new Set(slugsInCooldown(improvements, today));
@@ -160,15 +165,16 @@ export function pickMergePage({ config, cwd = process.cwd(), today = new Date(),
   const candidates = (alerts.open || [])
     .filter(a => a.kind === 'deindexed' && a.diagnosis?.cause === 'clean' && a.assessment?.merge_into && !a.assessment.content_owner && !a.assessment.merge_proposed_at)
     .sort((a, b) => String(a.assessment.assessed_at).localeCompare(String(b.assessment.assessed_at)));
+  const picks = [];
   for (const alert of candidates) {
     const from = alertUrls(alert).map(u => slugForUrl(u, config, pairs)).find(Boolean);
     const into = alert.assessment.merge_into;
     if (!from || from === into || excluded.has(from) || excluded.has(into) || cooldown.has(into)) continue;
     if (!pairs.some(p => p.slug === into) || !indexed.has(`${trimSlash(config.base_url)}/${into}`)) continue;
     if (!rewrittenBefore(improvements, from, alert.assessment.assessed_at)) continue;
-    return { slug: into, from, alert_id: alert.id };
+    picks.push({ slug: into, from, alert_id: alert.id });
   }
-  return null;
+  return takePicks(picks, limit);
 }
 
 /** Diagnosis text for the improve prompt: the assessment's causes and actions as the brief. */

@@ -6,6 +6,7 @@ import { strictValidateOpts, buildMergeFiles, readLandingPages, tryInboundLinkFi
 import { inboundLinks, MIN_INBOUND_LINKS } from '../lib/inbound-links.js';
 import { createBranchAndCommit, openPR, deleteBranch } from '../lib/github.js';
 import { commitState } from '../lib/state.js';
+import { whyBlock } from '../lib/queue.js';
 import { writeReport, writeRunLog, llmSummary, budgetSummary } from '../lib/runlog.js';
 import { isoWeek, format } from '../lib/date.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
@@ -17,6 +18,7 @@ import { parseFrontmatter } from '../lib/frontmatter.js';
 import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { prepareOverlay } from '../steps/overlay.js';
+import { snippetPage } from '../steps/snippet.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
 import { pickSeasonPage } from '../lib/seasons.js';
@@ -26,9 +28,10 @@ import { pickAssessedPage, assessmentDiagnosis, PRUNE_REWRITES, PRUNE_WAIT_DAYS 
  * Selects the one existing page with the strongest case (or takes the one named
  * by `opts.slug`, optionally merging `opts.mergeFrom` into it), rewrites it, validates
  * and fact-checks it. Commits nothing and records no cooldown: that happens in
- * publishImprove, once the PR exists. `opts.assessedOnly` takes only an assessed page (the extra
- * slot of `seo run`), `opts.skip` names pages a sibling PR of the same run touches: neither picked
- * nor edited for inbound links.
+ * publishImprove, once the PR exists. `opts.pick` is a pick the queue of `seo run` already made
+ * (`{ kind: 'season' | 'stale' | 'assessed' | 'gsc' | 'snippet' | 'overlay', ... }`, see steps/queue.js):
+ * nothing is selected then. `opts.skip` names pages a sibling PR of the same run touches: neither
+ * picked nor edited for inbound links.
  *
  * Returns `{ slug, files, record, commitMessage, prTitle, prBody }`, or null when
  * nothing qualified, the rewrite was dropped or this is a dry run.
@@ -46,13 +49,13 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   // Overlays also need the performance rows, so they are fetched outside the targeted path.
   let rows = null;
   const targeted = Boolean(opts.slug);
-  // `assessedOnly`: the extra slot of `seo run` for a page Google skips, next to a seasonal rewrite.
-  const assessedOnly = !targeted && Boolean(opts.assessedOnly);
+  // A pick of the run queue replaces the selection below, which only `seo improve` itself still runs.
+  const pick = opts.pick ?? null;
+  const selecting = !targeted && !pick;
   // A page listed under an active season beats the Search Console pick; it needs no GSC rows.
-  const seasonal = targeted || assessedOnly ? null : pickSeasonPage({ config, cwd });
+  const seasonal = pick?.kind === 'season' ? pick : selecting ? pickSeasonPage({ config, cwd }) : null;
   // Next: a page Google skips although it is technically fine, rewritten along its content assessment.
-  const assessed = targeted || seasonal ? null : pickAssessedPage({ config, cwd, skip: opts.skip ?? [] });
-  if (assessedOnly && !assessed) return null;
+  const assessed = pick?.kind === 'assessed' ? pick : selecting && !seasonal ? pickAssessedPage({ config, cwd, skip: opts.skip ?? [] }) : null;
   // A recipe page keeps its text in an overlay file: the assessment becomes the overlay's brief.
   if (assessed && parseOverlayKey(assessed.slug)) {
     return prepareOverlay({
@@ -65,7 +68,10 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       },
     });
   }
-  if (!targeted && !seasonal && !assessed) {
+  if (pick?.kind === 'overlay') {
+    return prepareOverlay({ config, cwd, rows: pick.rows, catalog: opts.catalog ?? null, dryRun });
+  }
+  if (selecting && !seasonal && !assessed) {
     try {
       rows = await fetchPagePerformance(config);
     } catch (e) {
@@ -95,7 +101,17 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
       reason,
       diagnosis: `Seasonal refresh ahead of the peak on ${seasonal.peak} (${seasonal.season}). Bring the page up to date for the coming season: dates, deadlines, checklists and examples.`,
       season: seasonal.season,
+      peak: seasonal.peak,
     };
+  } else if (pick?.kind === 'stale') {
+    page = {
+      ...targetedPage({ slug: pick.slug }, config, cwd),
+      reason: `Veraltet: ${pick.reason}`,
+      diagnosis: 'Bring facts, year references and prices up to date, keep the structure. Replace outdated years, figures, dates and deadlines with current ones, and drop what cannot be verified.',
+      stale: true,
+    };
+  } else if (pick?.page) {
+    page = pick.page;
   } else if (assessed) {
     page = {
       ...targetedPage({ slug: assessed.slug }, config, cwd),
@@ -121,6 +137,8 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     ...contractOptions(config, catalog, cwd, defaultLocale(config)),
   };
 
+  if (pick?.kind === 'snippet') return prepareSnippet(page, { config, cwd, dryRun, validateOpts });
+
   // Two attempts, same as generate. A rewrite costs a full Opus call, and a
   // single hard error (one word over the tldr limit) is not worth losing it.
   let filePath, markdown, result;
@@ -133,7 +151,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   if (!result.ok) {
     console.log(chalk.red(`  Improvement discarded: the rewrite of ${page.slug} does not validate after 2 attempts`));
     result.errors.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
-    if ((page.season || page.assessed) && !dryRun) recordSeasonFailure(page.slug, cwd);
+    if (holdsOnFailure(page) && !dryRun) recordFailure(page.slug, cwd);
     return null;
   }
 
@@ -145,7 +163,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
     if (unchecked) factCheckError = error;
     if (unresolvedSeverity(findings) === 'high') {
       console.log(chalk.red(`  Improvement discarded: unresolved factual error in the rewrite of ${page.slug}`));
-      if (page.season || page.assessed) recordSeasonFailure(page.slug, cwd);
+      if (holdsOnFailure(page)) recordFailure(page.slug, cwd);
       return null;
     }
     if (reviewed !== markdown && validate(reviewed, keywordLike, validateOpts).ok) finalMarkdown = reviewed;
@@ -178,9 +196,10 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   const inbound = await inboundLinkEdits({ slug: page.slug, markdown: finalMarkdown, files, config, cwd, exclude: opts.skip ?? [] });
   return {
     slug: page.slug,
-    ...(page.season ? { season: page.season } : {}),
+    ...(page.season ? { season: page.season, peak: page.peak } : {}),
     ...(page.assessed ? { assessed: page.assessed } : {}),
-    ...(opts.mergeAlert ? { mergeAlert: opts.mergeAlert, mergeFrom } : {}),
+    ...(opts.mergeAlert ? { mergeAlert: opts.mergeAlert, mergeFrom, auto: false } : {}),
+    ...(holdsOnFailure(page) ? { holdOnFailure: true } : {}),
     files: [...files, ...inbound.files],
     record: { slug: page.slug, queries: page.queries.map(q => q.query) },
     commitMessage: `seo: improve ${page.slug} (${week})\n\n${page.reason}`,
@@ -196,15 +215,48 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   };
 }
 
+// A snippet test: only the meta title and description of a page that ranks on page one and is not clicked.
+// The PR merges by itself, the page text is byte for byte the one on disk.
+async function prepareSnippet(page, { config, cwd, dryRun, validateOpts }) {
+  const result = await snippetPage(page, config, cwd, validateOpts);
+  if (result.failure) {
+    console.log(chalk.red(`  Snippet test discarded: the new title or description of ${page.slug} does not validate after 2 attempts`));
+    result.failure.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
+    if (!dryRun) recordFailure(page.slug, cwd);
+    return null;
+  }
+  if (dryRun) {
+    console.log(chalk.cyan(`\n--- ${page.slug} ---\n`));
+    console.log(`${result.after.title}\n${result.after.description}`);
+    return null;
+  }
+  const week = isoWeek();
+  const note = 'Snippet-Test: nur Titel und Description geändert, der Text der Seite ist unverändert.\n\n';
+  return {
+    slug: page.slug,
+    branch: `seo/snippet/${page.slug}`,
+    snippet: true,
+    holdOnFailure: true,
+    files: [{ path: result.filePath, content: result.markdown }],
+    record: { slug: page.slug, queries: page.queries.map(q => q.query), snippet: true },
+    commitMessage: `seo: snippet test ${page.slug} (${week})\n\n${page.reason}`,
+    prTitle: `SEO: snippet test ${page.slug} (${week})`,
+    prBody: note + buildBody(page, result.before, result.after, { factChecked: false, warnings: result.warnings }),
+  };
+}
+
 // Top of an automatic merge PR: it deletes and redirects live pages, so it waits for the owner.
 function mergeProposalNote(slug, mergeFrom) {
   const pages = mergeFrom.map(n => `/${n}`).join(', ');
   return `> **Wartet auf dein Okay.** Google zeigt ${pages} trotz Überarbeitung nicht in der Suche, und die Index-Bewertung nennt /${slug} als Seite mit demselben Thema. Dieser PR legt beide zusammen: ${pages} wird gelöscht und auf /${slug} weitergeleitet. Er bleibt als Entwurf offen, bis du zustimmst; schließt du ihn, wird diese Bewertung nicht noch einmal vorgeschlagen.\n\n`;
 }
 
-// A seasonal or assessed rewrite that ends without a PR takes the normal cooldown (a `failed` entry, as overlays do),
-// so the same page does not cost a rewrite every week. It does not count as a refresh for the 300-day rule.
-function recordSeasonFailure(slug, cwd) {
+// A seasonal, stale, assessed or Search Console pick that ends without a PR takes the normal cooldown (a
+// `failed` entry, as overlays do), so the same page does not cost a rewrite every week. It does not count
+// as a refresh for the 300-day rule. A targeted rewrite (`--slug`) was asked for by name and does not.
+const holdsOnFailure = (page) => Boolean(page.season || page.assessed || page.stale || ['snippet', 'near_page1', 'far'].includes(page.kind));
+
+function recordFailure(slug, cwd) {
   const improvements = recordImprovement(loadImprovements(cwd), { slug, queries: [] });
   improvements.entries.at(-1).failed = true;
   saveImprovements(improvements, cwd);
@@ -261,6 +313,7 @@ async function loadEngagement(config, cwd, dryRun) {
  */
 export async function publishImprove(prepared, { config, cwd = process.cwd(), warnings = [] }) {
   const branch = prepared.branch ?? `seo/improve/${prepared.slug}`;
+  const held = prepared.auto === false;
 
   try {
     await createBranchAndCommit({ files: prepared.files, message: prepared.commitMessage, cwd, repo: config.repo, branch });
@@ -269,14 +322,15 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
     const warning = `Improve skipped: branch ${branch} already exists (an earlier PR for ${prepared.slug} is still open)`;
     console.log(chalk.yellow(`  ${warning}`));
     warnings.push(warning);
-    if (prepared.season || prepared.assessed) recordSeasonFailure(prepared.slug, cwd);
+    if (prepared.holdOnFailure) recordFailure(prepared.slug, cwd);
     return null;
   }
 
   let prUrl;
   try {
-    // An automatic merge deletes and redirects live pages: a draft, which the gate never merges.
-    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: prepared.prBody, draft: Boolean(prepared.mergeAlert || prepared.pruneAlert) });
+    // Only snippet tests, new pages and overlays merge by themselves. Everything else is a draft, which the
+    // gate never merges, with the reason for the action on top. `auto` defaults to true (standalone `seo improve`).
+    prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: held && prepared.why ? whyBlock(prepared.why) + prepared.prBody : prepared.prBody, draft: held });
   } catch (e) {
     // Without a PR the branch is an orphan that would block this page for good.
     await deleteBranch({ repo: config.repo, branch }).catch(err => {
@@ -288,9 +342,11 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
   }
 
   const improvements = loadImprovements(cwd);
-  recordImprovement(improvements, prepared.record);
-  improvements.entries.at(-1).pr_url = prUrl;
-  if (prepared.pruneAlert) improvements.entries.at(-1).prune = true;
+  recordImprovement(improvements, { ...prepared.record, held, queue: prepared.queue });
+  const entry = improvements.entries.at(-1);
+  entry.pr_url = prUrl;
+  if (prepared.mergeAlert) entry.merge = true;
+  if (prepared.pruneAlert) Object.assign(entry, { prune: true, into: prepared.into });
   saveImprovements(improvements, cwd);
 
   // Each assessment proposes its merge once, whatever the owner decides.
@@ -333,6 +389,7 @@ export function preparePrune({ slug, into, alert_id }, { config, cwd = process.c
     slug,
     branch: `seo/prune/${slug}`,
     pruneAlert: alert_id,
+    auto: false,
     into,
     files: merge.files,
     record: { slug, queries: [] },

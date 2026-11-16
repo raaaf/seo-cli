@@ -12,6 +12,7 @@ import { getExistingSlugs, strictValidateOpts } from '../lib/landings.js';
 import { stripCodeFence, loadStyleDoc, icpBlock, SOURCES_RULE, STATISTICS_RULE } from './generate.js';
 import { loadFacts, factsBlock } from '../lib/facts.js';
 import { validate } from './validate.js';
+import { takePicks } from '../lib/queue.js';
 
 const IMPROVE_PROMPT = readFileSync(new URL('../prompts/improve.md', import.meta.url), 'utf8');
 const GSC_GUARDRAIL = readFileSync(new URL('../prompts/_gsc-guardrail.md', import.meta.url), 'utf8');
@@ -170,8 +171,11 @@ function withEngagement(page, stats) {
  * `config.exclude_slugs` is the permanent version of that: pages the rewrite must
  * never touch. Service and pricing pages are written by hand and carry claims the
  * model has no way to verify, so a well-meant rewrite is pure downside there.
+ *
+ * `skip` names pages another candidate of the run touches (treated like the cooldown); `limit` as in
+ * `takePicks`: an array of the best pages instead of the best one.
  */
-export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set(), engagement = null }) {
+export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set(), engagement = null, skip = [], limit }) {
   const locale = defaultLocale(config);
   const known = new Set(getExistingSlugs(config, cwd, locale));
   const excluded = new Set(config.exclude_slugs || []);
@@ -220,18 +224,18 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
   // Cooldown/excluded pages did their job above (marking foreign queries) and
   // are dropped here, once the candidate list itself is assembled.
   const ranked = [...bySlug.values()]
-    .filter(page => !cooldown.has(page.slug) && !excluded.has(page.slug))
+    .filter(page => !cooldown.has(page.slug) && !excluded.has(page.slug) && !skip.includes(page.slug))
     .map(page => ({ ...page, ...(scorePage(page) ?? {}) }))
     .filter(page => page.score)
     .map(page => (engagement ? withEngagement(page, Object.hasOwn(engagement, page.slug) ? engagement[page.slug] : undefined) : page))
     .sort((a, b) => b.score - a.score);
 
-  const best = ranked[0];
-  if (!best) return null;
-
-  best.queries.sort((a, b) => b.impressions - a.impressions);
-  best.queries = best.queries.slice(0, MAX_QUERIES);
-  return best;
+  const picks = limit === undefined ? ranked.slice(0, 1) : ranked.slice(0, limit);
+  for (const page of picks) {
+    page.queries.sort((a, b) => b.impressions - a.impressions);
+    page.queries = page.queries.slice(0, MAX_QUERIES);
+  }
+  return takePicks(picks, limit);
 }
 
 /**
