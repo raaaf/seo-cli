@@ -9,7 +9,7 @@
 - Planned at: commit `aa044a0`, 2026-11-16. Baut auf `docs/plans/2026-10-06-system-architecture.md` (Abschnitt 2 "Entscheiden", "Sicher") auf.
 - Nutzerentscheidungen 2026-11-16: Queue jetzt bauen, mit `snippet_test` und `refresh`. Auto-Merge nur für kleine Diffs (`snippet_test`, `new_page`, plus `overlay`, weil das nur Metatext ist). Alarme ohne Inhaltsbezug wirken als Sperren und Bremse, nicht als Aktionen.
 - Challengers: Architektur und Risiko liefen (Pflicht). Produkt, Design und Einfachheit liefen nicht: Der Umfang ist vom Nutzer entschieden, und es gibt keine UI-Fläche. Drift-Check vom Orchestrator: HEAD = `aa044a0`, sauber.
-- Status: Spec
+- Status: Implemented (PR #131, 2026-11-16)
 
 Datenlage der Zielrepos: siehe Appendix.
 
