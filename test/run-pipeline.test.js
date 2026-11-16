@@ -663,6 +663,71 @@ describe('counterpart failure limit', () => {
   });
 });
 
+describe('behaviour matrix of the improve slots', () => {
+  const id = 'deindexed:https://demo.example/teamevent';
+  const seedAssessed = (extra = {}) => {
+    CONFIG.base_url = 'https://demo.example';
+    mkdirSync(join(dir, 'resources/landing/de'), { recursive: true });
+    for (const slug of ['teamevent', 'firmenfeier']) writeFileSync(join(dir, `resources/landing/de/${slug}.md`), `---\nslug: ${slug}\nrelated_pages:\n  - firmenfeier\n---\nbody`);
+    seedState('alerts.json', { open: [{
+      id, kind: 'deindexed', since: '2026-06-01',
+      diagnosis: { cause: 'clean', urls: [{ url: 'https://demo.example/teamevent' }] },
+      assessment: { assessed_at: '2026-11-01', likely_causes: ['x'], actions: [{ action: 'y' }], ...extra },
+    }] });
+  };
+  afterEach(() => { delete CONFIG.base_url; });
+
+  it('rewrites an assessed page also in a week that generates pages', async () => {
+    seedAssessed();
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+    prepareImprove.mockResolvedValue({ slug: 'teamevent', assessed: id, files: [] });
+    publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+    await run();
+
+    expect(generatePage).toHaveBeenCalledTimes(1);
+    expect(prepareImprove).toHaveBeenCalledTimes(1);
+    expect(report().prs).toEqual(expect.arrayContaining([{ url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'teamevent', assessed: id }]));
+  });
+
+  it('takes no second assessed rewrite when the primary rewrite already is the assessed one', async () => {
+    seedAssessed();
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    prepareImprove.mockResolvedValue({ slug: 'teamevent', assessed: id, files: [] });
+    publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+    await run();
+
+    expect(prepareImprove).toHaveBeenCalledTimes(1);
+  });
+
+  it('proposes neither a merge nor a removal while the shop is unreachable', async () => {
+    seedAssessed({ merge_into: 'firmenfeier' });
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'teamevent', date: '2026-05-01', merged_at: '2026-05-02T00:00:00Z', queries: [] }, { slug: 'teamevent', date: '2026-07-01', merged_at: '2026-07-02T00:00:00Z', queries: [] }] });
+    seedState('index-status.json', { version: 1, entries: [{ url: 'https://demo.example/firmenfeier', verdict: 'PASS' }] });
+    loadCatalog.mockRejectedValue(new Error('Catalog unreachable'));
+    prepareImprove.mockResolvedValue(null);
+
+    await run();
+
+    expect(prepareImprove.mock.calls.some(([o]) => o.mergeAlert)).toBe(false);
+    expect(preparePrune).not.toHaveBeenCalled();
+  });
+
+  it('does not touch the pages of a sibling PR with the inbound-link edits of a new page', async () => {
+    seedAssessed();
+    discover.mockResolvedValue(keywordsData());
+    createPRs.mockResolvedValue(opened('https://github.com/o/demo/pull/1'));
+    prepareImprove.mockResolvedValue({ slug: 'teamevent', assessed: id, files: [{ path: 'resources/landing/de/teamevent.md', content: 'x' }, { path: 'resources/landing/de/ratgeber.md', content: 'y' }] });
+    publishImprove.mockResolvedValue('https://github.com/o/demo/pull/5');
+
+    await run();
+
+    expect(createPRs.mock.calls[0][0].exclude).toEqual(['teamevent', 'ratgeber']);
+  });
+});
+
 describe('empty backlog', () => {
   it('improves an existing page instead of generating a new one, as its own PR', async () => {
     discover.mockResolvedValue({ version: 1, keywords: [] });
