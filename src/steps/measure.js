@@ -137,7 +137,7 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
         }
       }
     }
-    if (entry.kind === 'rewrite' && !entry.revert_candidate && isRevertCandidate(entry)) {
+    if ((entry.kind === 'rewrite' || entry.kind === 'snippet') && !entry.revert_candidate && isRevertCandidate(entry)) {
       entry.revert_candidate = true;
       dirty = true;
       warnings.push(`Revert candidate: ${entry.slug} measured negative after 28 and 56 days (${entry.pr_url})`);

@@ -7,14 +7,15 @@ import { loadImprovements, saveImprovements, parseOverlayKey } from '../lib/impr
 import { strictValidateOpts } from '../lib/landings.js';
 import { contractOptions } from '../lib/catalog.js';
 import { validate } from './validate.js';
+import { whyBlock, predictedOf } from '../lib/queue.js';
 import * as github from '../lib/github.js';
 
 /**
  * Etappe C: a rewrite that measured worse than its control pages after 28 and 56 days
  * (`revert_candidate` in the change ledger) is taken back. The page files the rewrite PR
  * changed (the page and its counterpart, never other pages' link edits) go back to their
- * content before the merge, in one PR on `seo/revert/<slug>` that the gate merges like any
- * rewrite. Only when nothing touched those files since the merge; a PR that deleted or
+ * content before the merge, in one PR on `seo/revert/<slug>`, a draft that waits for the owner
+ * (undoing a change is a judgement call). Only when nothing touched those files since the merge; a PR that deleted or
  * renamed files (a merge of pages) is never reverted automatically.
  *
  * The outcome is stored on the ledger entry as `revert: { status, date, pr_url?, reason? }`
@@ -24,6 +25,9 @@ import * as github from '../lib/github.js';
  * normal cooldown, and once merged the ledger measures it as kind `revert`, which is never
  * itself a revert candidate (no flip-flop).
  */
+
+// A snippet test is measured and taken back like a rewrite.
+export const REVERTIBLE = new Set(['rewrite', 'snippet']);
 
 const lastSegment = (url) => String(url).split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop();
 
@@ -43,7 +47,7 @@ export function pageNames(entry) {
 export function revertCandidates({ changes, improvements }) {
   const out = [];
   for (const entry of changes.entries || []) {
-    if (entry.kind !== 'rewrite' || !entry.revert_candidate || entry.revert) continue;
+    if (!REVERTIBLE.has(entry.kind) || !entry.revert_candidate || entry.revert) continue;
     const later = (improvements.entries || []).filter(e => e.slug === entry.slug && !e.failed && e.pr_url !== entry.pr_url && e.date > entry.merged_at);
     if (later.some(e => e.merged_at)) out.push({ entry, skip: 'superseded' });
     else if (later.some(e => e.pr_url && !e.merged_at)) out.push({ entry, wait: 'open_rewrite' });
@@ -72,10 +76,18 @@ function checkOldVersion({ config, cwd, path, markdown }) {
   return validate(markdown, keyword, opts).errors;
 }
 
+// What the queue records about this revert: type, the measured effect, and the basis.
+function predictedRevert(entry) {
+  return predictedOf({ type: 'revert', score: entry.readings?.d56?.effect, why: `rewrite ${entry.pr_url} measured worse than its control pages after 28 and 56 days` });
+}
+
 function prBody(entry, paths) {
   const r = entry.readings || {};
   const fmt = (x) => x ? `${x.verdict}, effect ${Number(x.effect).toFixed(2)} on ${x.metric} (${x.window?.startDate} to ${x.window?.endDate})` : 'n/a';
+  const predicted = predictedRevert(entry);
   return [
+    whyBlock({ type: predicted.type, source: 'ledger', why: predicted.basis, score: predicted.score }).trimEnd(),
+    '',
     `The rewrite ${entry.pr_url} (merged ${entry.merged_at}) measured worse than its control pages twice:`,
     '',
     `- after 28 days: ${fmt(r.d28)}`,
@@ -90,11 +102,12 @@ function prBody(entry, paths) {
 }
 
 /**
- * Opens one revert PR per due ledger entry. Returns `[{ slug, status, pr_url?, reason? }]`
- * for the report. Never throws for a single page; GitHub errors become warnings.
- * `gh` and `check` are injectable for tests.
+ * Opens one revert PR per due ledger entry, at most `max` of them: the rest is `deferred` (reason
+ * `cap`) and keeps no `revert` field, so the next run decides it. Returns
+ * `[{ slug, status, pr_url?, reason? }]` for the report. Never throws for a single page; GitHub errors
+ * become warnings. `gh` and `check` are injectable for tests.
  */
-export async function revertWorseRewrites({ config, cwd = process.cwd(), dryRun = false, warnings = [], today = format(new Date()), gh = github, check = checkOldVersion }) {
+export async function revertWorseRewrites({ config, cwd = process.cwd(), dryRun = false, warnings = [], today = format(new Date()), gh = github, check = checkOldVersion, max = Infinity }) {
   if (config.auto_revert === false) return [];
   let changes;
   try {
@@ -107,6 +120,7 @@ export async function revertWorseRewrites({ config, cwd = process.cwd(), dryRun 
   const results = [];
   let changesDirty = false;
   let improvementsDirty = false;
+  let openedCount = 0;
   const decide = (entry, revert) => { entry.revert = { ...revert, date: today }; changesDirty = true; };
 
   for (const { entry, skip, wait } of revertCandidates({ changes, improvements })) {
@@ -114,6 +128,10 @@ export async function revertWorseRewrites({ config, cwd = process.cwd(), dryRun 
     if (skip) {
       if (!dryRun) decide(entry, { status: 'superseded' });
       results.push({ slug: entry.slug, status: 'superseded' });
+      continue;
+    }
+    if (openedCount >= max) {
+      results.push({ slug: entry.slug, status: 'deferred', reason: 'cap' });
       continue;
     }
     try {
@@ -159,14 +177,15 @@ export async function revertWorseRewrites({ config, cwd = process.cwd(), dryRun 
       }
       let url;
       try {
-        url = await gh.openPR({ repo: config.repo, branch, title: `seo: revert rewrite of ${entry.slug}`, body: prBody(entry, plan.paths), baseBranch: base });
+        url = await gh.openPR({ repo: config.repo, branch, title: `seo: revert rewrite of ${entry.slug}`, body: prBody(entry, plan.paths), baseBranch: base, draft: true });
       } catch (e) {
         try { await gh.deleteBranch({ repo: config.repo, branch }); } catch { /* the reconcile step drops orphans too */ }
         throw e;
       }
       decide(entry, { status: 'opened', pr_url: url });
-      improvements.entries.push({ slug: entry.slug, date: today, queries: [], pr_url: url, revert: true });
+      improvements.entries.push({ slug: entry.slug, date: today, queries: [], pr_url: url, revert: true, held: true, queue: predictedRevert(entry) });
       improvementsDirty = true;
+      openedCount++;
       results.push({ slug: entry.slug, status: 'opened', pr_url: url });
       console.log(chalk.green(`  Revert PR for ${entry.slug}: ${url}`));
     } catch (e) {

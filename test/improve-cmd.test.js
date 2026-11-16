@@ -599,6 +599,26 @@ describe('improve --slug', () => {
     expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: false }));
   });
 
+  it('opens a standalone rewrite as a normal PR, no draft and no held mark', async () => {
+    await publishImprove(await prepareImprove({ config: CONFIG }), { config: CONFIG, cwd: dir });
+    expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: false }));
+    expect(loadImprovements(dir).entries.at(-1)).not.toHaveProperty('held');
+  });
+
+  it('opens a queue action that does not merge by itself as a draft with the reason on top, and remembers the prediction', async () => {
+    const prepared = {
+      ...(await prepareImprove({ config: CONFIG })), auto: false,
+      why: { type: 'refresh', source: 'stale', why: 'title says 2025', score: 2 },
+      queue: { type: 'refresh', score: 2, basis: 'title says 2025' },
+    };
+    await publishImprove(prepared, { config: CONFIG, cwd: dir });
+
+    const args = openPR.mock.calls.at(-1)[0];
+    expect(args.draft).toBe(true);
+    expect(args.body.startsWith('## Warum diese Aktion\n\n- Typ: refresh\n- Quelle: stale')).toBe(true);
+    expect(loadImprovements(dir).entries.at(-1)).toMatchObject({ held: true, queue: { type: 'refresh', score: 2, basis: 'title says 2025' } });
+  });
+
   it('opens a plain rewrite PR without merge files when nothing is merged', async () => {
     targetedPage.mockReturnValue({ ...TARGET, mergeFrom: [] });
     const prepared = await prepareImprove({ config: CONFIG, slug: 'preise' });

@@ -10,7 +10,7 @@ import {
 } from '../lib/keywords.js';
 import { loadImprovements, saveImprovements, parseOverlayKey } from '../lib/improvements.js';
 import { overlayUrl } from '../lib/measure.js';
-import { loadChanges, saveChanges, upsertEntry, markSkipped } from '../lib/changes.js';
+import { loadChanges, saveChanges, upsertEntry, markSkipped, REWRITE_KINDS } from '../lib/changes.js';
 import { getPR, deleteBranch } from '../lib/github.js';
 import { strictValidateOpts } from '../lib/landings.js';
 import { commitState } from '../lib/state.js';
@@ -265,10 +265,12 @@ const withinBackfill = (date) => {
   return Number.isNaN(t) || Date.now() - t <= BACKFILL_DAYS * 24 * 60 * 60 * 1000;
 };
 
-function ledgerEntry({ kind, slug, urls, prUrl, mergedAt }) {
+// `predicted` is what the queue expected of the change (`{ type, score, basis }`), kept for the later look back.
+function ledgerEntry({ kind, slug, urls, prUrl, mergedAt, predicted }) {
   return {
     id: prUrl, kind, slug, urls, pr_url: prUrl, merged_at: mergedAt.slice(0, 10),
     baseline: null, readings: { d28: null, d56: null }, revert_candidate: false,
+    ...(predicted ? { predicted } : {}),
   };
 }
 
@@ -276,16 +278,18 @@ const baseUrlOf = (config) => String(config.base_url || '').replace(/\/+$/, '');
 
 function newPageEntry(kw, mergedAt, config) {
   const paths = kw.sitemap_slugs?.length ? kw.sitemap_slugs : [localeUrlPath(config, kw.target_slug, getDefaultLocale(config))];
-  return ledgerEntry({ kind: 'new', slug: kw.target_slug, urls: paths.map(p => baseUrlOf(config) + p), prUrl: kw.pr_url, mergedAt });
+  return ledgerEntry({ kind: 'new', slug: kw.target_slug, urls: paths.map(p => baseUrlOf(config) + p), prUrl: kw.pr_url, mergedAt, predicted: kw.queue });
 }
 
 // The counterpart is named by the page's `alternate:` field, which is only on disk after the merge was pulled.
-// A revert PR (improvements entry with `revert: true`) is measured like a rewrite, as kind `revert`.
+// A revert PR (improvements entry with `revert: true`) is measured like a rewrite, as kind `revert`, a
+// snippet test (`snippet: true`) as kind `snippet`.
 function rewriteEntry(item, mergedAt, config, cwd) {
   const base = baseUrlOf(config);
-  const kind = item.revert ? 'revert' : 'rewrite';
+  const kind = item.revert ? 'revert' : item.snippet ? 'snippet' : 'rewrite';
+  const predicted = item.queue;
   if (parseOverlayKey(item.slug)) {
-    return ledgerEntry({ kind, slug: item.slug, urls: [overlayUrl(config, item.slug)], prUrl: item.pr_url, mergedAt });
+    return ledgerEntry({ kind, slug: item.slug, urls: [overlayUrl(config, item.slug)], prUrl: item.pr_url, mergedAt, predicted });
   }
   const urls = [base + localeUrlPath(config, item.slug, getDefaultLocale(config))];
   try {
@@ -293,7 +297,7 @@ function rewriteEntry(item, mergedAt, config, cwd) {
     const alternate = config.counterpart_locale ? parseFrontmatter(readFileSync(file, 'utf8')).parsed?.alternate : null;
     if (alternate) urls.push(`${base}${config.counterpart_url_prefix || ''}/${alternate}`);
   } catch { /* page not on disk: measured without its counterpart */ }
-  return ledgerEntry({ kind, slug: item.slug, urls, prUrl: item.pr_url, mergedAt });
+  return ledgerEntry({ kind, slug: item.slug, urls, prUrl: item.pr_url, mergedAt, predicted });
 }
 
 // Merged PRs the ledger does not know yet: published keywords (the main loop skips
@@ -329,7 +333,7 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
     if (!item.pr_url || !item.merged_at || item.prune || skipped.has(item.pr_url)) continue;
     const entry = known.get(item.pr_url);
     if (entry) {
-      if ((entry.kind === 'rewrite' || entry.kind === 'revert') && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
+      if (REWRITE_KINDS.includes(entry.kind) && entry.urls.length === 1) upsertEntry(changes, rewriteEntry(item, entry.merged_at, config, cwd));
       continue;
     }
     const { state, mergedAt } = await readPR(config.repo, item.pr_url, warnings);

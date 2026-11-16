@@ -64,7 +64,30 @@ describe('revert of rewrites that measured worse', () => {
     ]);
     expect(gh.calls.prs[0].body).toContain(PR);
     expect(read('changes.json').entries[0].revert).toEqual({ status: 'opened', pr_url: 'https://github.com/o/r/pull/9', date: '2026-11-05' });
-    expect(read('improvements.json').entries).toEqual([{ slug: 'team', date: '2026-11-05', queries: [], pr_url: 'https://github.com/o/r/pull/9', revert: true }]);
+    expect(read('improvements.json').entries).toEqual([expect.objectContaining({ slug: 'team', date: '2026-11-05', queries: [], pr_url: 'https://github.com/o/r/pull/9', revert: true, held: true })]);
+  });
+
+  it('opens the revert as a draft with the reason for the action on top', async () => {
+    write([entry()]);
+    const gh = fakeGh();
+    await run(gh);
+    expect(gh.calls.prs[0].draft).toBe(true);
+    expect(gh.calls.prs[0].body.startsWith('## Warum diese Aktion\n\n- Typ: revert\n- Quelle: ledger')).toBe(true);
+  });
+
+  it('opens at most max reverts and leaves the rest undecided for the next run', async () => {
+    write([entry(), entry({ id: 'https://github.com/o/r/pull/8', pr_url: 'https://github.com/o/r/pull/8', slug: 'two', urls: ['https://a.de/two'] })]);
+    const gh = fakeGh({ files: [{ path: 'content/landing/de/team.md', status: 'modified' }, { path: 'content/landing/de/two.md', status: 'modified' }] });
+    const out = await run(gh, { max: 1 });
+    expect(out.map(r => [r.slug, r.status])).toEqual([['team', 'opened'], ['two', 'deferred']]);
+    expect(gh.calls.commits).toHaveLength(1);
+    expect(read('changes.json').entries[1].revert).toBeUndefined();
+  });
+
+  it('takes back a snippet test like a rewrite', async () => {
+    write([entry({ kind: 'snippet' })]);
+    const gh = fakeGh();
+    expect((await run(gh))[0].status).toBe('opened');
   });
 
   it('decides each entry once', async () => {

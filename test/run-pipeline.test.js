@@ -663,6 +663,33 @@ describe('counterpart failure limit', () => {
   });
 });
 
+describe('change ledger kinds and predictions', () => {
+  const URL_A = 'https://github.com/o/demo/pull/21';
+  const URL_B = 'https://github.com/o/demo/pull/22';
+  const predicted = { type: 'snippet_test', score: 900, basis: 'snippet problem' };
+
+  it('records a merged snippet test as kind snippet and keeps what the queue predicted', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    seedState('improvements.json', { version: 1, entries: [{ slug: 'preise', date: '2026-10-01', pr_url: URL_A, snippet: true, queue: predicted }] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: '2026-10-03T09:00:00Z' });
+
+    await run();
+
+    expect(loadChanges(dir).entries).toEqual([expect.objectContaining({ slug: 'preise', kind: 'snippet', predicted })]);
+  });
+
+  it('records a merged new page with the prediction stored on its keyword', async () => {
+    discover.mockResolvedValue({ version: 1, keywords: [] });
+    const queue = { type: 'new_page', score: 9, basis: 'GSC demand' };
+    seedState('keywords.json', { keywords: [{ keyword: 'k', status: 'pr_opened', score: 9, target_slug: 'k-seite', pr_url: URL_B, pr_opened_at: '2026-10-01', queue }] });
+    getPR.mockResolvedValue({ state: 'merged', mergedAt: '2026-10-03T09:00:00Z' });
+
+    await run();
+
+    expect(loadChanges(dir).entries).toEqual([expect.objectContaining({ slug: 'k-seite', kind: 'new', predicted: queue })]);
+  });
+});
+
 describe('behaviour matrix of the improve slots', () => {
   const id = 'deindexed:https://demo.example/teamevent';
   const seedAssessed = (extra = {}) => {
