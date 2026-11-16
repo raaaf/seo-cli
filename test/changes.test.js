@@ -63,6 +63,65 @@ describe('changes: ledger file', () => {
   });
 });
 
+describe('sitemap resubmit after a hand merge', () => {
+  const submit = vi.fn();
+  const resubmit = (extra = {}) => reconcileState({ config: CONFIG, cwd: dir, warnings, submit, ...extra });
+  beforeEach(() => submit.mockReset());
+
+  it('submits once for the held drafts merged in this run, and for no auto-merged PR', async () => {
+    saveImprovements({ entries: [
+      { slug: 'preise', date: '2026-10-01', queries: [], pr_url: IMP_PR, held: true },
+      { slug: 'kontakt', date: '2026-10-01', queries: [], pr_url: 'https://github.com/o/r/pull/3', held: true },
+      { slug: 'team', date: '2026-10-01', queries: [], pr_url: 'https://github.com/o/r/pull/4' },
+    ] }, dir);
+    getPR.mockResolvedValue(merged('2026-10-05T08:00:00Z'));
+
+    await resubmit();
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit.mock.calls[0][0].urls).toEqual(['https://a.de/preise', 'https://a.de/kontakt']);
+  });
+
+  it('does not submit for an auto-merged PR', async () => {
+    seedImprovement();
+    getPR.mockResolvedValue(merged('2026-10-05T08:00:00Z'));
+    await resubmit();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('does not submit for a held draft that is still open or was merged in an earlier run', async () => {
+    saveImprovements({ entries: [
+      { slug: 'preise', date: '2026-10-01', queries: [], pr_url: IMP_PR, held: true },
+      { slug: 'old', date: '2026-09-01', queries: [], pr_url: 'https://github.com/o/r/pull/5', held: true, merged_at: '2026-09-03' },
+    ] }, dir);
+    getPR.mockResolvedValue({ state: 'open', mergedAt: null, createdAt: daysAgo(10), headRef: 'x' });
+    await resubmit();
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it('turns a failing submit into a warning', async () => {
+    saveImprovements({ entries: [{ slug: 'preise', date: '2026-10-01', queries: [], pr_url: IMP_PR, held: true }] }, dir);
+    getPR.mockResolvedValue(merged('2026-10-05T08:00:00Z'));
+    const failing = async () => { throw new Error('GSC 500'); };
+    await resubmit({ submit: failing });
+    expect(warnings).toContain('Sitemap resubmit after a hand merge failed: GSC 500');
+  });
+
+  it('with watch.check_deploy only submits pages that are live', async () => {
+    saveImprovements({ entries: [
+      { slug: 'preise', date: '2026-10-01', queries: [], pr_url: IMP_PR, held: true },
+      { slug: 'kontakt', date: '2026-10-01', queries: [], pr_url: 'https://github.com/o/r/pull/3', held: true },
+    ] }, dir);
+    getPR.mockResolvedValue(merged('2026-10-05T08:00:00Z'));
+    const fetchPage = async (url) => ({ status: url.endsWith('/kontakt') ? 404 : 200 });
+
+    await resubmit({ config: { ...CONFIG, watch: { check_deploy: true } }, fetchPage });
+
+    expect(submit.mock.calls[0][0].urls).toEqual(['https://a.de/preise']);
+    expect(warnings.join('\n')).toMatch(/skipped for 1 page\(s\)/);
+  });
+});
+
 describe('changes: reconcileState writes the ledger', () => {
   it('adds an entry for a merged keyword PR, urls from sitemap_slugs, and stores published_at', async () => {
     seedKeyword();

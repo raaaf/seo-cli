@@ -38,6 +38,8 @@ import { loadIndexStatus } from '../lib/index-status.js';
 import { buildQueue, nextInLine, AUTO_TYPES, predictedOf } from '../lib/queue.js';
 import { revertWorseRewrites } from '../steps/revert.js';
 import { collectCandidates, engagementOf, saveQueue, reportQueue } from '../steps/queue.js';
+import { submitFixes } from '../steps/diagnose.js';
+import { fetchLive, isLive } from '../steps/watch.js';
 
 // Slugs of every page a prepared rewrite PR writes or deletes (rewrite, counterpart, merge, link edits).
 function touchedSlugs(preparedList) {
@@ -388,6 +390,24 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
   return keywordsChanged;
 }
 
+// A draft the owner merged by hand is not seen by the gate, which resubmits the sitemap after a merge it
+// did itself. Once per run, for the held drafts found merged in this run; with `watch.check_deploy` only
+// for pages that are live. A failure is a warning, never an error.
+async function resubmitAfterHandMerge({ config, cwd, entries, submit, fetchPage, warnings }) {
+  try {
+    let urls = entries.map(e => baseUrlOf(config) + localeUrlPath(config, e.prune ? e.into : e.slug, getDefaultLocale(config)));
+    if (config.watch?.check_deploy) {
+      const live = [];
+      for (const url of urls) if (await isLive({ slug: url, urls: [url] }, { config, cwd, fetchPage }) === true) live.push(url);
+      if (live.length < urls.length) warnings.push(`Sitemap resubmit after a hand merge skipped for ${urls.length - live.length} page(s): not live yet`);
+      urls = live;
+    }
+    if (urls.length) await submit({ config, urls });
+  } catch (e) {
+    warnings.push(`Sitemap resubmit after a hand merge failed: ${e.message}`);
+  }
+}
+
 /**
  * Brings keyword and improvement status in line with the real PR state before
  * anything new is proposed. Merged keyword PR: `published`. Closed without
@@ -395,7 +415,7 @@ async function backfillLedger({ config, cwd, changes, keywords, improvements, wa
  * improvement keeps its cooldown, a closed one loses its entry so the page can
  * be picked again.
  */
-export async function reconcileState({ config, cwd, warnings }) {
+export async function reconcileState({ config, cwd, warnings, submit = submitFixes, fetchPage = fetchLive }) {
   const keywords = loadKeywords(cwd);
   let keywordsChanged = false;
   let changes = null;
@@ -433,6 +453,7 @@ export async function reconcileState({ config, cwd, warnings }) {
 
   const improvements = loadImprovements(cwd);
   const kept = [];
+  const handMerged = [];
   let improvementsChanged = false;
   for (const entry of improvements.entries) {
     if (!entry.pr_url || entry.merged_at) { kept.push(entry); continue; }
@@ -444,6 +465,7 @@ export async function reconcileState({ config, cwd, warnings }) {
     }
     if (state === 'merged') {
       entry.merged_at = mergedAt ?? format(new Date());
+      if (entry.held) handMerged.push(entry);
       // A removal deletes the page: nothing to measure.
       if (mergedAt && changes && !entry.prune) upsertEntry(changes, rewriteEntry(entry, mergedAt, config, cwd));
       improvementsChanged = true;
@@ -451,6 +473,7 @@ export async function reconcileState({ config, cwd, warnings }) {
     kept.push(entry);
   }
   improvements.entries = kept;
+  if (handMerged.length) await resubmitAfterHandMerge({ config, cwd, entries: handMerged, submit, fetchPage, warnings });
 
   if (changes && await backfillLedger({ config, cwd, changes, keywords, improvements, warnings })) keywordsChanged = true;
 
