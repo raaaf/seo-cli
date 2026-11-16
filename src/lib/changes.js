@@ -4,9 +4,12 @@ import { format } from './date.js';
 
 export const CHANGES_FILE = 'seo/changes.json';
 
+// Kinds of change to an existing page (measured against control pages), as opposed to a new page.
+export const REWRITE_KINDS = ['rewrite', 'snippet', 'revert'];
+
 /**
- * Ledger of every merged seo PR: `{ id (PR url), kind: 'new' | 'rewrite' | 'revert', slug,
- * urls, pr_url, merged_at, baseline, readings: { d28, d56 }, revert_candidate,
+ * Ledger of every merged seo PR: `{ id (PR url), kind: 'new' | 'rewrite' | 'snippet' | 'revert', slug,
+ * urls, pr_url, merged_at, baseline, readings: { d28, d56 }, revert_candidate, predicted? ({ type, score, basis }, what the queue expected),
  * revert? ({ status, date, pr_url?, reason? }, set by steps/revert.js), unmapped? }`, plus `skipped: [{ id, reason }]` for merged PRs that were read and will
  * never get an entry (no real merge date, too old), so they are not read again.
  * A corrupt file throws instead of reading as empty, so the next save cannot
@@ -40,7 +43,7 @@ export function upsertEntry(data, entry) {
     data.entries.push(entry);
     return true;
   }
-  if ((existing.kind === 'rewrite' || existing.kind === 'revert') && existing.urls.length === 1 && entry.urls.length > 1) existing.urls = entry.urls;
+  if (REWRITE_KINDS.includes(existing.kind) && existing.urls.length === 1 && entry.urls.length > 1) existing.urls = entry.urls;
   return false;
 }
 

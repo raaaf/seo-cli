@@ -108,16 +108,36 @@ describe('improveCommand', () => {
       expect(prepared).toMatchObject({ slug: 'teamevent', assessed: `deindexed:${BASE}/teamevent` });
     });
 
-    it('assessedOnly passes over the season and the GSC pick, and returns null without an assessed page', async () => {
+    it('takes the pick of the queue and selects nothing itself, neither season nor assessed nor GSC', async () => {
       const seasonCfg = { ...CONFIG, base_url: BASE, seasons: [{ name: 'Muttertag', peak: new Date(Date.now() + 20 * 86400000).toISOString().slice(5, 10), pages: ['teamevent'] }] };
-      expect(await prepareImprove({ config: seasonCfg, assessedOnly: true }, dir)).toBeNull();
-      expect(fetchPagePerformance).not.toHaveBeenCalled();
-      expect(improvePage).not.toHaveBeenCalled();
-
       writeAlerts();
-      const prepared = await prepareImprove({ config: seasonCfg, assessedOnly: true }, dir);
+      const pick = { kind: 'assessed', slug: 'teamevent', alert_id: `deindexed:${BASE}/teamevent`, assessment: { assessed_at: '2026-11-05', likely_causes: [], actions: [{ action: 'Zahlen streichen' }] } };
+      const prepared = await prepareImprove({ config: seasonCfg, pick }, dir);
       expect(prepared).toMatchObject({ slug: 'teamevent', assessed: `deindexed:${BASE}/teamevent` });
       expect(prepared.season).toBeUndefined();
+      expect(fetchPagePerformance).not.toHaveBeenCalled();
+    });
+
+    it('rewrites the full GSC page of a pick, so its queries reach the prompt', async () => {
+      const page = { ...PAGE, kind: 'near_page1' };
+      await prepareImprove({ config: CONFIG, pick: { kind: 'gsc', page } }, dir);
+      expect(improvePage.mock.calls[0][0]).toBe(page);
+      expect(improvePage.mock.calls[0][0].queries).toEqual(PAGE.queries);
+      expect(selectPage).not.toHaveBeenCalled();
+      expect(fetchPagePerformance).not.toHaveBeenCalled();
+    });
+
+    it('rewrites a stale page with the refresh diagnosis', async () => {
+      await prepareImprove({ config: CONFIG, pick: { kind: 'stale', slug: 'teamevent', reason: 'title says 2025' } }, dir);
+      expect(improvePage.mock.calls[0][0]).toMatchObject({ slug: 'teamevent', stale: true });
+      expect(improvePage.mock.calls[0][0].diagnosis).toMatch(/up to date/);
+    });
+
+    it('hands an overlay pick to the overlay step with the rows of the queue', async () => {
+      prepareOverlay.mockResolvedValue({ slug: 'product:x' });
+      const rows = [{ url: 'u' }];
+      expect(await prepareImprove({ config: CONFIG, pick: { kind: 'overlay', rows } }, dir)).toEqual({ slug: 'product:x' });
+      expect(prepareOverlay.mock.calls[0][0]).toMatchObject({ rows });
     });
 
     it('hands an assessed recipe page (no landing pages) to the overlay with the assessment as brief', async () => {
@@ -129,7 +149,7 @@ describe('improveCommand', () => {
       }] }));
       prepareOverlay.mockResolvedValue({ slug: 'recipe:shakshuka' });
       const recipeCfg = { project: 'topf', locale: 'de', locales: ['de'], repo: 'o/topf', base_url: BASE, overlays: { recipes: 'backend/content/seo/recipes' } };
-      expect(await prepareImprove({ config: recipeCfg, assessedOnly: true }, dir)).toEqual({ slug: 'recipe:shakshuka' });
+      expect(await prepareImprove({ config: recipeCfg }, dir)).toEqual({ slug: 'recipe:shakshuka' });
       const { target } = prepareOverlay.mock.calls[0][0];
       expect(target).toMatchObject({ slug: 'recipe:shakshuka', assessed: `deindexed:${BASE}/rezept/shakshuka` });
       expect(target.diagnosis).toContain('- Rezept erklären');
@@ -139,7 +159,8 @@ describe('improveCommand', () => {
 
     it('does not pick a page a sibling PR touches (skip)', async () => {
       writeAlerts();
-      expect(await prepareImprove({ config: { ...CONFIG, base_url: BASE }, assessedOnly: true, skip: ['teamevent'] }, dir)).toBeNull();
+      await prepareImprove({ config: { ...CONFIG, base_url: BASE }, skip: ['teamevent'] }, dir);
+      expect(improvePage.mock.calls.every(([page]) => !page.assessed)).toBe(true);
     });
 
     it('puts an assessed page whose rewrite fails on the cooldown', async () => {
@@ -297,7 +318,7 @@ describe('improveCommand', () => {
       ]);
     });
 
-    it('is not recorded when the branch exists, which is reported as a warning', async () => {
+    it('takes only the failed cooldown when the branch exists, which is reported as a warning', async () => {
       createBranchAndCommit.mockRejectedValue(Object.assign(new Error('exists'), { code: 'BRANCH_EXISTS' }));
       const warnings = [];
 
@@ -305,7 +326,8 @@ describe('improveCommand', () => {
 
       expect(url).toBeNull();
       expect(openPR).not.toHaveBeenCalled();
-      expect(loadImprovements(dir).entries).toEqual([]);
+      // A Search Console pick takes the failed cooldown, so the page does not hit the open branch every week.
+      expect(loadImprovements(dir).entries).toEqual([expect.objectContaining({ slug: 'preise', failed: true })]);
       expect(warnings[0]).toMatch(/seo\/improve\/preise already exists/);
     });
 
@@ -575,6 +597,26 @@ describe('improve --slug', () => {
   it('opens a manual merge as a normal PR', async () => {
     await publishImprove(await prepareImprove({ config: CONFIG, slug: 'preise', mergeFrom: ['alt-a', 'alt-b'] }), { config: CONFIG, cwd: dir });
     expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: false }));
+  });
+
+  it('opens a standalone rewrite as a normal PR, no draft and no held mark', async () => {
+    await publishImprove(await prepareImprove({ config: CONFIG }), { config: CONFIG, cwd: dir });
+    expect(openPR).toHaveBeenCalledWith(expect.objectContaining({ draft: false }));
+    expect(loadImprovements(dir).entries.at(-1)).not.toHaveProperty('held');
+  });
+
+  it('opens a queue action that does not merge by itself as a draft with the reason on top, and remembers the prediction', async () => {
+    const prepared = {
+      ...(await prepareImprove({ config: CONFIG })), auto: false,
+      why: { type: 'refresh', source: 'stale', why: 'title says 2025', score: 2 },
+      queue: { type: 'refresh', score: 2, basis: 'title says 2025' },
+    };
+    await publishImprove(prepared, { config: CONFIG, cwd: dir });
+
+    const args = openPR.mock.calls.at(-1)[0];
+    expect(args.draft).toBe(true);
+    expect(args.body.startsWith('## Warum diese Aktion\n\n- Typ: refresh\n- Quelle: stale')).toBe(true);
+    expect(loadImprovements(dir).entries.at(-1)).toMatchObject({ held: true, queue: { type: 'refresh', score: 2, basis: 'title says 2025' } });
   });
 
   it('opens a plain rewrite PR without merge files when nothing is merged', async () => {

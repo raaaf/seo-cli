@@ -408,3 +408,82 @@ describe('measure-step: rybbit', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('control fallback to the other URLs of the site', () => {
+  const SITE = Array.from({ length: 10 }, (_, i) => `https://a.de/blog/post-${i}`);
+  // 8 landing controls (the other 6 files on disk have no row) plus 10 site URLs, all at the target's level.
+  const mix = (stage, spread = 8) => ({
+    ...Object.fromEntries(CONTROLS.slice(0, 8).map((s, i) => [url(s), [stage === 'baseline' ? 1000 : 1000 + i * spread]])),
+    ...Object.fromEntries(SITE.map((u, i) => [u, [stage === 'baseline' ? 1000 : 1000 + (i + 8) * spread]])),
+  });
+  const baseline = { window: W.baseline, clicks: 0, impressions: 1000, ctr: 0, position: 5 };
+
+  it('measures against landing and site controls when fewer than 12 landing pages qualify, and marks the reading', async () => {
+    seed(entry({ baseline }));
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...mix('baseline') },
+      d28: { [url('target')]: [3000], ...mix('after') },
+    });
+
+    await run({ today: '2026-09-15' });
+
+    expect(loadChanges(dir).entries[0].readings.d28).toMatchObject({ verdict: 'positive', controls: 18, controls_source: 'site' });
+  });
+
+  it('does not mark a reading that has enough landing controls', async () => {
+    seed(entry({ baseline }));
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline'), ...mix('baseline') },
+      d28: { [url('target')]: [3000], ...controlsAt(1000, 'after'), ...mix('after') },
+    });
+
+    await run({ today: '2026-09-15' });
+
+    const reading = loadChanges(dir).entries[0].readings.d28;
+    expect(reading.verdict).toBe('positive');
+    expect(reading).not.toHaveProperty('controls_source');
+  });
+
+  it('accepts only half the spread among site controls that landing controls may have', async () => {
+    // Ratios from 1.0 to about 3.2: p90/p10 is about 2.5, inside 4 and outside 2.
+    const wide = (stage) => mix(stage, 130);
+    seed(entry({ baseline }));
+    mockGsc({ baseline: { [url('target')]: [1000], ...mix('baseline') }, d28: { [url('target')]: [3000], ...wide('after') } });
+    await run({ today: '2026-09-15' });
+    expect(loadChanges(dir).entries[0].readings.d28).toMatchObject({ verdict: 'insufficient_data', reason: 'dispersion', controls_source: 'site' });
+
+    seed(entry({ baseline }));
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline') },
+      d28: { [url('target')]: [3000], ...Object.fromEntries(CONTROLS.map((s, i) => [url(s), [1000 + i * 190]])) },
+    });
+    await run({ today: '2026-09-15' });
+    expect(loadChanges(dir).entries[0].readings.d28.verdict).not.toBe('insufficient_data');
+  });
+
+  it('never makes a revert candidate out of readings measured against site controls', async () => {
+    seed(entry({ baseline, readings: { d28: { verdict: 'negative', effect: 0.5, controls_source: 'site' }, d56: null } }));
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...mix('baseline') },
+      d56: { [url('target')]: [120], ...mix('after') },
+    });
+
+    await run();
+
+    expect(loadChanges(dir).entries[0]).toMatchObject({ revert_candidate: false, readings: { d56: { verdict: 'negative', controls_source: 'site' } } });
+  });
+});
+
+describe('snippet tests are measured like rewrites', () => {
+  it('flags a snippet test as revert candidate after two negative readings', async () => {
+    seed(entry({ kind: 'snippet', baseline: { window: W.baseline, clicks: 0, impressions: 1000, ctr: 0, position: 5 }, readings: { d28: { verdict: 'negative', effect: 0.5 }, d56: null } }));
+    mockGsc({
+      baseline: { [url('target')]: [1000], ...controlsAt(1000, 'baseline') },
+      d56: { [url('target')]: [120], ...controlsAt(1000, 'after') },
+    });
+
+    await run();
+
+    expect(loadChanges(dir).entries[0].revert_candidate).toBe(true);
+  });
+});

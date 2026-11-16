@@ -13,6 +13,7 @@ import { stripHtml } from '../lib/site-fetch.js';
 import { fillTemplate } from '../lib/template.js';
 import { MODELS } from '../lib/models.js';
 import { loadAlerts, saveAlerts } from '../lib/watch.js';
+import { REASSESS_AFTER_DAYS, trimSlash, lastChangeDate, isWaiting } from '../lib/recrawl.js';
 import { contentOwnerFor } from '../lib/content-owners.js';
 import { counterpartPairs, slugForUrl, recipeKeyForUrl } from '../lib/assessed-rewrite.js';
 
@@ -20,7 +21,6 @@ const ASSESS_PROMPT = readFileSync(new URL('../prompts/assess.md', import.meta.u
 
 // Weekly run, one call per alert: a handful of calls a month, not one per day.
 const MAX_ASSESSMENTS = 3;
-const REASSESS_AFTER_DAYS = 28;
 const PAGE_WORDS = 4000;
 const MAX_FACT_URLS = 10;
 const CHANGES_WINDOW_DAYS = 56;
@@ -135,8 +135,6 @@ const mergeable = (alert, owner, recipe = false) => alert.kind === 'deindexed' &
 
 const hasNoText = (alert) => alert.diagnosis.codes?.includes('no_text') || alert.diagnosis.urls.some(u => u.findings.some(f => f.code === 'no_text'));
 
-const trimSlash = u => String(u).replace(/\/+$/, '');
-
 // Ledger entries; empty when the ledger is unreadable.
 function loadLedger(cwd) {
   try {
@@ -144,21 +142,6 @@ function loadLedger(cwd) {
   } catch {
     return [];
   }
-}
-
-// Newest merge of any age that concerns the alert: any entry for site_not_indexed, else entries touching one of its URLs. Null when there is none.
-function lastChangeDate(alert, ledger) {
-  const urls = new Set((alert.diagnosis?.urls ?? []).map(u => trimSlash(u.url)));
-  return ledger
-    .filter(e => alert.kind === 'site_not_indexed' || (e.urls ?? []).some(u => urls.has(trimSlash(u))))
-    .map(e => e.merged_at).filter(Boolean).sort().at(-1) ?? null;
-}
-
-// Bounded wait: after REASSESS_AFTER_DAYS the alert is assessed anyway, the stored crawl time can lag.
-function isWaiting(alert, lastChange, entries, today) {
-  if (!lastChange || lastChange <= addDays(today, -REASSESS_AFTER_DAYS)) return false;
-  const urls = new Set(alert.diagnosis.urls.map(u => u.url));
-  return !entries.some(e => urls.has(e.url) && e.lastCrawlTime && e.lastCrawlTime.slice(0, 10) > lastChange);
 }
 
 function isDue(alert, today, lastChange) {
@@ -224,6 +207,8 @@ function engagementBlock(pageUrl, pages) {
   return `\n\nVisitor behaviour on the first URL (Rybbit, last 4 weeks): ${page.entries} entries (sessions starting on the page), bounce rate ${page.bounce_rate ?? 'n/a'}%, time on page ${page.time_on_page ?? 'n/a'} s. Visitors do arrive, so judge the content, not only the index state.`;
 }
 
+const KIND_LABEL = { new: 'new page', rewrite: 'rewrite', snippet: 'snippet test', revert: 'revert' };
+
 function recentChanges(cwd, today, warnings) {
   try {
     const since = addDays(today, -CHANGES_WINDOW_DAYS);
@@ -231,7 +216,7 @@ function recentChanges(cwd, today, warnings) {
       .filter(e => e.merged_at >= since && e.merged_at <= today)
       .sort((a, b) => b.merged_at.localeCompare(a.merged_at))
       .slice(0, MAX_CHANGES)
-      .map(e => `- ${e.merged_at}: ${e.kind === 'new' ? 'new page' : 'rewrite'} ${e.slug}${e.revert_candidate ? ' (performs worse than before, may need reverting)' : ''}`);
+      .map(e => `- ${e.merged_at}: ${KIND_LABEL[e.kind] ?? 'rewrite'} ${e.slug}${e.revert_candidate ? ' (performs worse than before, may need reverting)' : ''}`);
     return lines.join('\n') || 'none';
   } catch {
     warnings.push('Assessment: changes.json unreadable');

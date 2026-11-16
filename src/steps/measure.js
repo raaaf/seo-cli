@@ -7,7 +7,7 @@ import { parseOverlayKey } from '../lib/improvements.js';
 import { rybbitActive, landingSlugs, getRybbitStats, readingStats } from '../lib/signals/rybbit.js';
 import {
   addDays, windowsFor, isDue, normalizeUrl, urlToSlug, aggregatePages, sumMetrics, selectControls,
-  verdictFor, isOverlap, isRevertCandidate,
+  verdictFor, isOverlap, isRevertCandidate, MIN_CONTROLS,
 } from '../lib/measure.js';
 
 const READINGS = ['d28', 'd56'];
@@ -27,19 +27,22 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
   const slugsByLocale = landingSlugs(config, cwd);
   const rybbitOn = rybbitActive(config, warnings);
 
-  // Known landing pages with their totals in one window. A window without a single
-  // impression means a wrong property or an outage, never a measurement.
+  // Known landing pages with their totals in one window, and in `others` every other URL of the site
+  // (the control fallback). A window without a single impression means a wrong property or an
+  // outage, never a measurement.
   async function windowPages(window) {
     const rows = await queryPageTotals(config.gsc_property, { ...window, pageFilter: config.base_url || null });
     const pages = new Map();
+    const others = new Map();
     for (const [url, totals] of aggregatePages(rows)) {
       const page = urlToSlug(url, config, slugsByLocale);
       if (page) pages.set(url, { ...page, ...totals });
+      else others.set(url, totals);
     }
     if (![...pages.values()].some(p => p.impressions > 0)) {
       throw new Error(`GSC returned no landing page impressions for ${window.startDate} to ${window.endDate}`);
     }
-    return pages;
+    return { pages, others };
   }
 
   // A page whose URL maps to no known landing page (slug gone, other URL scheme) cannot be measured.
@@ -65,15 +68,15 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     const reading = { measured_at: today, window };
 
     if (entry.kind === 'new') {
-      const pages = await windowPages(window);
+      const { pages } = await windowPages(window);
       return { ...reading, ...sumMetrics(entry.urls.map(u => pages.get(normalizeUrl(u)) ?? NONE)) };
     }
 
     if (isOverlap(entry, changes.entries, { startDate: windows.baseline.startDate, endDate: window.endDate })) {
       return { ...reading, verdict: 'insufficient_data', reason: 'overlap' };
     }
-    const baselinePages = await windowPages(windows.baseline);
-    const afterPages = await windowPages(window);
+    const { pages: baselinePages, others: baselineOthers } = await windowPages(windows.baseline);
+    const { pages: afterPages, others: afterOthers } = await windowPages(window);
     const target = normalizeUrl(entry.urls[0]);
     entry.baseline ??= { window: windows.baseline, ...(baselinePages.get(target) ?? NONE) };
     // A row with small numbers is a real value; no row at all is not a zero.
@@ -91,10 +94,21 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
     const candidates = [...baselinePages]
       .filter(([url, page]) => page.locale === def && !touched.has(url) && Boolean(page.overlay) === isOverlay)
       .map(([url, page]) => ({ key: url, impressions: page.impressions }));
-    const controls = selectControls(entry.baseline.impressions, candidates)
-      .map(c => ({ before: baselinePages.get(c.key), after: afterPages.get(c.key) ?? NONE }));
+    let picked = selectControls(entry.baseline.impressions, candidates);
+    // Fewer than 12 landing controls: the other URLs of the site join them (blog, home, tools), a looser
+    // comparison that is marked on the reading and never leads to a revert.
+    let fromSite = false;
+    if (!isOverlay && picked.length < MIN_CONTROLS) {
+      const site = [...baselineOthers].filter(([url]) => !touched.has(url)).map(([url, page]) => ({ key: url, impressions: page.impressions }));
+      const combined = selectControls(entry.baseline.impressions, [...candidates, ...site]);
+      if (combined.some(c => baselineOthers.has(c.key))) { picked = combined; fromSite = true; }
+    }
+    const beforeAll = new Map([...baselinePages, ...baselineOthers]);
+    const afterAll = new Map([...afterPages, ...afterOthers]);
+    const controls = picked.map(c => ({ before: beforeAll.get(c.key), after: afterAll.get(c.key) ?? NONE }));
+    const verdict = verdictFor({ target: { before: entry.baseline, after }, controls, siteControls: fromSite });
 
-    return { ...reading, ...after, ...verdictFor({ target: { before: entry.baseline, after }, controls }) };
+    return { ...reading, ...after, ...verdict, ...(fromSite ? { controls_source: 'site' } : {}) };
   }
 
   let due = 0;
@@ -137,7 +151,7 @@ export async function measure({ config, cwd = process.cwd(), dryRun = false, war
         }
       }
     }
-    if (entry.kind === 'rewrite' && !entry.revert_candidate && isRevertCandidate(entry)) {
+    if ((entry.kind === 'rewrite' || entry.kind === 'snippet') && !entry.revert_candidate && isRevertCandidate(entry)) {
       entry.revert_candidate = true;
       dirty = true;
       warnings.push(`Revert candidate: ${entry.slug} measured negative after 28 and 56 days (${entry.pr_url})`);

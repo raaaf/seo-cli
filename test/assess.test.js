@@ -173,6 +173,7 @@ describe('assess', () => {
     mkdirSync(join(dir, 'seo'), { recursive: true });
     writeFileSync(join(dir, 'seo/changes.json'), JSON.stringify({ version: 1, entries: [
       { kind: 'rewrite', slug: 'bad-page', urls: [], merged_at: '2026-09-28', revert_candidate: true },
+      { kind: 'snippet', slug: 'snip-page', urls: [], merged_at: '2026-09-27' },
       { kind: 'new', slug: 'fine-page', urls: [], merged_at: '2026-09-27' },
     ] }));
 
@@ -181,6 +182,7 @@ describe('assess', () => {
 
     const prompt = complete.mock.calls[0][0].prompt;
     expect(prompt).toContain('- 2026-09-28: rewrite bad-page (performs worse than before, may need reverting)');
+    expect(prompt).toContain('- 2026-09-27: snippet test snip-page');
     expect(prompt).toContain('- 2026-09-27: new page fine-page\n');
   });
 

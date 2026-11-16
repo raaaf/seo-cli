@@ -534,6 +534,15 @@ describe('improvement history', () => {
   });
 });
 
+describe('closed held draft', () => {
+  it('measures the cooldown from the closing day', () => {
+    const data = { entries: [{ slug: 'late', date: '2020-01-01', held: true, pr_url: 'x', closed_at: new Date().toISOString().slice(0, 10) }] };
+    expect(slugsInCooldown(data).has('late')).toBe(true);
+    data.entries[0].closed_at = '2020-02-01';
+    expect(slugsInCooldown(data).has('late')).toBe(false);
+  });
+});
+
 describe('keywordFor', () => {
   it('falls back to the slug words when a targeted page has no GSC queries', () => {
     expect(keywordFor({ slug: 'abschlussfeier-planen', queries: [] }).keyword).toBe('abschlussfeier planen');
