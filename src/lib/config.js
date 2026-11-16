@@ -95,6 +95,10 @@ export const DEFAULTS = {
   weekly_cap: 2,
   // New pages per project and calendar month, counted from the keyword log. Rewrites do not count.
   max_new_pages_per_month: 4,
+  // PRs one `seo run` opens at most, reverts included (one slot stays free for page work).
+  max_prs_per_run: 4,
+  // true: only reverts run, everything else is blocked in the queue (a manual stop for a bad week).
+  paused: false,
   min_impressions: 5,
   counterpart_locale: null,
   // Root-relative URL prefix for counterpart pages, e.g. '/en' when the
