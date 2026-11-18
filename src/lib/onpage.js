@@ -18,15 +18,20 @@ const tags = (html, name) => [...html.matchAll(TAG(name))].map(m => attrs(m[1]))
 const meta = (html, key, value) => tags(html, 'meta').filter(a => (a[key] ?? '').toLowerCase() === value).map(a => a.content ?? '');
 const filled = values => values.some(v => v.trim());
 
-// Host lowercased, `www.` and a trailing slash ignored, query kept: what has to match for a canonical to name itself.
-// An unparseable href counts as the same URL, it decides nothing.
+// Codes that only contradict a page that is in the sitemap. A page its site keeps out of the sitemap and marks noindex
+// (or points elsewhere) does so on purpose: zeit's guides since 2026-11-16 (`marketing.guides_noindex`).
+export const SITEMAP_CODES = ['meta_noindex', 'canonical_other'];
+
+/** Host lowercased, `www.` and a trailing slash ignored, query kept. Throws on an unparseable URL. */
+export function urlKey(u, base) {
+  const x = new URL(u, base);
+  return `${x.hostname.toLowerCase().replace(/^www\./, '')}${x.pathname.replace(/\/+$/, '')}${x.search}`;
+}
+
+// What has to match for a canonical to name itself. An unparseable href counts as the same URL, it decides nothing.
 function sameUrl(href, url) {
   try {
-    const norm = (u) => {
-      const x = new URL(u, url);
-      return `${x.hostname.toLowerCase().replace(/^www\./, '')}${x.pathname.replace(/\/+$/, '')}${x.search}`;
-    };
-    return norm(href) === norm(url);
+    return urlKey(href, url) === urlKey(url);
   } catch {
     return true;
   }
