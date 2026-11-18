@@ -658,6 +658,30 @@ describe('watch-step: AI crawlers and structured data', () => {
     expect(fixed.alerts.resolved.map(a => a.id)).toEqual(['structured_data']);
   });
 
+  it('ignores noindex on a landing page the site keeps out of the sitemap, and resolves an alert it opened before', async () => {
+    const noindex = fake({ html: LD.replace('<title>', '<meta name="robots" content="noindex, follow"><title>') });
+    const first = await go('2026-10-07', { config: DATA, fetchBot: noindex });
+    expect(first.structured_data.findings).toEqual([{ slug: 'page', codes: ['meta_noindex'] }]);
+    await go('2026-10-08', { config: DATA, fetchBot: noindex });
+    expect(alertsFile().open.map(a => a.id)).toContain('structured_data');
+    nextIndex.entries = [entry('other', OK)];
+    const excluded = await go('2026-10-09', { config: DATA, fetchBot: noindex });
+    expect(excluded.structured_data.findings).toEqual([]);
+    expect(excluded.alerts.resolved.map(a => a.id)).toEqual(['structured_data']);
+  });
+
+  it('leaves a noindex finding undecided on a day the sitemap is unknown', async () => {
+    const noindex = fake({ html: LD.replace('<title>', '<meta name="robots" content="noindex"><title>') });
+    nextIndex.error = new Error('quota');
+    try {
+      const report = await go('2026-10-07', { config: DATA, fetchBot: noindex });
+      expect(report.structured_data).toMatchObject({ checked: 0, findings: [] });
+      expect(report.warnings.join()).toMatch(/could not decide for pages: page/);
+    } finally {
+      nextIndex.error = null;
+    }
+  });
+
   it('runs both checks for a watch-only project without landing_path', async () => {
     const report = await go('2026-10-07', { config: { ...CONFIG, landing_path: undefined, watch: { ai_crawlers: true, structured_data: true } }, fetchBot: fake() });
     expect(report.ai_crawlers.search.length + report.ai_crawlers.training.length).toBe(10);

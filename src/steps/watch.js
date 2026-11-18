@@ -16,6 +16,7 @@ import { siteUrl, knowsSite, getUserSites, getCrawlIssues, getUrlInfo, isCrawled
 import { loadAlerts, saveAlerts, trafficWindows, trafficChange, evaluateWatch } from '../lib/watch.js';
 import { AI_BOTS, BROWSER_UA, botUserAgent, robotsRules, robotsAccess, liveVerdict, liveSummary } from '../lib/ai-crawlers.js';
 import { pageCheck } from '../lib/structured-data.js';
+import { SITEMAP_CODES, urlKey } from '../lib/onpage.js';
 
 // A clean alert that stays unindexed must not make Google and IndexNow hear from us every day.
 const RESUBMIT_EVERY_DAYS = 7;
@@ -287,17 +288,21 @@ async function checkCrawl({ config, cwd, today, entries, state, warnings, fetchB
 
   if (wantData && !pages) structuredData = null;
   if (wantData && pages) {
+    const inSitemap = entries ? new Set(sitemapUrls.flatMap((u) => { try { return [urlKey(u)]; } catch { return []; } })) : null;
     const checked = fetched.map((p) => {
       const res = results.get(`data:${p.slug}`);
       const ok = res && res.status >= 200 && res.status < 300;
       const page = ok ? pageCheck({ html: res.html, headers: res.headers, url: p.url, hasFaq: p.hasFaq, truncated: res.truncated }) : null;
       // A sitemap-discovered page (legal pages, app pages) may legitimately carry no JSON-LD: report only, no alert.
       const soft = p.discovered && page?.codes.includes('jsonld_missing');
-      return {
-        slug: p.slug,
-        codes: soft ? page.codes.filter(c => c !== 'jsonld_missing') : page?.codes ?? null,
-        recommended: soft ? ['jsonld_missing', ...page.recommended] : page?.recommended ?? [],
-      };
+      let codes = soft ? page.codes.filter(c => c !== 'jsonld_missing') : page?.codes ?? null;
+      // noindex or a foreign canonical is a finding only for a page in the sitemap. A landing page the site keeps out of
+      // it is excluded on purpose; with the sitemap unknown (failed index check) that cannot be told, so it stays undecided.
+      if (codes?.some(c => SITEMAP_CODES.includes(c)) && !p.discovered) {
+        if (!inSitemap) codes = null;
+        else if (!inSitemap.has(urlKey(p.url))) codes = codes.filter(c => !SITEMAP_CODES.includes(c));
+      }
+      return { slug: p.slug, codes, recommended: soft ? ['jsonld_missing', ...page.recommended] : page?.recommended ?? [] };
     });
     structuredData = { slugs: pages.map(p => p.slug), results: checked.map(({ slug, codes }) => ({ slug, codes })) };
     report.structured_data = {
