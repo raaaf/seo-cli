@@ -63,9 +63,9 @@ Short pointers; the full wording lives in the nested file named after each rule.
 | `seo/keywords.json` | Keyword backlog with statuses (`proposed`, `pr_opened` with `pr_url`, `published`, `rejected`, ...) | state commit to main |
 | `seo/sitemap-pending.json` | Retired, no longer written; deleted on the next state commit (`RETIRED_STATE_FILES`) | state commit to main |
 | `seo/rankings/YYYY-WW.csv` | Weekly ranking snapshots | gitignore |
-| `seo/improvements.json` | Which pages were rewritten when, with the queries that drove it, `pr_url`, `merged_at`, `held` (`closed_at` when the owner closed the draft: it stays, the cooldown counts from that day, it is no open PR), `snippet`, `merge`/`prune`/`into`, `queue` (the prediction) | state commit to main |
+| `seo/improvements.json` | Which pages were rewritten when, with the queries that drove it, `pr_url`, `merged_at`, `held` (`closed_at` when the owner closed the draft: it stays, the cooldown counts from that day, it is no open PR), `snippet`, `faq`, `merge`/`prune`/`into`, `queue` (the prediction) | state commit to main |
 | `seo/queue.json` | The queue of the last `seo run`: `type`, `slug`, `source`, `status`, `reason` per entry, no scores (those are in `report.queue`) | state commit to main |
-| `seo/changes.json` | Change ledger: one entry per merged seo PR (`kind` new/rewrite/snippet/revert, `urls`, `merged_at`, `baseline`, readings `d28`/`d56`, `revert_candidate`, `revert`) | state commit to main |
+| `seo/changes.json` | Change ledger: one entry per merged seo PR (`kind` new/rewrite/snippet/faq/revert, `urls`, `merged_at`, `baseline`, readings `d28`/`d56`, `revert_candidate`, `revert`) | state commit to main |
 | `seo/index-status.json` | Last week's Google index coverage per sitemap URL, for the weekly diff | state commit to main |
 | `seo/budget.json` | SerpAPI searches, Anthropic API spend and subscription usage of the month | state commit to main |
 | `seo/signals/bing.json` | Bing query cache (7 days, `queries:<site>`), only with `bing.enabled` | state commit to main |

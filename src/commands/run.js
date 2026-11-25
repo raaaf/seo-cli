@@ -71,7 +71,7 @@ const whyOf = (entry) => ({ type: entry.type, source: entry.source, why: entry.w
 function prKind(prepared) {
   if (prepared.mergeAlert) return { kind: 'merge', from: prepared.mergeFrom, assessed: prepared.mergeAlert };
   if (prepared.pruneAlert) return { kind: 'prune', into: prepared.into, assessed: prepared.pruneAlert };
-  return { kind: prepared.snippet ? 'snippet' : 'improve', ...(prepared.assessed ? { assessed: prepared.assessed } : {}) };
+  return { kind: prepared.snippet ? 'snippet' : prepared.faq ? 'faq' : 'improve', ...(prepared.assessed ? { assessed: prepared.assessed } : {}) };
 }
 
 // Warning text of an entry whose preparation threw, in the words the earlier slots used.
@@ -331,10 +331,10 @@ function newPageEntry(kw, mergedAt, config) {
 
 // The counterpart is named by the page's `alternate:` field, which is only on disk after the merge was pulled.
 // A revert PR (improvements entry with `revert: true`) is measured like a rewrite, as kind `revert`, a
-// snippet test (`snippet: true`) as kind `snippet`.
+// snippet test (`snippet: true`) as kind `snippet`, FAQ answers (`faq: true`) as kind `faq`.
 function rewriteEntry(item, mergedAt, config, cwd) {
   const base = baseUrlOf(config);
-  const kind = item.revert ? 'revert' : item.snippet ? 'snippet' : 'rewrite';
+  const kind = item.revert ? 'revert' : item.snippet ? 'snippet' : item.faq ? 'faq' : 'rewrite';
   const predicted = item.queue;
   if (parseOverlayKey(item.slug)) {
     return ledgerEntry({ kind, slug: item.slug, urls: [overlayUrl(config, item.slug)], prUrl: item.pr_url, mergedAt, predicted });

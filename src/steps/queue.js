@@ -9,7 +9,8 @@ import { MIN_TARGET_IMPRESSIONS } from '../lib/measure.js';
 import { pickSeasonPage } from '../lib/seasons.js';
 import { pickStalePage } from '../lib/refresh.js';
 import { pickAssessedPage, pickMergePage, pickPrunePage, counterpartPairs } from '../lib/assessed-rewrite.js';
-import { fetchPagePerformance, selectPage } from './improve.js';
+import { fetchPagePerformance, selectPage, ownQueriesBySlug } from './improve.js';
+import { pickQuestionPage } from '../lib/questions.js';
 
 /**
  * Gathers the candidates of one `seo run` from every source, each picker asked for one pick (`limit: 1`)
@@ -19,7 +20,7 @@ import { fetchPagePerformance, selectPage } from './improve.js';
  *
  * `toGenerate` are the keywords due for a new page. The Search Console pick, snippet tests and overlays
  * come only in a week that generates no page (an empty backlog is the normal state once the topics are
- * covered). `fetchRows` is injectable for tests.
+ * covered); FAQ answers (`question_faq`, default on) in every week. `fetchRows` is injectable for tests.
  */
 export async function collectCandidates({ config, cwd = process.cwd(), today = new Date(), catalogDown = false, toGenerate = [], engagement = null, warnings = [], fetchRows = fetchPagePerformance }) {
   const improvements = loadImprovements(cwd);
@@ -57,7 +58,9 @@ export async function collectCandidates({ config, cwd = process.cwd(), today = n
     }
   }
 
-  if (toGenerate.length === 0) {
+  // FAQ answers run in every week, also one that generates pages: they touch an existing page only.
+  const questions = config.question_faq !== false;
+  if (toGenerate.length === 0 || questions) {
     let rows = null;
     try {
       rows = await fetchRows(config);
@@ -65,7 +68,7 @@ export async function collectCandidates({ config, cwd = process.cwd(), today = n
       console.log(chalk.yellow(`  Search Console unavailable: ${e.message}`));
       warnings.push(`Search Console unavailable for the improve pick: ${e.message}`);
     }
-    if (rows) {
+    if (rows && toGenerate.length === 0) {
       const [page] = selectPage({ rows, config, cwd, cooldown: slugsInCooldown(improvements), engagement, skip: claimed, limit: 1 });
       if (page) {
         const snippet = page.kind === 'snippet' && page.impressions >= MIN_TARGET_IMPRESSIONS;
@@ -73,6 +76,13 @@ export async function collectCandidates({ config, cwd = process.cwd(), today = n
       } else if (config.overlays && !catalogDown) {
         // No landing page qualifies: an overlay (shop meta and intro, recipe text) takes the slot.
         add({ type: 'overlay', slug: null, source: 'gsc', why: 'no landing page qualifies, an overlay takes the slot', pick: { kind: 'overlay', rows } });
+      }
+    }
+    if (rows && questions && !catalogDown) {
+      const bySlug = ownQueriesBySlug(rows, config, cwd);
+      const skip = [...claimed, ...toGenerate.map(kw => kw.target_slug)];
+      for (const page of pickQuestionPage({ bySlug, config, cooldown: slugsInCooldown(improvements), skip, limit: 1 })) {
+        add({ type: 'faq', slug: page.slug, source: 'gsc', why: page.reason, score: page.score, pick: { kind: 'faq', page } }, page.slug);
       }
     }
   }

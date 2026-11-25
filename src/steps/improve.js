@@ -162,23 +162,13 @@ function withEngagement(page, stats) {
 }
 
 /**
- * Aggregate GSC rows per landing page of the default locale and return the one
- * with the best case for a rewrite, or null when nothing qualifies.
- *
- * `cooldown` is a Set of slugs rewritten recently enough that we have no signal
- * on the last attempt yet.
- *
- * `config.exclude_slugs` is the permanent version of that: pages the rewrite must
- * never touch. Service and pricing pages are written by hand and carry claims the
- * model has no way to verify, so a well-meant rewrite is pure downside there.
- *
- * `skip` names pages another candidate of the run touches (treated like the cooldown); `limit` as in
- * `takePicks`: an array of the best pages instead of the best one.
+ * GSC rows per landing page of the default locale: `{ slug, impressions, clicks, bestPosition, queries }`,
+ * each page with only the queries it ranks best for among our pages (the rest on `foreignQueries`).
+ * Shared by `selectPage` and the question pick (`lib/questions.js`).
  */
-export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set(), engagement = null, skip = [], limit }) {
+export function ownQueriesBySlug(rows, config, cwd = process.cwd()) {
   const locale = defaultLocale(config);
   const known = new Set(getExistingSlugs(config, cwd, locale));
-  const excluded = new Set(config.exclude_slugs || []);
   const base = String(config.base_url || '').replace(/\/+$/, '');
 
   // Built from every row that maps to a known slug, cooldown/excluded included.
@@ -220,6 +210,26 @@ export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new S
     page.clicks = own.reduce((sum, q) => sum + q.clicks, 0);
     page.bestPosition = own.length ? Math.min(...own.map(q => q.position)) : Infinity;
   }
+  return bySlug;
+}
+
+/**
+ * Aggregate GSC rows per landing page of the default locale and return the one
+ * with the best case for a rewrite, or null when nothing qualifies.
+ *
+ * `cooldown` is a Set of slugs rewritten recently enough that we have no signal
+ * on the last attempt yet.
+ *
+ * `config.exclude_slugs` is the permanent version of that: pages the rewrite must
+ * never touch. Service and pricing pages are written by hand and carry claims the
+ * model has no way to verify, so a well-meant rewrite is pure downside there.
+ *
+ * `skip` names pages another candidate of the run touches (treated like the cooldown); `limit` as in
+ * `takePicks`: an array of the best pages instead of the best one.
+ */
+export function selectPage({ rows, config, cwd = process.cwd(), cooldown = new Set(), engagement = null, skip = [], limit }) {
+  const excluded = new Set(config.exclude_slugs || []);
+  const bySlug = ownQueriesBySlug(rows, config, cwd);
 
   // Cooldown/excluded pages did their job above (marking foreign queries) and
   // are dropped here, once the candidate list itself is assembled.

@@ -50,6 +50,7 @@ The reusable workflow takes `mode` (`run`|`watch`); in run mode `seo watch --com
 | `src/lib/inbound-links.js` | Pure: `linkTargets`, `inboundLinks`, `eligibleSources`, `addRelatedPage` (text edit of `related_pages`). Topic judge in `steps/link-judge.js`, disk side in `lib/landings.js` (`buildInboundLinkFiles`). |
 | `src/lib/index-status.js` | Fetch/load/save/diff Google index coverage per URL (also stores `googleCanonical`, `userCanonical`, `pageFetchState`). `isIndexed` takes an entry: its `verdict` decides (`PASS` indexed, `NEUTRAL`/`FAIL` not); without one it falls back to Google's three not-indexed wordings, listed in one place because that wording drifts. |
 | `src/lib/conversational.js` | `classifyQuery`/`groupConversational`: deterministic buckets for AI-Mode traces in GSC query rows. No LLM. |
+| `src/lib/questions.js` | `questionKind`/`questionGaps`/`pickQuestionPage`: question and purchase-intent queries that lose the click, per page, for the `faq` queue type. No LLM. |
 | `src/lib/queue.js` / `src/steps/queue.js` | Pure `buildQueue` (rank, dedup, locks, brake, cap, `takePicks` for the `limit` of the pickers) and the I/O side (`collectCandidates`, `saveQueue`, `reportQueue`). |
 | `src/lib/refresh.js` | Stale-page detection (`staleReason`, `pickStalePage`). |
 | `src/lib/recrawl.js` | `lastChangeDate`, `isWaiting`: the wait for a recrawl, shared by the assessment and the queue's recrawl lock. |
