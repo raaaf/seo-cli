@@ -26,12 +26,12 @@ export function saveImprovements(data, cwd = process.cwd()) {
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
-// `snippet`: a snippet test (title and description only). `held`: the PR is a draft waiting for the owner.
+// `snippet`: a snippet test (title and description only). `faq`: FAQ answers to question searches. `held`: the PR is a draft waiting for the owner.
 // `queue`: what the run queue predicted (`{ type, score, basis }`), carried into the change ledger.
-export function recordImprovement(data, { slug, queries, snippet, held, queue }) {
+export function recordImprovement(data, { slug, queries, snippet, faq, held, queue }) {
   data.entries.push({
     slug, date: format(new Date()), queries: queries.slice(0, 5),
-    ...(snippet ? { snippet: true } : {}), ...(held ? { held: true } : {}), ...(queue ? { queue } : {}),
+    ...(snippet ? { snippet: true } : {}), ...(faq ? { faq: true } : {}), ...(held ? { held: true } : {}), ...(queue ? { queue } : {}),
   });
   return data;
 }

@@ -6,18 +6,18 @@ import { isWaiting, trimSlash, REASSESS_AFTER_DAYS } from './recrawl.js';
 // steps/queue.js (the pickers), the execution lives in commands/run.js. No I/O.
 
 // Lower runs first. Within a type the score decides (an assessed pick beats a GSC pick).
-export const TYPE_RANK = { revert: 1, merge: 2, prune: 2, refresh: 3, rewrite: 4, snippet_test: 5, overlay: 6, new_page: 7 };
+export const TYPE_RANK = { revert: 1, merge: 2, prune: 2, refresh: 3, rewrite: 4, snippet_test: 5, faq: 5, overlay: 6, new_page: 7 };
 
 // Only these merge by themselves. Everything else opens as a draft and waits for the owner. They are also
 // the page work that keeps one reserved slot, so rewrites and reverts cannot starve it.
-export const AUTO_TYPES = new Set(['snippet_test', 'new_page', 'overlay']);
+export const AUTO_TYPES = new Set(['snippet_test', 'faq', 'new_page', 'overlay']);
 
 export const MAX_HELD_DRAFTS = 3;
 export const DRAFT_WARN_DAYS = 14;
 const BRAKE_MIN_DAYS = 7;
 const BRAKE_MAX_DAYS = 35;
 const BRAKE_MAX_AGE_DAYS = 56;
-const BRAKED_TYPES = new Set(['new_page', 'snippet_test', 'refresh']);
+const BRAKED_TYPES = new Set(['new_page', 'snippet_test', 'faq', 'refresh']);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Whole days from one YYYY-MM-DD day to another. */
@@ -88,7 +88,7 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
   const brake = trafficBrake({ alerts, changes, today });
   if (brake?.expired) warnings.push(`Traffic brake released: traffic_drop open since ${brake.since}, more than ${BRAKE_MAX_AGE_DAYS} days`);
   const braking = brake && !brake.expired ? brake : null;
-  if (braking) warnings.push(`Traffic brake active for ${braking.days} day(s): traffic_drop since ${braking.since}, last merge ${braking.merge}. New pages, snippet tests, refreshes and GSC rewrites are held`);
+  if (braking) warnings.push(`Traffic brake active for ${braking.days} day(s): traffic_drop since ${braking.since}, last merge ${braking.merge}. New pages, snippet tests, FAQ answers, refreshes and GSC rewrites are held`);
   if (config.paused) warnings.push('seo run is paused (paused: true): only reverts run');
   for (const e of held) {
     const age = daysBetween(e.date, today);
@@ -109,7 +109,7 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
     if (braking && (BRAKED_TYPES.has(c.type) || (c.type === 'rewrite' && c.source === 'gsc'))) return 'brake';
     if (siteNotIndexed && c.type === 'new_page') return 'site_not_indexed';
     if (c.touches.some(t => notDeployed.has(t))) return 'not_deployed';
-    if (['rewrite', 'snippet_test'].includes(c.type) && waitingForCrawl(c.slug)) return 'recrawl';
+    if (['rewrite', 'snippet_test', 'faq'].includes(c.type) && waitingForCrawl(c.slug)) return 'recrawl';
     if (c.slug && openSlugs.has(c.slug)) return 'open_pr';
     return null;
   };

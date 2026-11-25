@@ -5,10 +5,10 @@ import { format } from './date.js';
 export const CHANGES_FILE = 'seo/changes.json';
 
 // Kinds of change to an existing page (measured against control pages), as opposed to a new page.
-export const REWRITE_KINDS = ['rewrite', 'snippet', 'revert'];
+export const REWRITE_KINDS = ['rewrite', 'snippet', 'faq', 'revert'];
 
 /**
- * Ledger of every merged seo PR: `{ id (PR url), kind: 'new' | 'rewrite' | 'snippet' | 'revert', slug,
+ * Ledger of every merged seo PR: `{ id (PR url), kind: 'new' | 'rewrite' | 'snippet' | 'faq' | 'revert', slug,
  * urls, pr_url, merged_at, baseline, readings: { d28, d56 }, revert_candidate, predicted? ({ type, score, basis }, what the queue expected),
  * revert? ({ status, date, pr_url?, reason? }, set by steps/revert.js), unmapped? }`, plus `skipped: [{ id, reason }]` for merged PRs that were read and will
  * never get an entry (no real merge date, too old), so they are not read again.

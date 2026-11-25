@@ -27,7 +27,7 @@ import * as github from '../lib/github.js';
  */
 
 // A snippet test is measured and taken back like a rewrite.
-export const REVERTIBLE = new Set(['rewrite', 'snippet']);
+export const REVERTIBLE = new Set(['rewrite', 'snippet', 'faq']);
 
 const lastSegment = (url) => String(url).split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop();
 

@@ -19,6 +19,7 @@ import { linkAlternates } from '../steps/counterpart.js';
 import { generateValidatedCounterpart } from '../steps/counterpart-loop.js';
 import { prepareOverlay } from '../steps/overlay.js';
 import { snippetPage } from '../steps/snippet.js';
+import { answerQuestions } from '../steps/questions.js';
 import { loadCatalog, contractOptions } from '../lib/catalog.js';
 import { rybbitActive, rybbitReport } from '../lib/signals/rybbit.js';
 import { pickSeasonPage } from '../lib/seasons.js';
@@ -29,7 +30,7 @@ import { pickAssessedPage, assessmentDiagnosis, PRUNE_REWRITES, PRUNE_WAIT_DAYS 
  * by `opts.slug`, optionally merging `opts.mergeFrom` into it), rewrites it, validates
  * and fact-checks it. Commits nothing and records no cooldown: that happens in
  * publishImprove, once the PR exists. `opts.pick` is a pick the queue of `seo run` already made
- * (`{ kind: 'season' | 'stale' | 'assessed' | 'gsc' | 'snippet' | 'overlay', ... }`, see steps/queue.js):
+ * (`{ kind: 'season' | 'stale' | 'assessed' | 'gsc' | 'snippet' | 'faq' | 'overlay', ... }`, see steps/queue.js):
  * nothing is selected then. `opts.skip` names pages a sibling PR of the same run touches: neither
  * picked nor edited for inbound links.
  *
@@ -138,6 +139,7 @@ export async function prepareImprove(opts = {}, cwd = process.cwd()) {
   };
 
   if (pick?.kind === 'snippet') return prepareSnippet(page, { config, cwd, dryRun, validateOpts });
+  if (pick?.kind === 'faq') return prepareFaq(page, { config, cwd, dryRun, validateOpts });
 
   // Two attempts, same as generate. A rewrite costs a full Opus call, and a
   // single hard error (one word over the tldr limit) is not worth losing it.
@@ -245,6 +247,72 @@ async function prepareSnippet(page, { config, cwd, dryRun, validateOpts }) {
   };
 }
 
+// FAQ answers: question and purchase searches the page loses the click on, answered as FAQ entries from
+// what the site already states. Only the `faq:` list changes (and the counterpart's at the same index).
+// Fact-checked like a rewrite; merges through the gate like a snippet test.
+async function prepareFaq(page, { config, cwd, dryRun, validateOpts }) {
+  const result = await answerQuestions(page, config, cwd, validateOpts);
+  if (result.failure) {
+    console.log(chalk.red(`  FAQ answers discarded: the entries for ${page.slug} do not validate after 2 attempts`));
+    result.failure.forEach(e => console.log(chalk.red(`    ✗ ${e}`)));
+    if (!dryRun) recordFailure(page.slug, cwd);
+    return null;
+  }
+  if (result.none) {
+    console.log(chalk.gray(`  No FAQ answer for ${page.slug}: ${result.skipped.map(s => `"${s.query}" (${s.reason})`).join(', ') || 'every query skipped'}`));
+    if (!dryRun) recordFailure(page.slug, cwd);
+    return null;
+  }
+  const keywordLike = keywordFor(page);
+  let markdown = result.markdown;
+  if (config.fact_check !== false && !dryRun) {
+    const { markdown: reviewed, findings, unchecked } = await reviewPage(markdown, keywordLike, config, cwd);
+    const faqOf = (md) => JSON.stringify(parseFrontmatter(md).parsed?.faq ?? null);
+    // An answer the fact check could not confirm is not shipped: there is no human between this PR and the site.
+    if (unchecked || unresolvedSeverity(findings) === 'high' || (result.counterpart && faqOf(reviewed) !== faqOf(markdown))) {
+      console.log(chalk.red(`  FAQ answers discarded: the fact check of ${page.slug} ${unchecked ? 'did not run' : 'found an error'}`));
+      recordFailure(page.slug, cwd);
+      return null;
+    }
+    if (reviewed !== markdown && validate(reviewed, keywordLike, validateOpts).ok) markdown = reviewed;
+  }
+  if (dryRun) {
+    console.log(chalk.cyan(`\n--- ${page.slug} (FAQ) ---\n`));
+    for (const e of result.entries) console.log(`${e.replaces >= 0 ? `[ersetzt ${e.replaces}] ` : ''}${e.q}\n${e.a}\n  (${e.queries.join(', ')})\n`);
+    for (const s of result.skipped) console.log(chalk.gray(`  übersprungen: "${s.query}" (${s.reason})`));
+    return null;
+  }
+  const week = isoWeek();
+  const list = (rows) => rows.map(r => `- ${r}`).join('\n');
+  const body = [
+    'FAQ-Antworten: Fragen und Kaufabsicht-Suchen, für die die Seite in Google erscheint und zu wenig Klicks bekommt, als FAQ-Einträge beantwortet. Nur die FAQ-Liste ist geändert, der übrige Text ist unverändert.',
+    '',
+    '## Neue Einträge',
+    '',
+    ...result.entries.flatMap(e => [`**${e.q}**${e.replaces >= 0 ? ` (ersetzt Eintrag ${e.replaces + 1})` : ''}`, '', e.a, '', `Suchanfragen: ${e.queries.map(q => `\`${q}\``).join(', ')}`, '']),
+    ...(result.counterpart ? [`Gegenstück \`${result.counterpart.slug}\` hat dieselben Einträge an derselben Stelle.`, ''] : []),
+    '## Suchanfragen',
+    '',
+    '| Suchanfrage | Art | Position | Impressionen | Klicks |',
+    '|---|---|---|---|---|',
+    ...page.questions.map(q => `| ${q.query} | ${q.kind === 'question' ? 'Frage' : 'Kaufabsicht'} | ${q.position.toFixed(1)} | ${q.impressions} | ${q.clicks} |`),
+    '',
+    ...(result.skipped.length ? ['## Nicht beantwortet', '', list(result.skipped.map(s => `\`${s.query}\`: ${s.reason}`)), ''] : []),
+    ...(result.warnings.length ? ['## Warnungen', '', list(result.warnings), ''] : []),
+  ].join('\n');
+  return {
+    slug: page.slug,
+    branch: `seo/faq/${page.slug}`,
+    faq: true,
+    holdOnFailure: true,
+    files: [{ path: result.filePath, content: markdown }, ...(result.counterpart ? [{ path: result.counterpart.filePath, content: result.counterpart.markdown }] : [])],
+    record: { slug: page.slug, queries: page.questions.map(q => q.query), faq: true },
+    commitMessage: `seo: faq answers ${page.slug} (${week})\n\n${page.reason}`,
+    prTitle: `SEO: FAQ-Antworten ${page.slug} (${week})`,
+    prBody: body,
+  };
+}
+
 // Top of an automatic merge PR: it deletes and redirects live pages, so it waits for the owner.
 function mergeProposalNote(slug, mergeFrom) {
   const pages = mergeFrom.map(n => `/${n}`).join(', ');
@@ -254,7 +322,7 @@ function mergeProposalNote(slug, mergeFrom) {
 // A seasonal, stale, assessed or Search Console pick that ends without a PR takes the normal cooldown (a
 // `failed` entry, as overlays do), so the same page does not cost a rewrite every week. It does not count
 // as a refresh for the 300-day rule. A targeted rewrite (`--slug`) was asked for by name and does not.
-const holdsOnFailure = (page) => Boolean(page.season || page.assessed || page.stale || ['snippet', 'near_page1', 'far'].includes(page.kind));
+const holdsOnFailure = (page) => Boolean(page.season || page.assessed || page.stale || ['snippet', 'faq', 'near_page1', 'far'].includes(page.kind));
 
 function recordFailure(slug, cwd) {
   const improvements = recordImprovement(loadImprovements(cwd), { slug, queries: [] });

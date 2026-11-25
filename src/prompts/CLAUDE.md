@@ -13,8 +13,9 @@ Cross-cutting rules: root `CLAUDE.md`. The steps that fill these templates: `src
 - `overlay.md`: shop product/category meta title, description and intro, returns JSON (`meta_title`, `meta_description`, `intro`)
 - `recipe-overlay.md`: recipe page meta title, description, intro and "Gut zu wissen" notes, returns JSON (`meta_title`, `meta_description`, `intro`, `notes`)
 - `snippet.md`: meta title and description test of `src/steps/snippet.js`, returns JSON (`meta_title`, `meta_description`)
+- `questions.md`: FAQ answers to question and purchase searches of `src/steps/questions.js`, returns JSON (`entries` with `queries`, `replaces`, `q`, `a`, plus `counterpart_q`/`counterpart_a` when the page has a counterpart; `skipped` with `query`, `reason`)
 - `verify.md`: the gate's independent second fact pass (`src/steps/verify.js`)
-- `_gsc-guardrail.md`: shared Search Console guardrail, read by `discover.js`, `improve.js`, `snippet.js` and `overlay.js` into `{{gsc_guardrail}}`
+- `_gsc-guardrail.md`: shared Search Console guardrail, read by `discover.js`, `improve.js`, `snippet.js`, `questions.js` and `overlay.js` into `{{gsc_guardrail}}`
 - `generate.md` — full page generation (used with Opus)
 - `counterpart.md` — counterpart-locale page adaptation (used with Opus, see Counterpart-locale support below)
 - `style-default.md` — built-in writing style guide, used when `config.style_doc` is null
