@@ -302,7 +302,7 @@ function buildBody(target, before, after) {
     : `Overlay \`${target.slug}\`: Meta-Angaben und Einleitung für die Shop-Seite. Der Shop liest nur diese drei Felder.`;
   const foot = type === 'recipe'
     ? 'Alle Aussagen stammen aus dem Rezept selbst; Zahlen, die das Rezept nicht nennt, und unbelegte Statistiken sind gesperrt. Nach dem Merge holt der Content-Sync des Servers die Datei, ein Deploy ist nicht nötig.'
-    : 'Alle Aussagen stammen aus dem Shop-Katalog; Preise, Lieferzeiten und Materialien ohne Katalogbeleg sind gesperrt. Nach dem Merge ist ein Shop-Deploy nötig.';
+    : 'Alle Aussagen stammen aus dem Shop-Katalog; Preise, Lieferzeiten und Materialien ohne Katalogbeleg sind gesperrt. Nach dem Merge holt der Content-Sync des Servers die Datei, ein Deploy ist nicht nötig.';
   return [
     head,
     '',
