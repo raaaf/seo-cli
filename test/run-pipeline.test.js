@@ -186,7 +186,7 @@ describe('run-pipeline', () => {
 
       expect(generatePage).toHaveBeenCalledTimes(1);
       expect(prepareImprove).toHaveBeenCalledTimes(1);
-      expect(report().prs).toEqual(expect.arrayContaining([{ url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'muttertag', held: true }]));
+      expect(report().prs).toEqual(expect.arrayContaining([{ url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'muttertag' }]));
     });
 
     it('still opens the PRs of generated pages when the seasonal rewrite throws', async () => {
@@ -249,8 +249,8 @@ describe('run-pipeline', () => {
       expect(prepareImprove.mock.calls[1][0]).toMatchObject({ pick: { kind: 'assessed', slug: 'teamevent' }, skip: ['muttertag'] });
       expect(createPRs.mock.calls[0][0].exclude).toEqual(['muttertag', 'teamevent']);
       expect(report().prs).toEqual(expect.arrayContaining([
-        { url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'muttertag', held: true },
-        { url: 'https://github.com/o/demo/pull/6', kind: 'improve', slug: 'teamevent', assessed: 'deindexed:https://demo.example/teamevent', held: true },
+        { url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'muttertag' },
+        { url: 'https://github.com/o/demo/pull/6', kind: 'improve', slug: 'teamevent', assessed: 'deindexed:https://demo.example/teamevent' },
       ]));
       expect(report().seasons[0].refreshed).toBe('muttertag');
     });
@@ -739,7 +739,7 @@ describe('behaviour matrix of the improve slots', () => {
 
     expect(generatePage).toHaveBeenCalledTimes(1);
     expect(prepareImprove).toHaveBeenCalledTimes(1);
-    expect(report().prs).toEqual(expect.arrayContaining([{ url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'teamevent', assessed: id, held: true }]));
+    expect(report().prs).toEqual(expect.arrayContaining([{ url: 'https://github.com/o/demo/pull/5', kind: 'improve', slug: 'teamevent', assessed: id }]));
   });
 
   it('takes no second assessed rewrite when the primary rewrite already is the assessed one', async () => {
@@ -911,7 +911,7 @@ describe('the action queue', () => {
       expect(report().prs).toEqual([{ url: 'https://github.com/o/demo/pull/38', kind: 'snippet', slug: 'preise' }]);
     });
 
-    it('is a held rewrite below 100 impressions', async () => {
+    it('is a rewrite that merges by itself below 100 impressions', async () => {
       seedGscPage('preise');
       queryPagePerformance.mockResolvedValue(rows(60));
       discover.mockResolvedValue({ version: 1, keywords: [] });
@@ -921,7 +921,8 @@ describe('the action queue', () => {
       await run();
 
       expect(prepareImprove.mock.calls[0][0].pick.kind).toBe('gsc');
-      expect(report().prs).toEqual([{ url: 'https://github.com/o/demo/pull/39', kind: 'improve', slug: 'preise', held: true }]);
+      expect(publishImprove.mock.calls[0][0].auto).toBe(true);
+      expect(report().prs).toEqual([{ url: 'https://github.com/o/demo/pull/39', kind: 'improve', slug: 'preise' }]);
     });
   });
 
@@ -972,18 +973,6 @@ describe('the action queue', () => {
 
       expect(report().warnings.join('\n')).toMatch(/Draft for alt .* has waited 20 days/);
     });
-
-    it('warns when a seasonal refresh waits as a draft less than 14 days before its peak', async () => {
-      CONFIG.seasons = [{ name: 'Muttertag', peak: inDays(5).slice(5), pages: ['muttertag'] }];
-      pagesOnDisk('muttertag');
-      discover.mockResolvedValue({ version: 1, keywords: [] });
-      prepareImprove.mockResolvedValue(prepared('muttertag', { season: 'Muttertag', peak: inDays(5) }));
-      publishImprove.mockResolvedValue('https://github.com/o/demo/pull/40');
-
-      await run();
-
-      expect(report().warnings.join('\n')).toMatch(/Season refresh of muttertag waits for approval as a draft, the peak of Muttertag is in 5 day/);
-    });
   });
 
   describe('queue file', () => {
@@ -1022,7 +1011,7 @@ describe('empty backlog', () => {
 
     expect(createPRs).not.toHaveBeenCalled();
     expect(publishImprove).toHaveBeenCalledWith(prepared, expect.objectContaining({ config: CONFIG, cwd: process.cwd() }));
-    expect(report()).toMatchObject({ status: 'prs_opened', prs: [{ url: 'https://github.com/o/demo/pull/8', kind: 'improve', slug: 'preise', held: true }] });
+    expect(report()).toMatchObject({ status: 'prs_opened', prs: [{ url: 'https://github.com/o/demo/pull/8', kind: 'improve', slug: 'preise' }] });
     expect(prepareImprove.mock.calls[0][0].pick).toMatchObject({ kind: 'gsc', page: { slug: 'preise', kind: 'near_page1' } });
   });
 

@@ -35,7 +35,7 @@ import { activeSeasons } from '../lib/seasons.js';
 import { annotateFollowups } from '../lib/assessed-rewrite.js';
 import { loadAlerts } from '../lib/watch.js';
 import { loadIndexStatus } from '../lib/index-status.js';
-import { buildQueue, nextInLine, daysBetween, AUTO_TYPES, predictedOf } from '../lib/queue.js';
+import { buildQueue, nextInLine, DRAFT_TYPES, predictedOf } from '../lib/queue.js';
 import { revertWorseRewrites } from '../steps/revert.js';
 import { collectCandidates, engagementOf, saveQueue, reportQueue } from '../steps/queue.js';
 import { submitFixes } from '../steps/diagnose.js';
@@ -83,13 +83,6 @@ function failureWarning(entry, e) {
   return `${entry.type} failed (${entry.slug ?? 'no page'}): ${e.message}`;
 }
 
-// A seasonal refresh waits for approval as a draft: close to the peak that is easy to overlook.
-const PEAK_WARN_DAYS = 14;
-function seasonDraftWarning(prepared) {
-  if (!prepared.season || !prepared.peak) return null;
-  const days = daysBetween(format(new Date()), prepared.peak);
-  return days < PEAK_WARN_DAYS ? `Season refresh of ${prepared.slug} waits for approval as a draft, the peak of ${prepared.season} is in ${days} day(s)` : null;
-}
 
 // Ledger entries for the queue's brake; an unreadable ledger is a warning and no brake.
 function ledgerEntries(cwd, warnings) {
@@ -524,7 +517,7 @@ export async function runCommand(opts) {
       report.warnings.push(`Measurement failed: ${e.message}`);
     }
 
-    // 1b1. Take back rewrites that measured worse twice (a draft PR). Before the queue, so the page is in its
+    // 1b1. Take back rewrites that measured worse twice (a PR the gate merges). Before the queue, so the page is in its
     // cooldown and not rewritten again in this run. One slot of the cap stays free for page work.
     const executed = [];
     if (!dryRun) {
@@ -532,7 +525,7 @@ export async function runCommand(opts) {
         const reverts = await revertWorseRewrites({ config, cwd, warnings: report.warnings, max: Math.max(0, maxPrs - 1) });
         if (reverts.length) report.reverts = reverts;
         for (const r of reverts) {
-          if (r.status === 'opened') report.prs.push({ url: r.pr_url, kind: 'revert', slug: r.slug, held: true });
+          if (r.status === 'opened') report.prs.push({ url: r.pr_url, kind: 'revert', slug: r.slug });
           executed.push(revertEntry(r));
         }
       } catch (e) {
@@ -669,7 +662,7 @@ export async function runCommand(opts) {
       try {
         const prepared = await prepareEntry(entry, taken);
         if (!prepared) { Object.assign(entry, { status: 'deferred', reason: 'not_prepared' }); return; }
-        Object.assign(prepared, { auto: AUTO_TYPES.has(entry.type), why: whyOf(entry), queue: predictedOf(whyOf(entry)) });
+        Object.assign(prepared, { auto: !DRAFT_TYPES.has(entry.type), why: whyOf(entry), queue: predictedOf(whyOf(entry)) });
         preparedList.push(prepared);
         entryOf.set(prepared, entry);
       } catch (e) {
@@ -718,8 +711,6 @@ export async function runCommand(opts) {
             entryOf.get(prepared).status = 'opened';
             report.prs.push({ url, slug: prepared.slug, ...prKind(prepared), ...(prepared.auto === false ? { held: true } : {}) });
             if (prepared.season) refreshedSlug = prepared.slug;
-            const warning = prepared.auto === false ? seasonDraftWarning(prepared) : null;
-            if (warning) report.warnings.push(warning);
           }
         } catch (e) {
           console.error(chalk.red(`\nImprove PR failed: ${e.message}`));

@@ -14,8 +14,8 @@ import * as github from '../lib/github.js';
  * Etappe C: a rewrite that measured worse than its control pages after 28 and 56 days
  * (`revert_candidate` in the change ledger) is taken back. The page files the rewrite PR
  * changed (the page and its counterpart, never other pages' link edits) go back to their
- * content before the merge, in one PR on `seo/revert/<slug>`, a draft that waits for the owner
- * (undoing a change is a judgement call). Only when nothing touched those files since the merge; a PR that deleted or
+ * content before the merge, in one PR on `seo/revert/<slug>` that the gate merges like any other
+ * (owner decision 2026-11-26). Only when nothing touched those files since the merge; a PR that deleted or
  * renamed files (a merge of pages) is never reverted automatically.
  *
  * The outcome is stored on the ledger entry as `revert: { status, date, pr_url?, reason? }`
@@ -177,13 +177,13 @@ export async function revertWorseRewrites({ config, cwd = process.cwd(), dryRun 
       }
       let url;
       try {
-        url = await gh.openPR({ repo: config.repo, branch, title: `seo: revert rewrite of ${entry.slug}`, body: prBody(entry, plan.paths), baseBranch: base, draft: true });
+        url = await gh.openPR({ repo: config.repo, branch, title: `seo: revert rewrite of ${entry.slug}`, body: prBody(entry, plan.paths), baseBranch: base });
       } catch (e) {
         try { await gh.deleteBranch({ repo: config.repo, branch }); } catch { /* the reconcile step drops orphans too */ }
         throw e;
       }
       decide(entry, { status: 'opened', pr_url: url });
-      improvements.entries.push({ slug: entry.slug, date: today, queries: [], pr_url: url, revert: true, held: true, queue: predictedRevert(entry) });
+      improvements.entries.push({ slug: entry.slug, date: today, queries: [], pr_url: url, revert: true, queue: predictedRevert(entry) });
       improvementsDirty = true;
       openedCount++;
       results.push({ slug: entry.slug, status: 'opened', pr_url: url });

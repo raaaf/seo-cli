@@ -64,14 +64,15 @@ describe('revert of rewrites that measured worse', () => {
     ]);
     expect(gh.calls.prs[0].body).toContain(PR);
     expect(read('changes.json').entries[0].revert).toEqual({ status: 'opened', pr_url: 'https://github.com/o/r/pull/9', date: '2026-11-05' });
-    expect(read('improvements.json').entries).toEqual([expect.objectContaining({ slug: 'team', date: '2026-11-05', queries: [], pr_url: 'https://github.com/o/r/pull/9', revert: true, held: true })]);
+    expect(read('improvements.json').entries).toEqual([expect.objectContaining({ slug: 'team', date: '2026-11-05', queries: [], pr_url: 'https://github.com/o/r/pull/9', revert: true })]);
+    expect(read('improvements.json').entries[0].held).toBeUndefined();
   });
 
-  it('opens the revert as a draft with the reason for the action on top', async () => {
+  it('opens the revert as a normal PR the gate merges, with the reason for the action on top', async () => {
     write([entry()]);
     const gh = fakeGh();
     await run(gh);
-    expect(gh.calls.prs[0].draft).toBe(true);
+    expect(gh.calls.prs[0].draft).toBeFalsy();
     expect(gh.calls.prs[0].body.startsWith('## Warum diese Aktion\n\n- Typ: revert\n- Quelle: ledger')).toBe(true);
   });
 

@@ -8,9 +8,13 @@ import { isWaiting, trimSlash, REASSESS_AFTER_DAYS } from './recrawl.js';
 // Lower runs first. Within a type the score decides (an assessed pick beats a GSC pick).
 export const TYPE_RANK = { revert: 1, merge: 2, prune: 2, refresh: 3, rewrite: 4, snippet_test: 5, faq: 5, overlay: 6, new_page: 7 };
 
-// Only these merge by themselves. Everything else opens as a draft and waits for the owner. They are also
-// the page work that keeps one reserved slot, so rewrites and reverts cannot starve it.
+// The page work that keeps one reserved slot, so rewrites and reverts cannot starve it.
 export const AUTO_TYPES = new Set(['snippet_test', 'faq', 'new_page', 'overlay']);
+
+// Only these open as a draft and wait for the owner: they delete and redirect live pages. Every other type
+// (rewrite, refresh, revert, ...) merges through the gate by itself (owner decision 2026-11-26: every seo-cli
+// PR goes live on its own, only removing live pages needs an okay).
+export const DRAFT_TYPES = new Set(['merge', 'prune']);
 
 export const MAX_HELD_DRAFTS = 3;
 export const DRAFT_WARN_DAYS = 14;
@@ -125,7 +129,7 @@ export function buildQueue({ candidates, executed = [], config = {}, today, aler
   for (const c of ordered) {
     const blocked = blockedReason(c);
     if (blocked) { results.push({ ...c, status: 'blocked', reason: blocked }); continue; }
-    const draft = !AUTO_TYPES.has(c.type) && c.type !== 'revert';
+    const draft = DRAFT_TYPES.has(c.type);
     if (draft && held.length + draftsSelected >= MAX_HELD_DRAFTS) { results.push({ ...c, status: 'deferred', reason: 'drafts_waiting' }); continue; }
     if (c.touches.some(t => taken.has(t))) { results.push({ ...c, status: 'deferred', reason: 'overlap' }); continue; }
     if (draft) draftsSelected++;
