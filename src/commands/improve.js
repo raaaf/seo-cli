@@ -396,8 +396,8 @@ export async function publishImprove(prepared, { config, cwd = process.cwd(), wa
 
   let prUrl;
   try {
-    // Only snippet tests, new pages and overlays merge by themselves. Everything else is a draft, which the
-    // gate never merges, with the reason for the action on top. `auto` defaults to true (standalone `seo improve`).
+    // Only merges and removals of live pages (DRAFT_TYPES) are drafts, which the gate never merges, with
+    // the reason for the action on top. Everything else merges through the gate. `auto` defaults to true (standalone `seo improve`).
     prUrl = await openPR({ repo: config.repo, branch, title: prepared.prTitle, body: held && prepared.why ? whyBlock(prepared.why) + prepared.prBody : prepared.prBody, draft: held });
   } catch (e) {
     // Without a PR the branch is an orphan that would block this page for good.

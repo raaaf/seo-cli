@@ -130,15 +130,17 @@ describe('locks and brake', () => {
 
     const heldEntries = (n) => Array.from({ length: n }, (_, i) => ({ slug: `h${i}`, date: days(-1), pr_url: `https://github.com/o/r/pull/${i}`, held: true }));
 
-    it('defers new non-auto types from the third held draft on, but not auto types', () => {
-      const result = build([c('rewrite', 'w'), c('new_page', 'n')], { improvements: { entries: heldEntries(3) } });
+    it('defers new draft types from the third held draft on, but not types that merge by themselves', () => {
+      const result = build([c('merge', 'w'), c('new_page', 'n'), c('rewrite', 'r'), c('revert', 'v')], { improvements: { entries: heldEntries(3) } });
       expect(statusOf(result, 'w')).toMatchObject({ status: 'deferred', reason: 'drafts_waiting' });
       expect(statusOf(result, 'n').status).toBe('selected');
-      expect(build([c('rewrite', 'w')], { improvements: { entries: heldEntries(2) } }).queue[0].status).toBe('selected');
+      expect(statusOf(result, 'r').status).toBe('selected');
+      expect(statusOf(result, 'v').status).toBe('selected');
+      expect(build([c('merge', 'w')], { improvements: { entries: heldEntries(2) } }).queue[0].status).toBe('selected');
     });
 
-    it('counts the non-auto entries selected in this run towards the draft limit', () => {
-      const result = build([c('rewrite', 'w1'), c('rewrite', 'w2')], { improvements: { entries: heldEntries(2) } });
+    it('counts the draft entries selected in this run towards the draft limit', () => {
+      const result = build([c('merge', 'w1'), c('prune', 'w2')], { improvements: { entries: heldEntries(2) } });
       expect(statusOf(result, 'w1').status).toBe('selected');
       expect(statusOf(result, 'w2')).toMatchObject({ status: 'deferred', reason: 'drafts_waiting' });
     });
